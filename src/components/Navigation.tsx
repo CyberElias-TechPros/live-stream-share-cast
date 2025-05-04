@@ -1,11 +1,20 @@
 
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Video, MessageSquare, Settings, Users, Bell } from "lucide-react";
+import { Video, MessageSquare, Settings, Bell } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useAuth } from "@/contexts/AuthContext";
+import { 
+  DropdownMenu, 
+  DropdownMenuContent, 
+  DropdownMenuItem, 
+  DropdownMenuLabel, 
+  DropdownMenuSeparator, 
+  DropdownMenuTrigger 
+} from "@/components/ui/dropdown-menu";
 
 export default function Navigation() {
-  const isAuthenticated = false; // In a real app, this would come from an auth context
+  const { user, isAuthenticated, logout } = useAuth();
 
   return (
     <header className="border-b border-border bg-card py-3">
@@ -27,14 +36,36 @@ export default function Navigation() {
                 <MessageSquare size={20} />
               </Button>
               
-              <Link to="/dashboard">
-                <Avatar className="h-9 w-9">
-                  <AvatarImage src="" />
-                  <AvatarFallback className="bg-stream-light text-white">
-                    U
-                  </AvatarFallback>
-                </Avatar>
-              </Link>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Avatar className="h-9 w-9 cursor-pointer">
+                    <AvatarImage src={user?.avatar} />
+                    <AvatarFallback className="bg-stream-light text-white">
+                      {user?.name?.charAt(0) || "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link to="/stream/create">New Stream</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/dashboard">Dashboard</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/settings">
+                      <Settings className="mr-2 h-4 w-4" />
+                      <span>Settings</span>
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={logout}>
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           ) : (
             <div className="flex items-center gap-2">

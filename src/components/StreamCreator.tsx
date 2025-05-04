@@ -11,10 +11,12 @@ import {
   MicOff, 
   Share, 
   Copy, 
-  Record, 
+  CircleDot, 
   StopCircle, 
   Download,
-  Loader
+  Loader,
+  Signal,
+  UserRound
 } from "lucide-react";
 import { StreamStatus } from "@/types";
 import { streamService } from "@/services/streamService";
@@ -224,7 +226,7 @@ export default function StreamCreator() {
                 <div className="absolute top-4 left-4 flex gap-2">
                   <div className="live-indicator">LIVE</div>
                   <div className="viewer-count">
-                    <Users size={16} />
+                    <UserRound size={16} />
                     <span>0</span>
                   </div>
                 </div>
@@ -259,7 +261,7 @@ export default function StreamCreator() {
                 className="stream-button"
                 onClick={toggleRecording}
               >
-                {isRecording ? <StopCircle size={20} className="text-red-500" /> : <Record size={20} />}
+                {isRecording ? <StopCircle size={20} className="text-red-500" /> : <CircleDot size={20} />}
               </Button>
               
               <Button
@@ -316,7 +318,7 @@ export default function StreamCreator() {
                   onClick={() => setIsLocalStream(true)}
                   disabled={streamStatus === "live"}
                 >
-                  <Wifi className="mr-2 h-4 w-4" />
+                  <Signal className="mr-2 h-4 w-4" />
                   Local
                 </Button>
                 

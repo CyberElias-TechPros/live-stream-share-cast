@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, Users } from "lucide-react";
+import { Search, UserRound } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import { Stream } from "@/types";
 
@@ -107,7 +107,7 @@ const Browse = () => {
                       
                       <div className="absolute bottom-2 right-2">
                         <div className="viewer-count">
-                          <Users size={16} />
+                          <UserRound size={16} />
                           <span>{stream.viewerCount}</span>
                         </div>
                       </div>
@@ -140,13 +140,3 @@ const Browse = () => {
 };
 
 export default Browse;
-
-// Temporary component for the Input while we don't have the actual Input component
-function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <input
-      className={`flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
-      {...props}
-    />
-  );
-}
