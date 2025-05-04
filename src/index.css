@@ -2,142 +2,131 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
+ 
 @layer base {
   :root {
-    --background: 230 25% 12%;
-    --foreground: 210 40% 98%;
-
-    --card: 230 25% 18%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 230 25% 16%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 265 67% 51%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 221 83% 53%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 230 25% 25%;
-    --muted-foreground: 215 20% 70%;
-
-    --accent: 230 25% 25%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 230 25% 26%;
-    --input: 230 25% 26%;
-    --ring: 265 67% 51%;
-
-    --radius: 0.5rem;
-
-    --sidebar-background: 230 25% 10%;
-    --sidebar-foreground: 220 20% 80%;
-    --sidebar-primary: 265 67% 51%;
-    --sidebar-primary-foreground: 210 40% 98%;
-    --sidebar-accent: 230 25% 18%;
-    --sidebar-accent-foreground: 210 40% 98%;
-    --sidebar-border: 230 25% 20%;
-    --sidebar-ring: 265 67% 51%;
-  }
-
-  .light {
     --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-
+    --foreground: 240 10% 3.9%;
+ 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
+    --card-foreground: 240 10% 3.9%;
+ 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-
-    --primary: 265 67% 51%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 221 83% 48%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
+    --popover-foreground: 240 10% 3.9%;
+ 
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+ 
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+ 
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+ 
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+ 
     --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 265 67% 51%;
-
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 265 67% 51%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 265 67% 51%;
+    --destructive-foreground: 0 0% 98%;
+ 
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 10% 3.9%;
+ 
+    --radius: 0.5rem;
+    
+    --stream: 258 90% 66%;
+    --stream-light: 270 95% 75%;
+    --stream-dark: 255 70% 48%;
+  }
+ 
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+ 
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+ 
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+ 
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+ 
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+ 
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+ 
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+ 
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+ 
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    
+    --stream: 258 90% 66%;
+    --stream-light: 270 95% 75%;
+    --stream-dark: 255 70% 48%;
   }
 }
-
+ 
 @layer base {
   * {
     @apply border-border;
   }
-
   body {
-    @apply bg-background text-foreground min-h-screen;
-  }
-  
-  /* Hide scrollbar for Chrome, Safari and Opera */
-  .hide-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
-
-  /* Hide scrollbar for IE, Edge and Firefox */
-  .hide-scrollbar {
-    -ms-overflow-style: none;  /* IE and Edge */
-    scrollbar-width: none;  /* Firefox */
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
 
-.video-container {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  height: 0;
-  padding-bottom: 56.25%; /* 16:9 Aspect Ratio */
-}
-
-.video-container video {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.stream-controls {
-  transition: opacity 0.3s ease-in-out;
-}
-
-.stream-controls:hover {
-  opacity: 1 !important;
-}
-
-.stream-button {
-  @apply flex items-center justify-center w-10 h-10 rounded-full bg-black/50 hover:bg-black/70 text-white transition-colors;
-}
-
+/* Utilities for Stream UI */
 .live-indicator {
-  @apply px-2 py-1 bg-red-500 text-white text-xs font-semibold uppercase tracking-wider rounded-md animate-pulse-light;
+  @apply bg-red-500 text-white text-xs font-medium px-2 py-0.5 rounded-sm;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
 .viewer-count {
-  @apply flex items-center gap-1 px-2 py-1 bg-black/50 text-white text-sm rounded-md;
+  @apply bg-black/60 text-white text-xs flex items-center gap-1 px-2 py-0.5 rounded-sm;
+}
+
+.stream-button {
+  @apply text-white hover:bg-white/20 hover:text-white;
+}
+
+.stream-controls:hover {
+  @apply opacity-100;
+}
+
+.hide-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.hide-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.hide-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+  border-radius: 20px;
+  border: 3px solid transparent;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
 }
