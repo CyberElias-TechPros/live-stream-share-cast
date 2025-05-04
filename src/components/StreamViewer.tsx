@@ -235,60 +235,6 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
       </div>
     </div>
   );
-
-  function toggleMute() {
-    if (videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
-    }
-  }
-  
-  function toggleFullscreen() {
-    if (!document.fullscreenElement && containerRef.current) {
-      containerRef.current.requestFullscreen().then(() => {
-        setIsFullscreen(true);
-      }).catch(err => {
-        toast({
-          title: "Fullscreen Error",
-          description: `Error attempting to enable fullscreen: ${err.message}`,
-          variant: "destructive"
-        });
-      });
-    } else {
-      document.exitFullscreen().then(() => {
-        setIsFullscreen(false);
-      });
-    }
-  }
-  
-  function shareStream() {
-    const shareUrl = window.location.href;
-    
-    if (navigator.share) {
-      try {
-        navigator.share({
-          title: streamTitle,
-          text: `Watch "${streamTitle}" live on LiveCast`,
-          url: shareUrl,
-        });
-      } catch (error) {
-        console.error("Error sharing:", error);
-        // Fallback to copy to clipboard
-        navigator.clipboard.writeText(shareUrl);
-        toast({
-          title: "Link Copied",
-          description: "Stream link copied to clipboard"
-        });
-      }
-    } else {
-      // Fallback for browsers that don't support sharing API
-      navigator.clipboard.writeText(shareUrl);
-      toast({
-        title: "Link Copied",
-        description: "Stream link copied to clipboard"
-      });
-    }
-  }
 }
 
 // Use the proper Input component from shadcn UI
