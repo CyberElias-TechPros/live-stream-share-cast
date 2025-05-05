@@ -28,6 +28,11 @@ import {
 import { formatDistanceToNow } from 'date-fns';
 import { ChatMessage, Stream, StreamStatus } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
+import { liveStreamService } from "@/services/liveStreamService";
+import { chatService } from "@/services/chatService";
+import { supabase } from "@/integrations/supabase/client";
 
 interface StreamViewerProps {
   streamId: string;
@@ -35,142 +40,68 @@ interface StreamViewerProps {
 
 export default function StreamViewer({ streamId }: StreamViewerProps) {
   const [chatMessage, setChatMessage] = useState('');
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-  const [stream, setStream] = useState<Stream | null>(null);
-  const [status, setStatus] = useState<StreamStatus>('loading');
   const [isFollowing, setIsFollowing] = useState(false);
   
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const { user, isAuthenticated } = useAuth();
   const { joinStream, leaveStream, sendChatMessage, status: streamStatus, viewerCount } = useStream();
+  const navigate = useNavigate();
   
-  // Simulate loading stream data
+  // Fetch stream data
+  const { data: stream, isLoading: isStreamLoading, error: streamError } = useQuery({
+    queryKey: ["stream", streamId],
+    queryFn: () => liveStreamService.getStreamById(streamId),
+    refetchInterval: 30000, // Refresh every 30 seconds
+  });
+  
+  // Fetch chat messages
+  const { data: chatMessages = [], isLoading: isChatLoading } = useQuery({
+    queryKey: ["streamChat", streamId],
+    queryFn: () => chatService.getChatMessages(streamId),
+    refetchInterval: 5000, // Refresh every 5 seconds
+    enabled: !!streamId,
+  });
+
+  // Chat subscription
   useEffect(() => {
-    const fetchStream = async () => {
-      try {
-        setStatus('loading');
-        
-        // In a real app, we would fetch the stream from an API
-        // For now, let's simulate it
-        setTimeout(() => {
-          const mockStream: Stream = {
-            id: streamId,
-            title: "Live Demo Stream",
-            description: "This is a demonstration of the LiveCast streaming platform.",
-            isLive: true,
-            streamKey: `key-${streamId}`,
-            createdAt: new Date(),
-            viewerCount: Math.floor(Math.random() * 50) + 5,
-            isRecording: false,
-            isLocalStream: false,
-            userId: "streamer-123",
-            startedAt: new Date(Date.now() - 3600000), // Started 1 hour ago
-            bandwidth: 2500,
-            tags: ["gaming", "live", "demo"]
-          };
-          
-          setStream(mockStream);
-          setStatus('live');
-        }, 2000);
-        
-        // In a real app, we would join the stream via WebRTC
-        try {
-          await joinStream(streamId);
-        } catch (error) {
-          console.error("Error joining stream:", error);
+    // Set up real-time subscription for new chat messages
+    const subscription = supabase
+      .channel(`stream-chat-${streamId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `stream_id=eq.${streamId}`
+        },
+        () => {
+          // Simply invalidate the query cache to trigger a refetch
+          // This is more efficient than manually managing state
         }
-      } catch (error) {
-        console.error("Error fetching stream:", error);
-        setStatus('error');
-        toast({
-          title: "Error",
-          description: "Failed to load the stream",
-          variant: "destructive"
-        });
-      }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
     };
-    
-    fetchStream();
+  }, [streamId]);
+  
+  // Join stream effect
+  useEffect(() => {
+    if (streamId) {
+      try {
+        joinStream(streamId);
+      } catch (error) {
+        console.error("Error joining stream:", error);
+      }
+    }
     
     return () => {
       leaveStream();
     };
-  }, [streamId, joinStream, leaveStream, toast]);
-  
-  // Simulate loading chat messages
-  useEffect(() => {
-    // In a real app, we would connect to a WebSocket for chat
-    const simulateChatMessages = () => {
-      const mockMessages: ChatMessage[] = [
-        {
-          id: "1",
-          streamId,
-          userId: "user-123",
-          username: "User123",
-          userAvatar: "https://ui-avatars.com/api/?name=User123&background=blue",
-          message: "Hello everyone! Great stream!",
-          timestamp: new Date(Date.now() - 5 * 60000)
-        },
-        {
-          id: "2",
-          streamId,
-          userId: "user-456",
-          username: "StreamFan",
-          userAvatar: "https://ui-avatars.com/api/?name=StreamFan&background=green",
-          message: "How long have you been streaming today?",
-          timestamp: new Date(Date.now() - 3 * 60000)
-        },
-        {
-          id: "3",
-          streamId,
-          userId: "user-789",
-          username: "ViewerXYZ",
-          userAvatar: "https://ui-avatars.com/api/?name=ViewerXYZ&background=purple",
-          message: "The quality of this stream is amazing!",
-          timestamp: new Date(Date.now() - 1 * 60000)
-        }
-      ];
-      
-      setChatMessages(mockMessages);
-      
-      // Simulate new messages coming in
-      const interval = setInterval(() => {
-        const randomNames = [
-          "ChatPro", "GameLover", "StreamViewer", "TechFan", 
-          "MusicBuff", "ArtEnjoyer", "SportsFan", "CoolViewer"
-        ];
-        const randomMessages = [
-          "Nice stream!", "Hello from Brazil!", "Keep up the good work!",
-          "First time watching, this is great!", "Can you explain what you're doing?",
-          "Love the content!", "Wow, that's impressive!", "How did you learn to do that?",
-          "I'm enjoying this stream so much!", "What equipment are you using?"
-        ];
-        
-        const randomNameIndex = Math.floor(Math.random() * randomNames.length);
-        const randomMessageIndex = Math.floor(Math.random() * randomMessages.length);
-        
-        const newMessage: ChatMessage = {
-          id: Date.now().toString(),
-          streamId,
-          userId: `user-${Date.now()}`,
-          username: randomNames[randomNameIndex],
-          userAvatar: `https://ui-avatars.com/api/?name=${randomNames[randomNameIndex]}&background=random`,
-          message: randomMessages[randomMessageIndex],
-          timestamp: new Date()
-        };
-        
-        setChatMessages(prev => [...prev, newMessage]);
-      }, 8000);
-      
-      return () => clearInterval(interval);
-    };
-    
-    if (status === 'live') {
-      const timer = setTimeout(simulateChatMessages, 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [status, streamId]);
+  }, [streamId, joinStream, leaveStream]);
   
   // Auto-scroll chat to bottom when new messages arrive
   useEffect(() => {
@@ -178,6 +109,43 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [chatMessages]);
+  
+  // Status derived from data
+  const status: StreamStatus = isStreamLoading 
+    ? "loading" 
+    : streamError 
+    ? "error" 
+    : !stream 
+    ? "error" 
+    : stream.isLive 
+    ? "live" 
+    : "ended";
+
+  // Send chat message mutation
+  const sendMessageMutation = useMutation({
+    mutationFn: (message: string) => {
+      if (!user || !stream) throw new Error("Not authenticated or no stream");
+      
+      return chatService.sendChatMessage({
+        streamId,
+        userId: user.id,
+        username: user.username,
+        userAvatar: user.avatar,
+        message,
+        type: "text"
+      });
+    },
+    onSuccess: () => {
+      setChatMessage("");
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "Failed to send message. Please try again.",
+        variant: "destructive"
+      });
+    }
+  });
   
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,19 +163,7 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
       return;
     }
     
-    const newMessage: ChatMessage = {
-      id: Date.now().toString(),
-      streamId,
-      userId: user?.id || 'guest',
-      username: user?.username || 'Guest User',
-      userAvatar: user?.avatar,
-      message: chatMessage,
-      timestamp: new Date()
-    };
-    
-    setChatMessages(prev => [...prev, newMessage]);
-    sendChatMessage(chatMessage);
-    setChatMessage('');
+    sendMessageMutation.mutate(chatMessage);
   };
   
   const handleFollowClick = () => {
@@ -265,6 +221,17 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
     });
   };
   
+  // If stream has ended and is not found or no longer live
+  if (status === "error" || (stream && !stream.isLive && stream.endedAt)) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12">
+        <h1 className="text-2xl font-bold mb-4">Stream Not Found or Has Ended</h1>
+        <p className="text-muted-foreground mb-6">This stream may have ended or doesn't exist.</p>
+        <Button onClick={() => navigate("/stream")}>Browse Live Streams</Button>
+      </div>
+    );
+  }
+  
   return (
     <div className="grid lg:grid-cols-4 gap-6">
       <div className="lg:col-span-3">
@@ -279,10 +246,17 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
         <div className="mt-6">
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-2xl font-bold mb-1">{stream?.title || "Loading..."}</h1>
+              <h1 className="text-2xl font-bold mb-1">{isStreamLoading ? "Loading..." : stream?.title}</h1>
               <div className="flex items-center gap-2">
-                <div className="h-8 w-8 rounded-full bg-stream flex-shrink-0"></div>
-                <span className="font-medium">Streamer Name</span>
+                <Avatar className="h-8 w-8 flex-shrink-0">
+                  {stream?.userAvatar ? (
+                    <AvatarImage src={stream.userAvatar} />
+                  ) : null}
+                  <AvatarFallback>
+                    {stream?.username?.charAt(0).toUpperCase() || '?'}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="font-medium">{stream?.displayName || stream?.username || "Streamer"}</span>
                 <span className="text-muted-foreground">•</span>
                 <span className="text-muted-foreground">
                   {stream?.viewerCount || viewerCount} viewers
@@ -391,27 +365,37 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
           className="flex-1 p-4 overflow-y-auto hide-scrollbar"
         >
           <div className="space-y-4">
-            {chatMessages.map(message => (
-              <div key={message.id} className="flex gap-2 group">
-                <Avatar className="h-8 w-8 flex-shrink-0">
-                  <AvatarImage src={message.userAvatar} />
-                  <AvatarFallback>
-                    {message.username.charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium">{message.username}</p>
-                    <p className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
-                      {formatDistanceToNow(message.timestamp, { addSuffix: true })}
-                    </p>
+            {isChatLoading ? (
+              Array(3).fill(0).map((_, i) => (
+                <div key={i} className="flex gap-2">
+                  <div className="h-8 w-8 rounded-full bg-muted/50"></div>
+                  <div className="flex-1">
+                    <div className="h-4 w-24 bg-muted/50 rounded mb-2"></div>
+                    <div className="h-4 w-full bg-muted/50 rounded"></div>
                   </div>
-                  <p className="text-sm">{message.message}</p>
                 </div>
-              </div>
-            ))}
-            
-            {chatMessages.length === 0 && status === 'live' && (
+              ))
+            ) : chatMessages.length > 0 ? (
+              chatMessages.map(message => (
+                <div key={message.id} className="flex gap-2 group">
+                  <Avatar className="h-8 w-8 flex-shrink-0">
+                    <AvatarImage src={message.userAvatar} />
+                    <AvatarFallback>
+                      {message.username.charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium">{message.username}</p>
+                      <p className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+                        {formatDistanceToNow(message.timestamp, { addSuffix: true })}
+                      </p>
+                    </div>
+                    <p className="text-sm">{message.message}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
               <div className="text-center py-6 text-muted-foreground">
                 <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
                 <p>No messages yet</p>
@@ -428,9 +412,13 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
               className="flex-1" 
               value={chatMessage}
               onChange={(e) => setChatMessage(e.target.value)}
-              disabled={!isAuthenticated}
+              disabled={!isAuthenticated || sendMessageMutation.isPending}
             />
-            <Button type="submit" size="icon" disabled={!isAuthenticated}>
+            <Button 
+              type="submit" 
+              size="icon" 
+              disabled={!isAuthenticated || sendMessageMutation.isPending}
+            >
               <MessageSquare size={18} />
             </Button>
           </form>
