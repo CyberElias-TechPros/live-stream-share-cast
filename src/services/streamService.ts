@@ -1,5 +1,5 @@
 
-import { EventEmitter } from 'events';
+import { EventEmitter } from '@/lib/eventEmitter';
 import { 
   Stream, 
   StreamStatus, 

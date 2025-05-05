@@ -19,6 +19,7 @@ const mockStreams: Stream[] = [
     viewerCount: 24,
     isRecording: false,
     isLocalStream: false,
+    userId: "user-1" // Added userId property
   },
   {
     id: "2",
@@ -30,6 +31,7 @@ const mockStreams: Stream[] = [
     viewerCount: 57,
     isRecording: true,
     isLocalStream: false,
+    userId: "user-2" // Added userId property
   },
   {
     id: "3",
@@ -41,6 +43,7 @@ const mockStreams: Stream[] = [
     viewerCount: 12,
     isRecording: false,
     isLocalStream: true,
+    userId: "user-3" // Added userId property
   },
   {
     id: "4",
@@ -52,6 +55,7 @@ const mockStreams: Stream[] = [
     viewerCount: 36,
     isRecording: true,
     isLocalStream: false,
+    userId: "user-4" // Added userId property
   },
 ];
 

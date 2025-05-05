@@ -194,24 +194,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         throw error;
       }
       
-      if (data.user) {
-        // Create profile in the profiles table
-        const { error: profileError } = await supabase.from('profiles').insert([
-          {
-            id: data.user.id,
-            username,
-            email,
-            display_name: username,
-            avatar_url: `https://ui-avatars.com/api/?name=${username}&background=random`,
-            created_at: new Date().toISOString()
-          }
-        ]);
-        
-        if (profileError) {
-          console.error("Error creating user profile:", profileError);
-        }
-      }
-      
       toast({
         title: "Registration successful",
         description: "Please check your email to verify your account.",

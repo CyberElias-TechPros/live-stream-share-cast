@@ -33,12 +33,17 @@ const AppContent = () => (
     <Route path="/signup" element={<Signup />} />
     <Route path="/stream" element={<Browse />} />
     <Route path="/watch/:streamId" element={<WatchStream />} />
-    <Route path="/profile/:username" element={<Profile />} />
     
     {/* Protected routes */}
     <Route path="/stream/create" element={
-      <ProtectedRoute>
+      <ProtectedRoute requireStreamer={true}>
         <CreateStream />
+      </ProtectedRoute>
+    } />
+    
+    <Route path="/profile/:username" element={
+      <ProtectedRoute>
+        <Profile />
       </ProtectedRoute>
     } />
     
