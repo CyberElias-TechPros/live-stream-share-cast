@@ -12,6 +12,8 @@ import WatchStream from "./pages/WatchStream";
 import Browse from "./pages/Browse";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import Profile from "./pages/Profile"; 
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -31,6 +33,8 @@ const AppContent = () => (
     <Route path="/" element={<Index />} />
     <Route path="/login" element={<Login />} />
     <Route path="/signup" element={<Signup />} />
+    <Route path="/forgot-password" element={<ForgotPassword />} />
+    <Route path="/reset-password" element={<ResetPassword />} />
     <Route path="/stream" element={<Browse />} />
     <Route path="/watch/:streamId" element={<WatchStream />} />
     

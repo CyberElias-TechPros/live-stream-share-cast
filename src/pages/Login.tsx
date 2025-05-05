@@ -7,11 +7,13 @@ import { Label } from "@/components/ui/label";
 import { Video } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -27,13 +29,10 @@ export default function Login() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
     
     if (!email || !password) {
-      toast({
-        title: "Error",
-        description: "Please provide both email and password",
-        variant: "destructive",
-      });
+      setErrorMessage("Please provide both email and password");
       return;
     }
     
@@ -42,8 +41,16 @@ export default function Login() {
       await login(email, password);
       // The auth context will handle the navigation and toast
     } catch (error: any) {
-      // Error is handled by the auth context
       console.error("Login error:", error);
+      
+      // Handle specific error cases
+      if (error?.code === "email_not_confirmed") {
+        setErrorMessage("Please verify your email before logging in. Check your inbox for a confirmation link.");
+      } else if (error?.message) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage("Failed to log in. Please check your credentials and try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -71,6 +78,12 @@ export default function Login() {
             Enter your email to access your account
           </p>
         </div>
+        
+        {errorMessage && (
+          <Alert variant="destructive" className="mt-4">
+            <AlertDescription>{errorMessage}</AlertDescription>
+          </Alert>
+        )}
         
         <form onSubmit={handleLogin} className="mt-8 space-y-6">
           <div className="space-y-4">
