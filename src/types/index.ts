@@ -1,4 +1,3 @@
-
 export interface Stream {
   id: string;
   title: string;
@@ -19,6 +18,9 @@ export interface Stream {
   bandwidth?: number;
   category?: string;
   tags?: string[];
+  username?: string;
+  displayName?: string;
+  userAvatar?: string;
 }
 
 export interface StreamQuality {

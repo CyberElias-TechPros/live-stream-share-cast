@@ -1,6 +1,5 @@
-
 import { supabase } from "@/integrations/supabase/client";
-import { Stream, StreamStats } from "@/types";
+import { Stream, StreamStats, StreamError } from "@/types";
 
 export const liveStreamService = {
   async getAllStreams(): Promise<Stream[]> {
@@ -250,7 +249,7 @@ export const liveStreamService = {
       bandwidth: stat.bandwidth || 0,
       cpuUsage: stat.cpu_usage,
       memoryUsage: stat.memory_usage,
-      errors: stat.errors || []
+      errors: stat.errors ? mapJsonToStreamErrors(stat.errors) : [] // Convert JSON to StreamError array
     }));
   },
   
@@ -297,3 +296,36 @@ export const liveStreamService = {
     return !error;
   }
 };
+
+// Helper function to convert JSON errors to proper StreamError objects
+function mapJsonToStreamErrors(jsonErrors: any): StreamError[] {
+  if (!jsonErrors) return [];
+  
+  // Handle array of errors
+  if (Array.isArray(jsonErrors)) {
+    return jsonErrors.map(err => ({
+      timestamp: err.timestamp ? new Date(err.timestamp) : new Date(),
+      code: err.code || 'unknown',
+      message: err.message || 'Unknown error',
+      details: err.details
+    }));
+  }
+  
+  // Handle single error object
+  if (typeof jsonErrors === 'object') {
+    return [{
+      timestamp: jsonErrors.timestamp ? new Date(jsonErrors.timestamp) : new Date(),
+      code: jsonErrors.code || 'unknown',
+      message: jsonErrors.message || 'Unknown error',
+      details: jsonErrors.details
+    }];
+  }
+  
+  // Handle unexpected format (string, etc.)
+  return [{
+    timestamp: new Date(),
+    code: 'parse_error',
+    message: 'Error parsing error data',
+    details: jsonErrors
+  }];
+}
