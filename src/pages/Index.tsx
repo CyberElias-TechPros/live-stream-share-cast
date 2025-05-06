@@ -23,7 +23,7 @@ const Index = () => {
         <section className="py-16 md:py-24 container">
           <div className="max-w-3xl mx-auto text-center">
             <h1 className="text-4xl md:text-5xl font-bold mb-6 text-white">
-              Share Your Stream <span className="text-stream-light">Instantly</span>
+               <span className="text-stream-light">Share Your Stream Instantly</span>
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground mb-8">
               Stream live video, share it with anyone, and record your broadcasts
