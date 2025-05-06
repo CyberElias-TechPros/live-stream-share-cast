@@ -3,8 +3,9 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 import { useNavigate } from "react-router-dom";
 import { User as SupabaseUser, Session } from '@supabase/supabase-js';
 import { supabase } from "@/integrations/supabase/client";
-import { User } from "@/types";
+import { User, UserPreferences } from "@/types";
 import { toast } from "@/hooks/use-toast";
+import { profileService } from "@/services/profileService";
 
 interface AuthContextType {
   user: User | null;
@@ -16,7 +17,9 @@ interface AuthContextType {
   signup: (username: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<User>) => Promise<void>;
+  updateStreamerStatus: (isStreamer: boolean) => Promise<void>;
   refreshUser: () => Promise<void>;
+  updateUserPreferences: (preferences: Partial<UserPreferences>) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -79,82 +82,56 @@ export function AuthProvider({ children }: AuthProviderProps) {
   
   const fetchUserProfile = async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
+      const userProfile = await profileService.getProfile(userId);
       
-      if (error) {
-        throw error;
-      }
-      
-      if (data) {
-        const userProfile: User = {
-          id: data.id,
-          username: data.username,
-          email: data.email,
-          displayName: data.display_name,
-          avatar: data.avatar_url,
-          bio: data.bio,
-          followers: data.followers_count || 0,
-          following: data.following_count || 0,
-          isStreamer: data.is_streamer || false,
-          createdAt: new Date(data.created_at),
-          updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
-          lastSeen: data.last_seen ? new Date(data.last_seen) : undefined
-        };
-        
+      if (userProfile) {
         setUser(userProfile);
       } else {
         // No profile found, user might need to create one
         if (supabaseUser) {
+          // This should not happen if the database trigger is set up correctly,
+          // but just in case we handle it here
           const newUser: User = {
             id: supabaseUser.id,
             username: supabaseUser.email?.split('@')[0] || `user_${Date.now().toString(36)}`,
             email: supabaseUser.email || '',
-            createdAt: new Date()
+            createdAt: new Date(),
+            isStreamer: false
           };
-          setUser(newUser);
+          
+          await updateProfile(newUser);
         }
       }
     } catch (error) {
       console.error("Error fetching user profile:", error);
-    }
-  };
-  
-  const refreshUser = async () => {
-    if (supabaseUser) {
-      await fetchUserProfile(supabaseUser.id);
+    } finally {
+      setIsLoading(false);
     }
   };
   
   const login = async (email: string, password: string) => {
     try {
       setIsLoading(true);
-      
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
       
       if (error) {
         throw error;
       }
       
+      // User will be set by the auth state change listener
       toast({
         title: "Login successful",
-        description: "Welcome back!",
+        description: "You have successfully logged in",
       });
       
-      navigate("/stream");
+      navigate("/");
     } catch (error: any) {
+      console.error("Login error:", error);
       toast({
         title: "Login failed",
-        description: error.message || "Invalid email or password",
+        description: error.message || "Failed to log in. Please check your credentials.",
         variant: "destructive"
       });
-      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -164,28 +141,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       setIsLoading(true);
       
-      // First check if username is available
-      const { data: existingUsers, error: checkError } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('username', username)
+      // First check if username is already taken
+      const { data: existingUsers } = await supabase
+        .from("profiles")
+        .select("username")
+        .eq("username", username)
         .limit(1);
       
-      if (checkError) {
-        throw checkError;
-      }
-      
       if (existingUsers && existingUsers.length > 0) {
-        throw new Error("Username already taken");
+        throw new Error("Username is already taken");
       }
       
       // Create the user
-      const { data, error } = await supabase.auth.signUp({
+      const { error, data } = await supabase.auth.signUp({
         email,
         password,
         options: {
           data: {
-            username
+            username,
+            display_name: username
           }
         }
       });
@@ -195,18 +169,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
       }
       
       toast({
-        title: "Registration successful",
-        description: "Please check your email to verify your account.",
+        title: "Success",
+        description: "Your account has been created. Please check your email for verification.",
       });
       
-      navigate("/login");
+      // Note: The user will be set by the auth state change listener
+      // if email verification is not required
+      
     } catch (error: any) {
+      console.error("Sign up error:", error);
       toast({
-        title: "Registration failed",
-        description: error.message || "Failed to create your account",
+        title: "Sign up failed",
+        description: error.message || "Failed to create account",
         variant: "destructive"
       });
-      throw error;
     } finally {
       setIsLoading(false);
     }
@@ -215,88 +191,165 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const logout = async () => {
     try {
       setIsLoading(true);
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      
+      if (error) {
+        throw error;
+      }
+      
+      // Clear user state
       setUser(null);
       setSupabaseUser(null);
       setSession(null);
       
       toast({
         title: "Logged out",
-        description: "You have been logged out successfully.",
+        description: "You have been successfully logged out",
       });
       
       navigate("/login");
-    } catch (error) {
-      console.error("Error logging out:", error);
+    } catch (error: any) {
+      console.error("Logout error:", error);
+      toast({
+        title: "Logout failed",
+        description: error.message || "Failed to log out",
+        variant: "destructive"
+      });
     } finally {
       setIsLoading(false);
     }
   };
   
   const updateProfile = async (updates: Partial<User>) => {
-    if (!user || !supabaseUser) {
-      throw new Error("You must be logged in to update your profile");
-    }
-    
     try {
-      setIsLoading(true);
-      
-      const { error } = await supabase.from('profiles').update({
-        username: updates.username,
-        display_name: updates.displayName,
-        bio: updates.bio,
-        avatar_url: updates.avatar,
-        updated_at: new Date().toISOString(),
-        is_streamer: updates.isStreamer
-      }).eq('id', user.id);
-      
-      if (error) {
-        throw error;
+      if (!user) {
+        throw new Error("No authenticated user");
       }
       
-      setUser({
-        ...user,
-        ...updates
-      });
+      const updatedProfile = await profileService.updateProfile(user.id, updates);
+      
+      if (!updatedProfile) {
+        throw new Error("Failed to update profile");
+      }
+      
+      setUser(updatedProfile);
       
       toast({
         title: "Profile updated",
-        description: "Your profile has been updated successfully.",
+        description: "Your profile has been successfully updated",
       });
     } catch (error: any) {
+      console.error("Profile update error:", error);
       toast({
-        title: "Update failed",
-        description: error.message || "Failed to update your profile",
+        title: "Profile update failed",
+        description: error.message || "Failed to update profile",
         variant: "destructive"
       });
       throw error;
-    } finally {
-      setIsLoading(false);
     }
   };
   
-  const value = {
-    user,
-    supabaseUser,
-    session,
-    isLoading,
-    isAuthenticated: !!user,
-    login,
-    signup,
-    logout,
-    updateProfile,
-    refreshUser
+  const updateStreamerStatus = async (isStreamer: boolean) => {
+    try {
+      if (!user) {
+        throw new Error("No authenticated user");
+      }
+      
+      const success = await profileService.updateStreamerStatus(user.id, isStreamer);
+      
+      if (!success) {
+        throw new Error("Failed to update streamer status");
+      }
+      
+      // Update local user state
+      setUser(prev => prev ? { ...prev, isStreamer } : null);
+      
+      toast({
+        title: isStreamer ? "Streamer status enabled" : "Streamer status disabled",
+        description: isStreamer 
+          ? "You can now create and broadcast streams" 
+          : "Your streamer privileges have been removed",
+      });
+    } catch (error: any) {
+      console.error("Streamer status update error:", error);
+      toast({
+        title: "Update failed",
+        description: error.message || "Failed to update streamer status",
+        variant: "destructive"
+      });
+      throw error;
+    }
   };
   
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  const updateUserPreferences = async (preferences: Partial<UserPreferences>) => {
+    try {
+      if (!user) {
+        throw new Error("No authenticated user");
+      }
+      
+      const success = await profileService.updateUserPreferences(user.id, preferences);
+      
+      if (!success) {
+        throw new Error("Failed to update preferences");
+      }
+      
+      // Update local user state
+      setUser(prev => {
+        if (!prev) return null;
+        
+        return {
+          ...prev,
+          preferences: {
+            ...prev.preferences,
+            ...preferences
+          }
+        };
+      });
+      
+      toast({
+        title: "Preferences updated",
+        description: "Your preferences have been successfully updated",
+      });
+    } catch (error: any) {
+      console.error("Preferences update error:", error);
+      toast({
+        title: "Update failed",
+        description: error.message || "Failed to update preferences",
+        variant: "destructive"
+      });
+      throw error;
+    }
+  };
+  
+  const refreshUser = async () => {
+    if (!supabaseUser) return;
+    await fetchUserProfile(supabaseUser.id);
+  };
+  
+  return (
+    <AuthContext.Provider value={{
+      user,
+      supabaseUser,
+      session,
+      isLoading,
+      isAuthenticated: !!user,
+      login,
+      signup,
+      logout,
+      updateProfile,
+      updateStreamerStatus,
+      refreshUser,
+      updateUserPreferences
+    }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  
   if (context === undefined) {
     throw new Error("useAuth must be used within an AuthProvider");
   }
-  
   return context;
 }

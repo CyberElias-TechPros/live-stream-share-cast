@@ -1,6 +1,6 @@
 
 import { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -37,80 +37,101 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
 import { Skeleton } from "@/components/ui/skeleton";
+import { profileService } from "@/services/profileService";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { format, formatDistanceToNow } from "date-fns";
 
 export default function Profile() {
   const { username } = useParams<{ username: string }>();
-  const [profile, setProfile] = useState<User | null>(null);
-  const [streams, setStreams] = useState<Stream[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [editedProfile, setEditedProfile] = useState<Partial<User>>({});
-  const [isFollowing, setIsFollowing] = useState(false);
   
   const { user, isAuthenticated, updateProfile } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  
+  // Fetch profile data
+  const { 
+    data: profile, 
+    isLoading: isProfileLoading,
+    error: profileError 
+  } = useQuery({
+    queryKey: ["profile", username],
+    queryFn: () => {
+      if (!username) throw new Error("No username provided");
+      return profileService.getProfileByUsername(username);
+    },
+    enabled: !!username,
+  });
+  
+  // Fetch user streams
+  const { 
+    data: streams = [], 
+    isLoading: isStreamsLoading 
+  } = useQuery({
+    queryKey: ["userStreams", profile?.id],
+    queryFn: () => {
+      if (!profile?.id) throw new Error("No user ID available");
+      return profileService.getUserStreams(profile.id);
+    },
+    enabled: !!profile?.id,
+  });
+  
+  // Check if the current user is following the profile
+  const { 
+    data: isFollowing = false,
+    isLoading: isFollowingLoading 
+  } = useQuery({
+    queryKey: ["isFollowing", user?.id, profile?.id],
+    queryFn: () => {
+      if (!user?.id || !profile?.id) return false;
+      return profileService.isFollowing(user.id, profile.id);
+    },
+    enabled: !!user?.id && !!profile?.id && user?.id !== profile?.id,
+  });
+  
+  // Follow/unfollow mutation
+  const followMutation = useMutation({
+    mutationFn: async (follow: boolean) => {
+      if (!user?.id || !profile?.id) throw new Error("User IDs not available");
+      
+      if (follow) {
+        return profileService.followUser(user.id, profile.id);
+      } else {
+        return profileService.unfollowUser(user.id, profile.id);
+      }
+    },
+    onSuccess: (_, variables) => {
+      // Invalidate relevant queries
+      queryClient.invalidateQueries({ queryKey: ["profile", username] });
+      queryClient.invalidateQueries({ queryKey: ["isFollowing", user?.id, profile?.id] });
+      
+      toast({
+        title: variables ? "Following" : "Unfollowed",
+        description: variables 
+          ? `You are now following ${profile?.displayName || profile?.username}` 
+          : `You have unfollowed ${profile?.displayName || profile?.username}`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: "Failed to update follow status",
+        variant: "destructive"
+      });
+    }
+  });
+  
+  // Set initial edited profile state
+  useEffect(() => {
+    if (profile) {
+      setEditedProfile(profile);
+    }
+  }, [profile]);
   
   const isOwnProfile = isAuthenticated && user?.username === username;
-  
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        setIsLoading(true);
-        
-        // In a real app, we would fetch the user profile from an API
-        // For now, let's simulate it
-        setTimeout(() => {
-          const mockUser: User = {
-            id: "user-123",
-            username: username || "username",
-            displayName: `${username}'s Display Name`,
-            email: `${username}@example.com`,
-            bio: "This is a sample bio. The user has not added any additional information about themselves yet.",
-            avatar: `https://ui-avatars.com/api/?name=${username}&background=random`,
-            followers: Math.floor(Math.random() * 1000),
-            following: Math.floor(Math.random() * 500),
-            isStreamer: true,
-            createdAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), // 90 days ago
-            socialLinks: [
-              { platform: "twitter", url: "https://twitter.com/" },
-              { platform: "instagram", url: "https://instagram.com/" }
-            ]
-          };
-          
-          setProfile(mockUser);
-          setEditedProfile(mockUser);
-          
-          // Generate mock streams
-          const mockStreams: Stream[] = Array(6).fill(0).map((_, index) => ({
-            id: `stream-${index}`,
-            title: `${username}'s Stream #${index + 1}`,
-            description: "This is a sample stream description.",
-            isLive: index === 0, // Make the first one live
-            streamKey: `key-${index}`,
-            createdAt: new Date(Date.now() - (index * 24 * 60 * 60 * 1000)), // Each one a day apart
-            viewerCount: Math.floor(Math.random() * 100),
-            isRecording: false,
-            isLocalStream: false,
-            userId: "user-123",
-            thumbnail: `https://picsum.photos/seed/${username}${index}/640/360`
-          }));
-          
-          setStreams(mockStreams);
-          setIsLoading(false);
-        }, 1000);
-      } catch (error) {
-        console.error("Error fetching profile:", error);
-        setIsLoading(false);
-        toast({
-          title: "Error",
-          description: "Failed to load user profile",
-          variant: "destructive"
-        });
-      }
-    };
-    
-    fetchProfile();
-  }, [username, toast]);
+  const isLoading = isProfileLoading || isStreamsLoading;
   
   const handleEditToggle = () => {
     if (isEditing) {
@@ -131,12 +152,11 @@ export default function Profile() {
         throw new Error("You can only edit your own profile");
       }
       
-      // In a real app, we would call updateProfile from AuthContext
-      // For now, let's simulate success
       await updateProfile(editedProfile);
-      
-      setProfile(prev => prev ? { ...prev, ...editedProfile } : null);
       setIsEditing(false);
+      
+      // Refresh profile data
+      queryClient.invalidateQueries({ queryKey: ["profile", username] });
       
       toast({
         title: "Profile Updated",
@@ -158,28 +178,28 @@ export default function Profile() {
         description: "You must be logged in to follow users",
         variant: "default"
       });
+      navigate("/login");
       return;
     }
     
-    setIsFollowing(!isFollowing);
-    
-    if (profile) {
-      setProfile(prev => {
-        if (!prev) return null;
-        return {
-          ...prev,
-          followers: (prev.followers || 0) + (isFollowing ? -1 : 1)
-        };
-      });
-    }
-    
-    toast({
-      title: isFollowing ? "Unfollowed" : "Following",
-      description: isFollowing ? 
-        `You have unfollowed ${profile?.displayName || username}` : 
-        `You are now following ${profile?.displayName || username}`,
-    });
+    followMutation.mutate(!isFollowing);
   };
+  
+  if (profileError) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Navigation />
+        
+        <main className="flex-1 container py-8">
+          <div className="max-w-5xl mx-auto text-center">
+            <h1 className="text-2xl font-bold mb-4">User Not Found</h1>
+            <p className="text-muted-foreground mb-6">The user you're looking for doesn't exist or has been removed.</p>
+            <Button onClick={() => navigate("/")}>Go Home</Button>
+          </div>
+        </main>
+      </div>
+    );
+  }
   
   if (isLoading) {
     return (
@@ -210,6 +230,22 @@ export default function Profile() {
     );
   }
   
+  if (!profile) {
+    return (
+      <div className="min-h-screen flex flex-col">
+        <Navigation />
+        
+        <main className="flex-1 container py-8">
+          <div className="max-w-5xl mx-auto text-center">
+            <h1 className="text-2xl font-bold mb-4">User Not Found</h1>
+            <p className="text-muted-foreground mb-6">The user you're looking for doesn't exist or has been removed.</p>
+            <Button onClick={() => navigate("/")}>Go Home</Button>
+          </div>
+        </main>
+      </div>
+    );
+  }
+  
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
@@ -222,8 +258,8 @@ export default function Profile() {
               {isEditing ? (
                 <div className="flex flex-col items-center">
                   <Avatar className="w-24 h-24">
-                    <AvatarImage src={profile?.avatar} alt={profile?.displayName} />
-                    <AvatarFallback>{profile?.displayName?.charAt(0) || "U"}</AvatarFallback>
+                    <AvatarImage src={profile.avatar} alt={profile.displayName || profile.username} />
+                    <AvatarFallback>{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
                   </Avatar>
                   <Button variant="link" className="text-xs mt-2">
                     Change Avatar
@@ -231,8 +267,8 @@ export default function Profile() {
                 </div>
               ) : (
                 <Avatar className="w-24 h-24">
-                  <AvatarImage src={profile?.avatar} alt={profile?.displayName} />
-                  <AvatarFallback>{profile?.displayName?.charAt(0) || "U"}</AvatarFallback>
+                  <AvatarImage src={profile.avatar} alt={profile.displayName || profile.username} />
+                  <AvatarFallback>{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
                 </Avatar>
               )}
               
@@ -281,11 +317,11 @@ export default function Profile() {
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                       <div>
                         <h1 className="text-2xl font-bold">
-                          {profile?.displayName || username}
+                          {profile.displayName || profile.username}
                         </h1>
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <UserRound className="h-4 w-4" />
-                          <span>@{profile?.username}</span>
+                          <span>@{profile.username}</span>
                         </div>
                       </div>
                       
@@ -299,6 +335,7 @@ export default function Profile() {
                           <Button 
                             variant={isFollowing ? "default" : "outline"}
                             onClick={handleFollowToggle}
+                            disabled={followMutation.isPending || isFollowingLoading}
                           >
                             <Heart className={`mr-2 h-4 w-4 ${isFollowing ? 'fill-current' : ''}`} />
                             {isFollowing ? 'Following' : 'Follow'}
@@ -310,12 +347,12 @@ export default function Profile() {
                     <div className="mt-4 flex flex-wrap gap-6 text-sm">
                       <div className="flex items-center gap-1">
                         <Heart className="h-4 w-4 text-muted-foreground" />
-                        <span><strong>{profile?.followers ?? 0}</strong> followers</span>
+                        <span><strong>{profile.followers ?? 0}</strong> followers</span>
                       </div>
                       
                       <div className="flex items-center gap-1">
                         <UserRound className="h-4 w-4 text-muted-foreground" />
-                        <span><strong>{profile?.following ?? 0}</strong> following</span>
+                        <span><strong>{profile.following ?? 0}</strong> following</span>
                       </div>
                       
                       <div className="flex items-center gap-1">
@@ -325,15 +362,15 @@ export default function Profile() {
                       
                       <div className="flex items-center gap-1">
                         <Clock className="h-4 w-4 text-muted-foreground" />
-                        <span>Joined {profile?.createdAt.toLocaleDateString()}</span>
+                        <span>Joined {format(profile.createdAt, "MMMM yyyy")}</span>
                       </div>
                     </div>
                     
                     <p className="mt-4 text-muted-foreground">
-                      {profile?.bio || "This user hasn't added a bio yet."}
+                      {profile.bio || "This user hasn't added a bio yet."}
                     </p>
                     
-                    {profile?.socialLinks && profile.socialLinks.length > 0 && (
+                    {profile.socialLinks && profile.socialLinks.length > 0 && (
                       <div className="mt-4 flex gap-3">
                         {profile.socialLinks.map((link, index) => {
                           let Icon = LinkIcon;
@@ -378,66 +415,76 @@ export default function Profile() {
             
             <TabsContent value="streams">
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {streams.map(stream => (
-                  <Link 
-                    key={stream.id}
-                    to={`/watch/${stream.id}`}
-                    className="group"
-                  >
-                    <Card className="overflow-hidden border-border transition-all hover:border-stream hover:shadow-md">
-                      <div className="aspect-video bg-muted/30 relative">
-                        {stream.thumbnail && (
-                          <img 
-                            src={stream.thumbnail} 
-                            alt={stream.title} 
-                            className="w-full h-full object-cover"
-                          />
-                        )}
-                        
-                        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/50" />
-                        
-                        {stream.isLive ? (
-                          <div className="absolute top-2 left-2">
-                            <div className="live-indicator">LIVE</div>
+                {streams.length > 0 ? (
+                  streams.map(stream => (
+                    <Link 
+                      key={stream.id}
+                      to={`/watch/${stream.id}`}
+                      className="group"
+                    >
+                      <Card className="overflow-hidden border-border transition-all hover:border-stream hover:shadow-md">
+                        <div className="aspect-video bg-muted/30 relative">
+                          {stream.thumbnail ? (
+                            <img 
+                              src={stream.thumbnail} 
+                              alt={stream.title} 
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center bg-muted">
+                              <Video className="h-12 w-12 text-muted-foreground opacity-20" />
+                            </div>
+                          )}
+                          
+                          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/50" />
+                          
+                          {stream.isLive ? (
+                            <div className="absolute top-2 left-2">
+                              <div className="live-indicator">LIVE</div>
+                            </div>
+                          ) : (
+                            <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
+                              {stream.createdAt ? format(stream.createdAt, "MMM d, yyyy") : "Unknown date"}
+                            </div>
+                          )}
+                          
+                          <div className="absolute bottom-2 left-2 flex items-center gap-1 bg-black/60 text-white text-xs px-2 py-1 rounded">
+                            <Eye size={12} />
+                            <span>{stream.viewerCount}</span>
                           </div>
-                        ) : (
-                          <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
-                            {new Date(stream.createdAt).toLocaleDateString()}
-                          </div>
-                        )}
-                        
-                        <div className="absolute bottom-2 left-2 flex items-center gap-1 bg-black/60 text-white text-xs px-2 py-1 rounded">
-                          <Eye size={12} />
-                          <span>{stream.viewerCount}</span>
                         </div>
-                      </div>
-                      
-                      <CardContent className="p-4">
-                        <h3 className="font-semibold mb-1 group-hover:text-stream-light transition-colors">
-                          {stream.title}
-                        </h3>
-                        <p className="text-sm text-muted-foreground line-clamp-2">
-                          {stream.description || "No description provided"}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  </Link>
-                ))}
-                
-                {streams.length === 0 && (
+                        
+                        <CardContent className="p-4">
+                          <h3 className="font-semibold mb-1 group-hover:text-stream-light transition-colors">
+                            {stream.title}
+                          </h3>
+                          <p className="text-sm text-muted-foreground line-clamp-2">
+                            {stream.description || "No description provided"}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </Link>
+                  ))
+                ) : (
                   <div className="col-span-full text-center py-12">
                     <Video className="h-12 w-12 mx-auto mb-3 text-muted-foreground opacity-50" />
                     <h3 className="text-lg font-medium mb-2">No streams yet</h3>
                     <p className="text-muted-foreground">
                       {isOwnProfile ? 
                         "You haven't created any streams yet. Start streaming to see your content here." : 
-                        `${profile?.displayName || username} hasn't created any streams yet.`
+                        `${profile.displayName || profile.username} hasn't created any streams yet.`
                       }
                     </p>
                     
-                    {isOwnProfile && (
+                    {isOwnProfile && profile.isStreamer && (
                       <Button className="mt-4" asChild>
                         <Link to="/stream/create">Start Streaming</Link>
+                      </Button>
+                    )}
+                    
+                    {isOwnProfile && !profile.isStreamer && (
+                      <Button className="mt-4" asChild>
+                        <Link to="/settings">Enable Streamer Status</Link>
                       </Button>
                     )}
                   </div>
@@ -448,14 +495,14 @@ export default function Profile() {
             <TabsContent value="about">
               <Card>
                 <CardHeader>
-                  <CardTitle>About {profile?.displayName || username}</CardTitle>
+                  <CardTitle>About {profile.displayName || profile.username}</CardTitle>
                   <CardDescription>Profile information and statistics</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div>
                     <h3 className="text-lg font-medium mb-2">Bio</h3>
                     <p className="text-muted-foreground">
-                      {profile?.bio || "This user hasn't added a bio yet."}
+                      {profile.bio || "This user hasn't added a bio yet."}
                     </p>
                   </div>
                   
@@ -465,7 +512,7 @@ export default function Profile() {
                       <Card className="bg-muted/50">
                         <CardContent className="p-4">
                           <div className="text-xs text-muted-foreground mb-1">FOLLOWERS</div>
-                          <div className="text-2xl font-bold">{profile?.followers ?? 0}</div>
+                          <div className="text-2xl font-bold">{profile.followers ?? 0}</div>
                         </CardContent>
                       </Card>
                       
@@ -480,7 +527,7 @@ export default function Profile() {
                         <CardContent className="p-4">
                           <div className="text-xs text-muted-foreground mb-1">JOINED</div>
                           <div className="text-2xl font-bold">
-                            {profile?.createdAt.toLocaleDateString(undefined, { year: 'numeric' })}
+                            {format(profile.createdAt, "yyyy")}
                           </div>
                         </CardContent>
                       </Card>
@@ -489,7 +536,7 @@ export default function Profile() {
                         <CardContent className="p-4">
                           <div className="text-xs text-muted-foreground mb-1">TOTAL VIEWS</div>
                           <div className="text-2xl font-bold">
-                            {Math.floor(Math.random() * 10000)}
+                            {streams.reduce((sum, stream) => sum + (stream.viewerCount || 0), 0)}
                           </div>
                         </CardContent>
                       </Card>
@@ -497,7 +544,7 @@ export default function Profile() {
                   </div>
                 </CardContent>
                 <CardFooter className="border-t pt-6">
-                  {profile?.socialLinks && profile.socialLinks.length > 0 ? (
+                  {profile.socialLinks && profile.socialLinks.length > 0 ? (
                     <div className="w-full">
                       <h3 className="text-sm font-medium mb-3">Social Links</h3>
                       <div className="flex flex-wrap gap-4">
