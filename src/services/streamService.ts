@@ -1,4 +1,3 @@
-
 import { EventEmitter } from '@/lib/eventEmitter';
 import { 
   Stream, 
@@ -6,6 +5,7 @@ import {
   StreamSettings,
   WebRTCConnection
 } from '@/types';
+import { liveStreamService } from './liveStreamService';
 
 class StreamService extends EventEmitter {
   private mediaStream: MediaStream | null = null;
@@ -32,9 +32,13 @@ class StreamService extends EventEmitter {
       bitrate: 2500000, // 2.5 Mbps
       keyFrameInterval: 120,
       isLocalStream: false,
-      recordStream: false
+      recordStream: false,
+      streamType: 'internet',
+      localSave: true,
+      recordingRetentionHours: 6
     }
   };
+  private activeStream: Stream | null = null;
 
   constructor() {
     super();
@@ -77,6 +81,18 @@ class StreamService extends EventEmitter {
         this.emit('error', { message: 'Failed to restart stream with new settings', error: err });
       });
     }
+  }
+
+  public getSettings(): StreamSettings {
+    return this.settings;
+  }
+
+  public setActiveStream(stream: Stream | null): void {
+    this.activeStream = stream;
+  }
+
+  public getActiveStream(): Stream | null {
+    return this.activeStream;
   }
 
   private configureMediaConstraints(): MediaStreamConstraints {
@@ -161,16 +177,23 @@ class StreamService extends EventEmitter {
     this.emit('streamEnded');
   }
 
-  startRecording(): void {
+  startRecording(localSave: boolean = true): void {
     if (!this.mediaStream) {
       throw new Error('No media stream available');
     }
     
-    if (this.settings.streaming.recordStream && MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+    if (this.settings.streaming.recordStream) {
       this.recordedChunks = [];
       
+      const mimeType = 'video/webm;codecs=vp9';
+      
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        this.emit('error', { message: 'Recording codec is not supported by this browser' });
+        return;
+      }
+      
       this.mediaRecorder = new MediaRecorder(this.mediaStream, {
-        mimeType: 'video/webm;codecs=vp9',
+        mimeType: mimeType,
         videoBitsPerSecond: this.settings.streaming.bitrate
       });
       
@@ -181,13 +204,23 @@ class StreamService extends EventEmitter {
       };
       
       this.mediaRecorder.onstop = () => {
+        if (this.recordedChunks.length > 0) {
+          const recordingBlob = new Blob(this.recordedChunks, { type: mimeType });
+          
+          if (localSave) {
+            this.saveRecordingLocally(recordingBlob);
+          } else if (this.activeStream) {
+            this.uploadRecording(recordingBlob, this.activeStream.id);
+          }
+        }
+        
         this.emit('recordingStopped');
       };
       
       this.mediaRecorder.start(1000); // Record in 1-second chunks
       this.emit('recordingStarted');
     } else {
-      this.emit('error', { message: 'Recording is not supported or enabled' });
+      this.emit('error', { message: 'Recording is not enabled in settings' });
     }
   }
 
@@ -204,30 +237,103 @@ class StreamService extends EventEmitter {
     return null;
   }
 
-  downloadRecording(filename: string): void {
-    const recordingBlob = this.stopRecording();
+  downloadRecording(filename: string = 'recording.webm'): void {
+    if (this.recordedChunks.length === 0) {
+      this.emit('error', { message: 'No recording data available to download' });
+      return;
+    }
     
-    if (recordingBlob) {
-      const url = URL.createObjectURL(recordingBlob);
+    try {
+      const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      document.body.appendChild(a);
-      a.style.display = 'none';
+      
       a.href = url;
       a.download = filename;
+      document.body.appendChild(a);
       a.click();
       
       setTimeout(() => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }, 100);
+      
+      this.emit('recordingDownloaded', { filename, size: blob.size });
+    } catch (error) {
+      this.emit('error', { message: 'Failed to download recording', error });
     }
   }
 
-  // For demo purposes, generate a unique shareable link
-  generateShareableLink(): string {
-    const randomId = Math.random().toString(36).substring(2, 15);
-    const baseUrl = window.location.origin;
-    return `${baseUrl}/watch/${randomId}`;
+  private saveRecordingLocally(blob: Blob): void {
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `stream-recording-${timestamp}.webm`;
+      
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      
+      this.emit('recordingSaved', {
+        url,
+        filename,
+        size: blob.size,
+        type: blob.type
+      });
+    } catch (error) {
+      this.emit('error', { message: 'Failed to save recording locally', error });
+    }
+  }
+
+  private async uploadRecording(blob: Blob, streamId: string): Promise<void> {
+    try {
+      // First we need to upload the blob to storage
+      const file = new File([blob], `recording-${streamId}-${Date.now()}.webm`, { type: blob.type });
+      
+      // Create a form data object
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      // Upload to Supabase Storage via edge function
+      const response = await fetch('https://earvjqvafjivvgrfeqxn.supabase.co/functions/v1/upload-recording', {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Authorization': `Bearer ${(await supabase.auth.getSession()).data.session?.access_token}`
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to upload recording: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data && data.url) {
+        // Update the stream with the recording URL
+        await liveStreamService.saveRecordingUrl(
+          streamId, 
+          data.url, 
+          this.settings.streaming.recordingRetentionHours
+        );
+        
+        this.emit('recordingUploaded', {
+          url: data.url,
+          streamId,
+          size: blob.size,
+          expiresIn: this.settings.streaming.recordingRetentionHours
+        });
+      }
+    } catch (error) {
+      this.emit('error', { message: 'Failed to upload recording', error });
+    }
   }
 
   // Bandwidth and stats monitoring
@@ -257,7 +363,8 @@ class StreamService extends EventEmitter {
           resolution: `${this.settings.video.width}x${this.settings.video.height}`,
           frameRate: this.settings.video.frameRate,
           codec: this.settings.streaming.codec,
-          viewerCount: this.connections.size
+          viewerCount: this.connections.size,
+          streamType: this.settings.streaming.streamType
         });
       }
       
@@ -325,27 +432,95 @@ class StreamService extends EventEmitter {
   }
 
   // For viewer: connect to a stream
-  async connectToStream(streamId: string): Promise<MediaStream> {
+  async connectToStream(streamId: string, streamType: 'local' | 'internet' = 'internet'): Promise<MediaStream> {
     try {
       this.setStatus('connecting');
       
-      // In a real implementation, we would connect to a signaling server,
-      // exchange SDP and ICE candidates, and establish a WebRTC connection
-      
-      // For now, we'll simulate receiving a stream after a delay
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          // Create a mock video stream
-          const mockVideoStream = new MediaStream();
-          this.setStatus('live');
-          resolve(mockVideoStream);
-        }, 2000);
-      });
+      if (streamType === 'local') {
+        // For local streaming, we would connect directly via LAN/WebRTC
+        return this.connectToLocalStream(streamId);
+      } else {
+        // For internet streaming, we would use a signaling server and TURN if needed
+        return this.connectToInternetStream(streamId);
+      }
     } catch (error) {
       this.setStatus('error');
       this.emit('error', { message: 'Failed to connect to stream', error });
       throw error;
     }
+  }
+
+  private async connectToLocalStream(streamId: string): Promise<MediaStream> {
+    // This would use a direct WebRTC connection on the local network
+    // For simplicity, we'll simulate this
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const mockVideoStream = new MediaStream();
+        this.setStatus('live');
+        this.emit('connectedToLocalStream', { streamId });
+        resolve(mockVideoStream);
+      }, 1000);
+    });
+  }
+
+  private async connectToInternetStream(streamId: string): Promise<MediaStream> {
+    // This would use a signaling server and TURN servers for internet streaming
+    // For simplicity, we'll simulate this
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const mockVideoStream = new MediaStream();
+        this.setStatus('live');
+        this.emit('connectedToInternetStream', { streamId });
+        resolve(mockVideoStream);
+      }, 2000);
+    });
+  }
+
+  // Helper methods for device detection
+  async getAvailableDevices(): Promise<{
+    videoDevices: MediaDeviceInfo[];
+    audioDevices: MediaDeviceInfo[];
+  }> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      const audioDevices = devices.filter(device => device.kind === 'audioinput');
+      
+      return { videoDevices, audioDevices };
+    } catch (error) {
+      this.emit('error', { message: 'Failed to get available devices', error });
+      return { videoDevices: [], audioDevices: [] };
+    }
+  }
+
+  // For checking if the browser supports necessary features
+  checkBrowserSupport(): {
+    supported: boolean;
+    features: Record<string, boolean>;
+  } {
+    const features = {
+      webRTC: !!window.RTCPeerConnection,
+      mediaDevices: !!navigator.mediaDevices && !!navigator.mediaDevices.getUserMedia,
+      mediaRecorder: !!window.MediaRecorder,
+      webSocket: !!window.WebSocket,
+      h264: false,
+      vp8: false,
+      vp9: false
+    };
+    
+    if (RTCRtpSender && RTCRtpSender.getCapabilities) {
+      const capabilities = RTCRtpSender.getCapabilities('video');
+      if (capabilities && capabilities.codecs) {
+        features.h264 = capabilities.codecs.some(c => c.mimeType.includes('H264'));
+        features.vp8 = capabilities.codecs.some(c => c.mimeType.includes('VP8'));
+        features.vp9 = capabilities.codecs.some(c => c.mimeType.includes('VP9'));
+      }
+    }
+    
+    const supported = features.webRTC && features.mediaDevices;
+    
+    return { supported, features };
   }
 }
 

@@ -22,7 +22,7 @@ serve(async (req) => {
     // Get the token from the request
     const authHeader = req.headers.get('Authorization') || ''
     if (!authHeader.startsWith('Bearer ')) {
-      throw new Error('Missing auth token')
+      throw new Error('Missing or invalid auth token')
     }
     
     const token = authHeader.replace('Bearer ', '')
@@ -34,29 +34,47 @@ serve(async (req) => {
       throw new Error('Invalid auth token or user not found')
     }
     
-    // Check if the user is a streamer
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('is_streamer')
-      .eq('id', user.id)
-      .single()
+    // Parse the multipart form data to get the file
+    const formData = await req.formData()
+    const file = formData.get('file')
     
-    if (profileError) {
-      throw new Error('Error fetching user profile')
+    if (!file || !(file instanceof File)) {
+      throw new Error('No file or invalid file provided')
     }
     
-    if (!profile.is_streamer) {
-      throw new Error('User is not a streamer')
+    // Generate a unique file name
+    const timestamp = new Date().getTime()
+    const fileName = `${user.id}_${timestamp}_${file.name}`
+    
+    // Upload to "recordings" bucket
+    const { data, error } = await supabase
+      .storage
+      .from('recordings')
+      .upload(`${user.id}/${fileName}`, file, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: file.type
+      })
+    
+    if (error) {
+      throw error
     }
     
-    // Generate a unique stream key
-    const streamKey = generateStreamKey(user.id)
+    // Get public URL for the file
+    const { data: { publicUrl } } = supabase
+      .storage
+      .from('recordings')
+      .getPublicUrl(`${user.id}/${fileName}`)
     
-    console.log(`Generated stream key for user ${user.id}`)
+    console.log(`Recording uploaded: ${fileName}`)
     
     return new Response(
       JSON.stringify({
-        stream_key: streamKey
+        success: true,
+        url: publicUrl,
+        fileName: fileName,
+        size: file.size,
+        type: file.type
       }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -64,10 +82,13 @@ serve(async (req) => {
       }
     )
   } catch (error) {
-    console.error('Error generating stream key:', error)
+    console.error('Error handling request:', error)
     
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ 
+        success: false, 
+        error: error.message || 'Unknown error occurred'
+      }),
       { 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400
@@ -75,12 +96,3 @@ serve(async (req) => {
     )
   }
 })
-
-// Generate a secure, unique stream key
-function generateStreamKey(userId: string): string {
-  const timestamp = Date.now().toString(36)
-  const random = Math.random().toString(36).substring(2, 10)
-  const userHash = userId.split('-')[0]
-  
-  return `stream_${userHash}_${timestamp}_${random}`
-}

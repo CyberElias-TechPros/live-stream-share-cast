@@ -21,6 +21,9 @@ export interface Stream {
   username?: string;
   displayName?: string;
   userAvatar?: string;
+  recordingUrl?: string;
+  recordingExpiry?: Date;
+  streamType: 'local' | 'internet';
 }
 
 export interface StreamQuality {
@@ -48,6 +51,32 @@ export interface User {
   updatedAt?: Date;
   lastSeen?: Date;
   socialLinks?: SocialLink[];
+  preferences?: UserPreferences;
+}
+
+export interface UserPreferences {
+  theme?: 'light' | 'dark' | 'system';
+  notifications?: {
+    email: boolean;
+    push: boolean;
+    streamStart: boolean;
+    comments: boolean;
+    followers: boolean;
+  };
+  privacy?: {
+    showOnlineStatus: boolean;
+    allowMessages: boolean;
+    showProfileToUnregistered: boolean;
+    allowMessages: boolean;
+    showProfileToUnregistered: boolean;
+  };
+  streaming?: {
+    defaultStreamType: 'local' | 'internet';
+    defaultQuality: string;
+    autoRecord: boolean;
+    autoDeleteRecordings: boolean;
+    recordingRetentionHours: number;
+  };
 }
 
 export interface SocialLink {
@@ -64,9 +93,11 @@ export interface StreamSession {
   viewerCount: number;
   duration?: number;
   recordingUrl?: string;
+  recordingExpiry?: Date;
   peakViewers?: number;
   avgViewDuration?: number;
   streamStats?: StreamStats[];
+  streamType: 'local' | 'internet';
 }
 
 export interface StreamStats {
@@ -83,37 +114,6 @@ export interface StreamError {
   code: string;
   message: string;
   details?: any;
-}
-
-export interface ChatMessage {
-  id: string;
-  streamId: string;
-  userId: string;
-  username: string;
-  userAvatar?: string;
-  message: string;
-  timestamp: Date;
-  isModerated?: boolean;
-  type?: 'text' | 'emote' | 'donation' | 'system';
-  metadata?: any;
-}
-
-export type StreamStatus = 
-  | "idle"
-  | "connecting"
-  | "live"
-  | "error"
-  | "ended"
-  | "loading"
-  | "buffering";
-
-export interface WebRTCConnection {
-  peerConnection: RTCPeerConnection;
-  dataChannel?: RTCDataChannel;
-  stream?: MediaStream;
-  streamId: string;
-  userId?: string;
-  connectionState: RTCPeerConnectionState;
 }
 
 export interface StreamSettings {
@@ -138,5 +138,41 @@ export interface StreamSettings {
     keyFrameInterval: number;
     isLocalStream: boolean;
     recordStream: boolean;
+    streamType: 'local' | 'internet';
+    localSave: boolean;
+    recordingRetentionHours: number;
+    autoDeleteRecordings?: boolean; // Added this property
   };
+}
+
+export type StreamStatus = 
+  | "idle"
+  | "connecting"
+  | "live"
+  | "error"
+  | "ended"
+  | "loading"
+  | "buffering";
+
+export interface WebRTCConnection {
+  peerConnection: RTCPeerConnection;
+  dataChannel?: RTCDataChannel;
+  stream?: MediaStream;
+  streamId: string;
+  userId?: string;
+  connectionState: RTCPeerConnectionState;
+}
+
+// Update the ChatMessage type to fix the type issue
+export interface ChatMessage {
+  id: string;
+  streamId: string;
+  userId: string;
+  username: string;
+  userAvatar?: string;
+  message: string;
+  timestamp: Date;
+  isModerated?: boolean;
+  type?: 'text' | 'emote' | 'donation' | 'system';
+  metadata?: any;
 }
