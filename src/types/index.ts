@@ -1,4 +1,3 @@
-
 export interface Stream {
   id: string;
   title: string;
@@ -68,6 +67,8 @@ export interface UserPreferences {
     showOnlineStatus: boolean;
     allowMessages: boolean;
     showProfileToUnregistered: boolean;
+    allowMessages: boolean;
+    showProfileToUnregistered: boolean;
   };
   streaming?: {
     defaultStreamType: 'local' | 'internet';
@@ -115,37 +116,6 @@ export interface StreamError {
   details?: any;
 }
 
-export interface ChatMessage {
-  id: string;
-  streamId: string;
-  userId: string;
-  username: string;
-  userAvatar?: string;
-  message: string;
-  timestamp: Date;
-  isModerated?: boolean;
-  type?: 'text' | 'emote' | 'donation' | 'system';
-  metadata?: any;
-}
-
-export type StreamStatus = 
-  | "idle"
-  | "connecting"
-  | "live"
-  | "error"
-  | "ended"
-  | "loading"
-  | "buffering";
-
-export interface WebRTCConnection {
-  peerConnection: RTCPeerConnection;
-  dataChannel?: RTCDataChannel;
-  stream?: MediaStream;
-  streamId: string;
-  userId?: string;
-  connectionState: RTCPeerConnectionState;
-}
-
 export interface StreamSettings {
   audio: {
     enabled: boolean;
@@ -171,5 +141,38 @@ export interface StreamSettings {
     streamType: 'local' | 'internet';
     localSave: boolean;
     recordingRetentionHours: number;
+    autoDeleteRecordings?: boolean; // Added this property
   };
+}
+
+export type StreamStatus = 
+  | "idle"
+  | "connecting"
+  | "live"
+  | "error"
+  | "ended"
+  | "loading"
+  | "buffering";
+
+export interface WebRTCConnection {
+  peerConnection: RTCPeerConnection;
+  dataChannel?: RTCDataChannel;
+  stream?: MediaStream;
+  streamId: string;
+  userId?: string;
+  connectionState: RTCPeerConnectionState;
+}
+
+// Update the ChatMessage type to fix the type issue
+export interface ChatMessage {
+  id: string;
+  streamId: string;
+  userId: string;
+  username: string;
+  userAvatar?: string;
+  message: string;
+  timestamp: Date;
+  isModerated?: boolean;
+  type?: 'text' | 'emote' | 'donation' | 'system';
+  metadata?: any;
 }

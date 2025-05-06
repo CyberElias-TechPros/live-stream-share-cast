@@ -1,4 +1,3 @@
-
 import { EventEmitter } from '@/lib/eventEmitter';
 import { 
   Stream, 
@@ -236,6 +235,33 @@ class StreamService extends EventEmitter {
     }
     
     return null;
+  }
+
+  downloadRecording(filename: string = 'recording.webm'): void {
+    if (this.recordedChunks.length === 0) {
+      this.emit('error', { message: 'No recording data available to download' });
+      return;
+    }
+    
+    try {
+      const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+      
+      this.emit('recordingDownloaded', { filename, size: blob.size });
+    } catch (error) {
+      this.emit('error', { message: 'Failed to download recording', error });
+    }
   }
 
   private saveRecordingLocally(blob: Blob): void {

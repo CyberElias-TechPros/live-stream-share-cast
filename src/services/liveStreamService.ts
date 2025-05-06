@@ -1,126 +1,129 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { Stream, StreamStats, StreamError, StreamSession } from "@/types";
 
 export const liveStreamService = {
   async getAllStreams(): Promise<Stream[]> {
-    const { data, error } = await supabase
-      .from("streams")
-      .select(`
-        id,
-        title,
-        description,
-        stream_key,
-        is_live,
-        is_recording,
-        started_at,
-        ended_at,
-        created_at,
-        viewer_count,
-        thumbnail_url,
-        category,
-        tags,
-        stream_type,
-        recording_url,
-        recording_expiry,
-        profiles:user_id (
-          id, 
-          username, 
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq("is_live", true)
-      .order("viewer_count", { ascending: false });
-    
-    if (error) {
-      console.error("Error fetching streams:", error);
+    try {
+      const { data, error } = await supabase
+        .from("streams")
+        .select(`
+          id,
+          title,
+          description,
+          stream_key,
+          is_live,
+          is_recording,
+          started_at,
+          ended_at,
+          created_at,
+          viewer_count,
+          thumbnail_url,
+          category,
+          tags,
+          profiles:user_id (
+            id, 
+            username, 
+            display_name,
+            avatar_url
+          )
+        `)
+        .eq("is_live", true)
+        .order("viewer_count", { ascending: false });
+      
+      if (error) {
+        console.error("Error fetching streams:", error);
+        return [];
+      }
+      
+      return (data || []).map(stream => ({
+        id: stream.id,
+        title: stream.title,
+        description: stream.description,
+        isLive: stream.is_live,
+        streamKey: stream.stream_key,
+        createdAt: new Date(stream.created_at),
+        viewerCount: stream.viewer_count || 0,
+        isRecording: stream.is_recording || false,
+        isLocalStream: false, // default to internet streaming if column doesn't exist
+        thumbnail: stream.thumbnail_url,
+        userId: stream.profiles.id,
+        username: stream.profiles.username,
+        displayName: stream.profiles.display_name,
+        userAvatar: stream.profiles.avatar_url,
+        startedAt: stream.started_at ? new Date(stream.started_at) : undefined,
+        endedAt: stream.ended_at ? new Date(stream.ended_at) : undefined,
+        category: stream.category,
+        tags: stream.tags || [],
+        recordingUrl: undefined, // If column doesn't exist
+        recordingExpiry: undefined, // If column doesn't exist
+        streamType: 'internet' // Default if column doesn't exist
+      }));
+    } catch (err) {
+      console.error("Error in getAllStreams:", err);
       return [];
     }
-    
-    return (data || []).map(stream => ({
-      id: stream.id,
-      title: stream.title,
-      description: stream.description,
-      isLive: stream.is_live,
-      streamKey: stream.stream_key,
-      createdAt: new Date(stream.created_at),
-      viewerCount: stream.viewer_count || 0,
-      isRecording: stream.is_recording || false,
-      isLocalStream: stream.stream_type === 'local',
-      thumbnail: stream.thumbnail_url,
-      userId: stream.profiles.id,
-      username: stream.profiles.username,
-      displayName: stream.profiles.display_name,
-      userAvatar: stream.profiles.avatar_url,
-      startedAt: stream.started_at ? new Date(stream.started_at) : undefined,
-      endedAt: stream.ended_at ? new Date(stream.ended_at) : undefined,
-      category: stream.category,
-      tags: stream.tags || [],
-      recordingUrl: stream.recording_url,
-      recordingExpiry: stream.recording_expiry ? new Date(stream.recording_expiry) : undefined,
-      streamType: stream.stream_type || 'internet'
-    }));
   },
   
   async getStreamById(streamId: string): Promise<Stream | null> {
-    const { data, error } = await supabase
-      .from("streams")
-      .select(`
-        id,
-        title,
-        description,
-        stream_key,
-        is_live,
-        is_recording,
-        started_at,
-        ended_at,
-        created_at,
-        viewer_count,
-        thumbnail_url,
-        category,
-        tags,
-        stream_type,
-        recording_url,
-        recording_expiry,
-        profiles:user_id (
-          id, 
-          username, 
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq("id", streamId)
-      .single();
-    
-    if (error || !data) {
-      console.error("Error fetching stream:", error);
+    try {
+      const { data, error } = await supabase
+        .from("streams")
+        .select(`
+          id,
+          title,
+          description,
+          stream_key,
+          is_live,
+          is_recording,
+          started_at,
+          ended_at,
+          created_at,
+          viewer_count,
+          thumbnail_url,
+          category,
+          tags,
+          profiles:user_id (
+            id, 
+            username, 
+            display_name,
+            avatar_url
+          )
+        `)
+        .eq("id", streamId)
+        .single();
+      
+      if (error || !data) {
+        console.error("Error fetching stream:", error);
+        return null;
+      }
+      
+      return {
+        id: data.id,
+        title: data.title,
+        description: data.description,
+        isLive: data.is_live,
+        streamKey: data.stream_key,
+        createdAt: new Date(data.created_at),
+        viewerCount: data.viewer_count || 0,
+        isRecording: data.is_recording || false,
+        isLocalStream: false, // default to internet streaming if column doesn't exist
+        thumbnail: data.thumbnail_url,
+        userId: data.profiles.id,
+        username: data.profiles.username,
+        displayName: data.profiles.display_name,
+        userAvatar: data.profiles.avatar_url,
+        startedAt: data.started_at ? new Date(data.started_at) : undefined,
+        endedAt: data.ended_at ? new Date(data.ended_at) : undefined,
+        category: data.category,
+        tags: data.tags || [],
+        recordingUrl: undefined, // If column doesn't exist
+        recordingExpiry: undefined, // If column doesn't exist
+        streamType: 'internet' // Default if column doesn't exist
+      };
+    } catch (err) {
+      console.error("Error in getStreamById:", err);
       return null;
     }
-    
-    return {
-      id: data.id,
-      title: data.title,
-      description: data.description,
-      isLive: data.is_live,
-      streamKey: data.stream_key,
-      createdAt: new Date(data.created_at),
-      viewerCount: data.viewer_count || 0,
-      isRecording: data.is_recording || false,
-      isLocalStream: data.stream_type === 'local',
-      thumbnail: data.thumbnail_url,
-      userId: data.profiles.id,
-      username: data.profiles.username,
-      displayName: data.profiles.display_name,
-      userAvatar: data.profiles.avatar_url,
-      startedAt: data.started_at ? new Date(data.started_at) : undefined,
-      endedAt: data.ended_at ? new Date(data.ended_at) : undefined,
-      category: data.category,
-      tags: data.tags || [],
-      recordingUrl: data.recording_url,
-      recordingExpiry: data.recording_expiry ? new Date(data.recording_expiry) : undefined,
-      streamType: data.stream_type || 'internet'
-    };
   },
   
   async createStream(stream: Partial<Stream>): Promise<Stream | null> {
@@ -283,25 +286,30 @@ export const liveStreamService = {
   },
   
   async getStreamStats(streamId: string): Promise<StreamStats[]> {
-    const { data, error } = await supabase
-      .from("stream_stats")
-      .select("*")
-      .eq("stream_id", streamId)
-      .order("timestamp", { ascending: true });
-    
-    if (error) {
-      console.error("Error fetching stream stats:", error);
+    try {
+      const { data, error } = await supabase
+        .from("stream_stats")
+        .select("*")
+        .eq("stream_id", streamId)
+        .order("timestamp", { ascending: true });
+      
+      if (error) {
+        console.error("Error fetching stream stats:", error);
+        return [];
+      }
+      
+      return (data || []).map(stat => ({
+        timestamp: new Date(stat.timestamp),
+        viewerCount: stat.viewer_count || 0,
+        bandwidth: stat.bandwidth || 0,
+        cpuUsage: stat.cpu_usage,
+        memoryUsage: stat.memory_usage,
+        errors: stat.errors ? mapJsonToStreamErrors(stat.errors) : [] // Convert JSON to StreamError array
+      }));
+    } catch (err) {
+      console.error("Error in getStreamStats:", err);
       return [];
     }
-    
-    return (data || []).map(stat => ({
-      timestamp: new Date(stat.timestamp),
-      viewerCount: stat.viewer_count || 0,
-      bandwidth: stat.bandwidth || 0,
-      cpuUsage: stat.cpu_usage,
-      memoryUsage: stat.memory_usage,
-      errors: stat.errors ? mapJsonToStreamErrors(stat.errors) : [] // Convert JSON to StreamError array
-    }));
   },
   
   async updateStreamViewCount(streamId: string, count: number): Promise<boolean> {

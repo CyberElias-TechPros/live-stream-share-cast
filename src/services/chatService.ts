@@ -1,12 +1,13 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { ChatMessage } from "@/types";
+import { Json } from "@/integrations/supabase/types";
 
 export const chatService = {
   async getChatMessages(streamId: string): Promise<ChatMessage[]> {
     const { data, error } = await supabase
       .from("chat_messages")
-      .select("*")
+      .select("*, profiles(username, avatar_url)")
       .eq("stream_id", streamId)
       .order("created_at", { ascending: true });
       
@@ -19,12 +20,12 @@ export const chatService = {
       id: message.id,
       streamId: message.stream_id,
       userId: message.user_id,
-      username: message.username || 'Anonymous',
-      userAvatar: message.avatar_url,
+      username: message.profiles?.username || 'Anonymous',
+      userAvatar: message.profiles?.avatar_url,
       message: message.message,
       timestamp: new Date(message.created_at),
       isModerated: message.is_moderated || false,
-      type: message.type || 'text',
+      type: (message.type || 'text') as 'text' | 'emote' | 'donation' | 'system',
       metadata: message.metadata
     }));
   },
@@ -42,7 +43,7 @@ export const chatService = {
         is_moderated: message.isModerated || false,
         metadata: message.metadata
       })
-      .select()
+      .select("*, profiles(username, avatar_url)")
       .single();
       
     if (error) {
@@ -54,12 +55,12 @@ export const chatService = {
       id: data.id,
       streamId: data.stream_id,
       userId: data.user_id,
-      username: data.username || 'Anonymous',
-      userAvatar: data.avatar_url,
+      username: data.profiles?.username || 'Anonymous',
+      userAvatar: data.profiles?.avatar_url,
       message: data.message,
       timestamp: new Date(data.created_at),
       isModerated: data.is_moderated || false,
-      type: data.type || 'text',
+      type: (data.type || 'text') as 'text' | 'emote' | 'donation' | 'system',
       metadata: data.metadata
     };
   },
@@ -95,7 +96,7 @@ export const chatService = {
   async getRecentChatMessages(streamId: string, limit: number = 50): Promise<ChatMessage[]> {
     const { data, error } = await supabase
       .from("chat_messages")
-      .select("*")
+      .select("*, profiles(username, avatar_url)")
       .eq("stream_id", streamId)
       .eq("is_moderated", false)
       .order("created_at", { ascending: false })
@@ -110,12 +111,12 @@ export const chatService = {
       id: message.id,
       streamId: message.stream_id,
       userId: message.user_id,
-      username: message.username || 'Anonymous',
-      userAvatar: message.avatar_url,
+      username: message.profiles?.username || 'Anonymous',
+      userAvatar: message.profiles?.avatar_url,
       message: message.message,
       timestamp: new Date(message.created_at),
       isModerated: message.is_moderated || false,
-      type: message.type || 'text',
+      type: (message.type || 'text') as 'text' | 'emote' | 'donation' | 'system',
       metadata: message.metadata
     })).reverse(); // Reverse to get chronological order
   }

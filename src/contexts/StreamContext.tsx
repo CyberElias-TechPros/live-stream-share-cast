@@ -1,4 +1,3 @@
-
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { streamService } from "@/services/streamService";
 import { liveStreamService } from "@/services/liveStreamService";
@@ -111,7 +110,6 @@ export function StreamProvider({ children }: { children: ReactNode }) {
         streaming: {
           streamType: userSettings.defaultStreamType || 'internet',
           recordStream: userSettings.autoRecord || false,
-          autoDeleteRecordings: userSettings.autoDeleteRecordings || true,
           recordingRetentionHours: userSettings.recordingRetentionHours || 6,
           localSave: true // Default to local saving
         }
