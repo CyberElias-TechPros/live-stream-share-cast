@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 import { User, UserPreferences, SocialLink, Stream } from "@/types";
 
@@ -136,7 +137,7 @@ export const profileService = {
       return false;
     }
     
-    const currentPreferences = currentData?.preferences || defaultUserPreferences();
+    const currentPreferences = currentData?.preferences as UserPreferences || defaultUserPreferences();
     const updatedPreferences = {
       ...currentPreferences,
       ...preferences
@@ -203,11 +204,12 @@ export const profileService = {
   },
   
   async getFollowers(userId: string): Promise<User[]> {
+    // Fix: Add column hint to avoid ambiguity in the relationship
     const { data, error } = await supabase
       .from("followers")
       .select(`
         follower_id,
-        profiles:follower_id (*)
+        follower_profile:follower_id(*)
       `)
       .eq("following_id", userId);
     
@@ -217,31 +219,33 @@ export const profileService = {
     }
     
     return (data || []).map(item => {
-      if (!item.profiles) return null;
+      if (!item.follower_profile) return null;
+      const profile = item.follower_profile;
       
       return {
-        id: item.profiles.id,
-        username: item.profiles.username,
-        email: item.profiles.email,
-        displayName: item.profiles.display_name,
-        avatar: item.profiles.avatar_url,
-        bio: item.profiles.bio,
-        followers: item.profiles.followers_count || 0,
-        following: item.profiles.following_count || 0,
-        isStreamer: item.profiles.is_streamer || false,
-        createdAt: new Date(item.profiles.created_at),
-        updatedAt: item.profiles.updated_at ? new Date(item.profiles.updated_at) : undefined,
-        lastSeen: item.profiles.last_seen ? new Date(item.profiles.last_seen) : undefined
+        id: profile.id,
+        username: profile.username,
+        email: profile.email,
+        displayName: profile.display_name,
+        avatar: profile.avatar_url,
+        bio: profile.bio,
+        followers: profile.followers_count || 0,
+        following: profile.following_count || 0,
+        isStreamer: profile.is_streamer || false,
+        createdAt: new Date(profile.created_at),
+        updatedAt: profile.updated_at ? new Date(profile.updated_at) : undefined,
+        lastSeen: profile.last_seen ? new Date(profile.last_seen) : undefined
       };
     }).filter(Boolean) as User[];
   },
   
   async getFollowing(userId: string): Promise<User[]> {
+    // Fix: Add column hint to avoid ambiguity in the relationship
     const { data, error } = await supabase
       .from("followers")
       .select(`
         following_id,
-        profiles:following_id (*)
+        following_profile:following_id(*)
       `)
       .eq("follower_id", userId);
     
@@ -251,21 +255,22 @@ export const profileService = {
     }
     
     return (data || []).map(item => {
-      if (!item.profiles) return null;
+      if (!item.following_profile) return null;
+      const profile = item.following_profile;
       
       return {
-        id: item.profiles.id,
-        username: item.profiles.username,
-        email: item.profiles.email,
-        displayName: item.profiles.display_name,
-        avatar: item.profiles.avatar_url,
-        bio: item.profiles.bio,
-        followers: item.profiles.followers_count || 0,
-        following: item.profiles.following_count || 0,
-        isStreamer: item.profiles.is_streamer || false,
-        createdAt: new Date(item.profiles.created_at),
-        updatedAt: item.profiles.updated_at ? new Date(item.profiles.updated_at) : undefined,
-        lastSeen: item.profiles.last_seen ? new Date(item.profiles.last_seen) : undefined
+        id: profile.id,
+        username: profile.username,
+        email: profile.email,
+        displayName: profile.display_name,
+        avatar: profile.avatar_url,
+        bio: profile.bio,
+        followers: profile.followers_count || 0,
+        following: profile.following_count || 0,
+        isStreamer: profile.is_streamer || false,
+        createdAt: new Date(profile.created_at),
+        updatedAt: profile.updated_at ? new Date(profile.updated_at) : undefined,
+        lastSeen: profile.last_seen ? new Date(profile.last_seen) : undefined
       };
     }).filter(Boolean) as User[];
   },
