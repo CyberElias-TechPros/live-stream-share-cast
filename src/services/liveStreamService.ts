@@ -64,7 +64,7 @@ export const liveStreamService = {
         tags: stream.tags || [],
         recordingUrl: stream.recording_url,
         recordingExpiry: stream.recording_expiry ? new Date(stream.recording_expiry) : undefined,
-        streamType: stream.stream_type || 'internet'
+        streamType: (stream.stream_type || 'internet') as 'local' | 'internet'
       }));
     } catch (err) {
       console.error("Error in getAllStreams:", err);
@@ -129,7 +129,7 @@ export const liveStreamService = {
         tags: data.tags || [],
         recordingUrl: data.recording_url,
         recordingExpiry: data.recording_expiry ? new Date(data.recording_expiry) : undefined,
-        streamType: data.stream_type || 'internet'
+        streamType: (data.stream_type || 'internet') as 'local' | 'internet'
       };
     } catch (err) {
       console.error("Error in getStreamById:", err);
@@ -196,7 +196,7 @@ export const liveStreamService = {
       tags: data.tags || [],
       recordingUrl: data.recording_url,
       recordingExpiry: data.recording_expiry ? new Date(data.recording_expiry) : undefined,
-      streamType: data.stream_type || 'internet'
+      streamType: (data.stream_type || 'internet') as 'local' | 'internet'
     };
   },
   
@@ -424,7 +424,7 @@ export const liveStreamService = {
       recordingExpiry: session.recording_expiry ? new Date(session.recording_expiry) : undefined,
       peakViewers: session.peak_viewers,
       avgViewDuration: session.avg_view_duration,
-      streamType: session.stream_type || 'internet'
+      streamType: (session.stream_type || 'internet') as 'local' | 'internet'
     }));
   },
   
@@ -494,7 +494,7 @@ export const liveStreamService = {
         tags: stream.tags || [],
         recordingUrl: stream.recording_url,
         recordingExpiry: stream.recording_expiry ? new Date(stream.recording_expiry) : undefined,
-        streamType: stream.stream_type || 'internet'
+        streamType: (stream.stream_type || 'internet') as 'local' | 'internet'
       }));
     } catch (err) {
       console.error("Error in getFeaturedStreams:", err);

@@ -1,6 +1,5 @@
-
 import { supabase } from "@/integrations/supabase/client";
-import { User, UserPreferences, SocialLink } from "@/types";
+import { User, UserPreferences, SocialLink, Stream } from "@/types";
 
 export const profileService = {
   async getProfile(userId: string): Promise<User | null> {
@@ -28,8 +27,8 @@ export const profileService = {
       createdAt: new Date(data.created_at),
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
-      preferences: data.preferences || defaultUserPreferences(),
-      socialLinks: data.social_links || []
+      preferences: data.preferences as UserPreferences || defaultUserPreferences(),
+      socialLinks: data.social_links as SocialLink[] || []
     };
   },
   
@@ -58,8 +57,8 @@ export const profileService = {
       createdAt: new Date(data.created_at),
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
-      preferences: data.preferences || defaultUserPreferences(),
-      socialLinks: data.social_links || []
+      preferences: data.preferences as UserPreferences || defaultUserPreferences(),
+      socialLinks: data.social_links as SocialLink[] || []
     };
   },
   
@@ -72,8 +71,8 @@ export const profileService = {
         bio: updates.bio,
         avatar_url: updates.avatar,
         is_streamer: updates.isStreamer,
-        social_links: updates.socialLinks,
-        preferences: updates.preferences,
+        social_links: updates.socialLinks as any,
+        preferences: updates.preferences as any,
         updated_at: new Date().toISOString()
       })
       .eq("id", userId)
@@ -98,8 +97,8 @@ export const profileService = {
       createdAt: new Date(data.created_at),
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
-      preferences: data.preferences || defaultUserPreferences(),
-      socialLinks: data.social_links || []
+      preferences: data.preferences as UserPreferences || defaultUserPreferences(),
+      socialLinks: data.social_links as SocialLink[] || []
     };
   },
   
@@ -194,7 +193,7 @@ export const profileService = {
       userAvatar: stream.profiles?.avatar_url,
       recordingUrl: stream.recording_url,
       recordingExpiry: stream.recording_expiry ? new Date(stream.recording_expiry) : undefined,
-      streamType: stream.stream_type || 'internet'
+      streamType: (stream.stream_type || 'internet') as 'local' | 'internet'
     }));
   },
   
@@ -203,7 +202,7 @@ export const profileService = {
       .from("followers")
       .select(`
         follower_id,
-        profiles:follower_id (*)
+        follower:follower_id (*)
       `)
       .eq("following_id", userId);
     
@@ -213,18 +212,18 @@ export const profileService = {
     }
     
     return (data || []).map(item => ({
-      id: item.profiles.id,
-      username: item.profiles.username,
-      email: item.profiles.email,
-      displayName: item.profiles.display_name,
-      avatar: item.profiles.avatar_url,
-      bio: item.profiles.bio,
-      followers: item.profiles.followers_count || 0,
-      following: item.profiles.following_count || 0,
-      isStreamer: item.profiles.is_streamer || false,
-      createdAt: new Date(item.profiles.created_at),
-      updatedAt: item.profiles.updated_at ? new Date(item.profiles.updated_at) : undefined,
-      lastSeen: item.profiles.last_seen ? new Date(item.profiles.last_seen) : undefined
+      id: item.follower.id,
+      username: item.follower.username,
+      email: item.follower.email,
+      displayName: item.follower.display_name,
+      avatar: item.follower.avatar_url,
+      bio: item.follower.bio,
+      followers: item.follower.followers_count || 0,
+      following: item.follower.following_count || 0,
+      isStreamer: item.follower.is_streamer || false,
+      createdAt: new Date(item.follower.created_at),
+      updatedAt: item.follower.updated_at ? new Date(item.follower.updated_at) : undefined,
+      lastSeen: item.follower.last_seen ? new Date(item.follower.last_seen) : undefined
     }));
   },
   
@@ -233,7 +232,7 @@ export const profileService = {
       .from("followers")
       .select(`
         following_id,
-        profiles:following_id (*)
+        following:following_id (*)
       `)
       .eq("follower_id", userId);
     
@@ -243,18 +242,18 @@ export const profileService = {
     }
     
     return (data || []).map(item => ({
-      id: item.profiles.id,
-      username: item.profiles.username,
-      email: item.profiles.email,
-      displayName: item.profiles.display_name,
-      avatar: item.profiles.avatar_url,
-      bio: item.profiles.bio,
-      followers: item.profiles.followers_count || 0,
-      following: item.profiles.following_count || 0,
-      isStreamer: item.profiles.is_streamer || false,
-      createdAt: new Date(item.profiles.created_at),
-      updatedAt: item.profiles.updated_at ? new Date(item.profiles.updated_at) : undefined,
-      lastSeen: item.profiles.last_seen ? new Date(item.profiles.last_seen) : undefined
+      id: item.following.id,
+      username: item.following.username,
+      email: item.following.email,
+      displayName: item.following.display_name,
+      avatar: item.following.avatar_url,
+      bio: item.following.bio,
+      followers: item.following.followers_count || 0,
+      following: item.following.following_count || 0,
+      isStreamer: item.following.is_streamer || false,
+      createdAt: new Date(item.following.created_at),
+      updatedAt: item.following.updated_at ? new Date(item.following.updated_at) : undefined,
+      lastSeen: item.following.last_seen ? new Date(item.following.last_seen) : undefined
     }));
   },
   
