@@ -28,7 +28,7 @@ export const profileService = {
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
       preferences: data.preferences as UserPreferences || defaultUserPreferences(),
-      socialLinks: data.social_links as SocialLink[] || []
+      socialLinks: data.social_links ? (data.social_links as unknown as SocialLink[]) : []
     };
   },
   
@@ -58,23 +58,28 @@ export const profileService = {
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
       preferences: data.preferences as UserPreferences || defaultUserPreferences(),
-      socialLinks: data.social_links as SocialLink[] || []
+      socialLinks: data.social_links ? (data.social_links as unknown as SocialLink[]) : []
     };
   },
   
   async updateProfile(userId: string, updates: Partial<User>): Promise<User | null> {
+    // Create an object with only the fields that should be updated
+    const updateData: Record<string, any> = {};
+    
+    if (updates.username !== undefined) updateData.username = updates.username;
+    if (updates.displayName !== undefined) updateData.display_name = updates.displayName;
+    if (updates.bio !== undefined) updateData.bio = updates.bio;
+    if (updates.avatar !== undefined) updateData.avatar_url = updates.avatar;
+    if (updates.isStreamer !== undefined) updateData.is_streamer = updates.isStreamer;
+    if (updates.socialLinks !== undefined) updateData.social_links = updates.socialLinks;
+    if (updates.preferences !== undefined) updateData.preferences = updates.preferences;
+    
+    // Add updated_at timestamp
+    updateData.updated_at = new Date().toISOString();
+    
     const { data, error } = await supabase
       .from("profiles")
-      .update({
-        username: updates.username,
-        display_name: updates.displayName,
-        bio: updates.bio,
-        avatar_url: updates.avatar,
-        is_streamer: updates.isStreamer,
-        social_links: updates.socialLinks as any,
-        preferences: updates.preferences as any,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq("id", userId)
       .select()
       .single();
@@ -98,7 +103,7 @@ export const profileService = {
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
       preferences: data.preferences as UserPreferences || defaultUserPreferences(),
-      socialLinks: data.social_links as SocialLink[] || []
+      socialLinks: data.social_links ? (data.social_links as unknown as SocialLink[]) : []
     };
   },
   
@@ -202,7 +207,7 @@ export const profileService = {
       .from("followers")
       .select(`
         follower_id,
-        follower:follower_id (*)
+        profiles:follower_id (*)
       `)
       .eq("following_id", userId);
     
@@ -211,20 +216,24 @@ export const profileService = {
       return [];
     }
     
-    return (data || []).map(item => ({
-      id: item.follower.id,
-      username: item.follower.username,
-      email: item.follower.email,
-      displayName: item.follower.display_name,
-      avatar: item.follower.avatar_url,
-      bio: item.follower.bio,
-      followers: item.follower.followers_count || 0,
-      following: item.follower.following_count || 0,
-      isStreamer: item.follower.is_streamer || false,
-      createdAt: new Date(item.follower.created_at),
-      updatedAt: item.follower.updated_at ? new Date(item.follower.updated_at) : undefined,
-      lastSeen: item.follower.last_seen ? new Date(item.follower.last_seen) : undefined
-    }));
+    return (data || []).map(item => {
+      if (!item.profiles) return null;
+      
+      return {
+        id: item.profiles.id,
+        username: item.profiles.username,
+        email: item.profiles.email,
+        displayName: item.profiles.display_name,
+        avatar: item.profiles.avatar_url,
+        bio: item.profiles.bio,
+        followers: item.profiles.followers_count || 0,
+        following: item.profiles.following_count || 0,
+        isStreamer: item.profiles.is_streamer || false,
+        createdAt: new Date(item.profiles.created_at),
+        updatedAt: item.profiles.updated_at ? new Date(item.profiles.updated_at) : undefined,
+        lastSeen: item.profiles.last_seen ? new Date(item.profiles.last_seen) : undefined
+      };
+    }).filter(Boolean) as User[];
   },
   
   async getFollowing(userId: string): Promise<User[]> {
@@ -232,7 +241,7 @@ export const profileService = {
       .from("followers")
       .select(`
         following_id,
-        following:following_id (*)
+        profiles:following_id (*)
       `)
       .eq("follower_id", userId);
     
@@ -241,20 +250,24 @@ export const profileService = {
       return [];
     }
     
-    return (data || []).map(item => ({
-      id: item.following.id,
-      username: item.following.username,
-      email: item.following.email,
-      displayName: item.following.display_name,
-      avatar: item.following.avatar_url,
-      bio: item.following.bio,
-      followers: item.following.followers_count || 0,
-      following: item.following.following_count || 0,
-      isStreamer: item.following.is_streamer || false,
-      createdAt: new Date(item.following.created_at),
-      updatedAt: item.following.updated_at ? new Date(item.following.updated_at) : undefined,
-      lastSeen: item.following.last_seen ? new Date(item.following.last_seen) : undefined
-    }));
+    return (data || []).map(item => {
+      if (!item.profiles) return null;
+      
+      return {
+        id: item.profiles.id,
+        username: item.profiles.username,
+        email: item.profiles.email,
+        displayName: item.profiles.display_name,
+        avatar: item.profiles.avatar_url,
+        bio: item.profiles.bio,
+        followers: item.profiles.followers_count || 0,
+        following: item.profiles.following_count || 0,
+        isStreamer: item.profiles.is_streamer || false,
+        createdAt: new Date(item.profiles.created_at),
+        updatedAt: item.profiles.updated_at ? new Date(item.profiles.updated_at) : undefined,
+        lastSeen: item.profiles.last_seen ? new Date(item.profiles.last_seen) : undefined
+      };
+    }).filter(Boolean) as User[];
   },
   
   async followUser(followerId: string, followingId: string): Promise<boolean> {
