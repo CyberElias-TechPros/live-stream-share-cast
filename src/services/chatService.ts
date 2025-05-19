@@ -1,123 +1,156 @@
 
 import { supabase } from "@/integrations/supabase/client";
 import { ChatMessage } from "@/types";
-import { Json } from "@/integrations/supabase/types";
+
+interface SendChatMessageParams {
+  streamId: string;
+  userId: string;
+  username: string;
+  userAvatar?: string;
+  message: string;
+  type?: 'text' | 'emote' | 'donation' | 'system';
+  metadata?: any;
+}
 
 export const chatService = {
   async getChatMessages(streamId: string): Promise<ChatMessage[]> {
-    const { data, error } = await supabase
-      .from("chat_messages")
-      .select("*, profiles(username, avatar_url)")
-      .eq("stream_id", streamId)
-      .order("created_at", { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select(`
+          *,
+          profiles:user_id (
+            username,
+            avatar_url
+          )
+        `)
+        .eq("stream_id", streamId)
+        .order("created_at", { ascending: true });
+        
+      if (error) {
+        console.error("Error fetching chat messages:", error);
+        return [];
+      }
       
-    if (error) {
-      console.error("Error fetching chat messages:", error);
+      return (data || []).map(msg => ({
+        id: msg.id,
+        streamId: msg.stream_id,
+        userId: msg.user_id,
+        username: msg.profiles?.username || "Anonymous",
+        userAvatar: msg.profiles?.avatar_url,
+        message: msg.message,
+        timestamp: new Date(msg.created_at),
+        isModerated: msg.is_moderated || false,
+        type: (msg.type as 'text' | 'emote' | 'donation' | 'system') || 'text',
+        metadata: msg.metadata
+      }));
+    } catch (err) {
+      console.error("Error in getChatMessages:", err);
       return [];
     }
-    
-    return (data || []).map(message => ({
-      id: message.id,
-      streamId: message.stream_id,
-      userId: message.user_id,
-      username: message.profiles?.username || 'Anonymous',
-      userAvatar: message.profiles?.avatar_url,
-      message: message.message,
-      timestamp: new Date(message.created_at),
-      isModerated: message.is_moderated || false,
-      type: (message.type || 'text') as 'text' | 'emote' | 'donation' | 'system',
-      metadata: message.metadata
-    }));
   },
   
-  async sendChatMessage(message: Omit<ChatMessage, 'id' | 'timestamp'>): Promise<ChatMessage | null> {
-    const { data, error } = await supabase
-      .from("chat_messages")
-      .insert({
-        stream_id: message.streamId,
-        user_id: message.userId,
-        username: message.username,
-        avatar_url: message.userAvatar,
-        message: message.message,
-        type: message.type || 'text',
-        is_moderated: message.isModerated || false,
-        metadata: message.metadata
-      })
-      .select("*, profiles(username, avatar_url)")
-      .single();
+  async sendChatMessage(params: SendChatMessageParams): Promise<ChatMessage | null> {
+    try {
+      const { streamId, userId, username, userAvatar, message, type = 'text', metadata } = params;
       
-    if (error) {
-      console.error("Error sending chat message:", error);
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .insert({
+          stream_id: streamId,
+          user_id: userId,
+          message,
+          type,
+          metadata,
+          created_at: new Date().toISOString()
+        })
+        .select(`
+          *,
+          profiles:user_id (
+            username,
+            avatar_url
+          )
+        `)
+        .single();
+        
+      if (error || !data) {
+        console.error("Error sending chat message:", error);
+        return null;
+      }
+      
+      return {
+        id: data.id,
+        streamId: data.stream_id,
+        userId: data.user_id,
+        username: data.profiles?.username || username,
+        userAvatar: data.profiles?.avatar_url || userAvatar,
+        message: data.message,
+        timestamp: new Date(data.created_at),
+        isModerated: data.is_moderated || false,
+        type: (data.type as 'text' | 'emote' | 'donation' | 'system'),
+        metadata: data.metadata
+      };
+    } catch (err) {
+      console.error("Error in sendChatMessage:", err);
       return null;
     }
-    
-    return {
-      id: data.id,
-      streamId: data.stream_id,
-      userId: data.user_id,
-      username: data.profiles?.username || 'Anonymous',
-      userAvatar: data.profiles?.avatar_url,
-      message: data.message,
-      timestamp: new Date(data.created_at),
-      isModerated: data.is_moderated || false,
-      type: (data.type || 'text') as 'text' | 'emote' | 'donation' | 'system',
-      metadata: data.metadata
-    };
   },
   
   async moderateMessage(messageId: string, isModerated: boolean): Promise<boolean> {
-    const { error } = await supabase
-      .from("chat_messages")
-      .update({ is_moderated: isModerated })
-      .eq("id", messageId);
+    try {
+      const { error } = await supabase
+        .from("chat_messages")
+        .update({ is_moderated: isModerated })
+        .eq("id", messageId);
+        
+      if (error) {
+        console.error("Error moderating message:", error);
+        return false;
+      }
       
-    if (error) {
-      console.error("Error moderating message:", error);
+      return true;
+    } catch (err) {
+      console.error("Error in moderateMessage:", err);
       return false;
     }
-    
-    return true;
   },
   
-  async deleteMessage(messageId: string): Promise<boolean> {
-    const { error } = await supabase
-      .from("chat_messages")
-      .delete()
-      .eq("id", messageId);
+  async getLatestChatMessages(streamId: string, limit: number = 50): Promise<ChatMessage[]> {
+    try {
+      const { data, error } = await supabase
+        .from("chat_messages")
+        .select(`
+          *,
+          profiles:user_id (
+            username,
+            avatar_url
+          )
+        `)
+        .eq("stream_id", streamId)
+        .eq("is_moderated", false)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+        
+      if (error) {
+        console.error("Error fetching latest chat messages:", error);
+        return [];
+      }
       
-    if (error) {
-      console.error("Error deleting message:", error);
-      return false;
-    }
-    
-    return true;
-  },
-  
-  async getRecentChatMessages(streamId: string, limit: number = 50): Promise<ChatMessage[]> {
-    const { data, error } = await supabase
-      .from("chat_messages")
-      .select("*, profiles(username, avatar_url)")
-      .eq("stream_id", streamId)
-      .eq("is_moderated", false)
-      .order("created_at", { ascending: false })
-      .limit(limit);
-      
-    if (error) {
-      console.error("Error fetching recent chat messages:", error);
+      return (data || []).map(msg => ({
+        id: msg.id,
+        streamId: msg.stream_id,
+        userId: msg.user_id,
+        username: msg.profiles?.username || "Anonymous",
+        userAvatar: msg.profiles?.avatar_url,
+        message: msg.message,
+        timestamp: new Date(msg.created_at),
+        isModerated: msg.is_moderated || false,
+        type: (msg.type as 'text' | 'emote' | 'donation' | 'system') || 'text',
+        metadata: msg.metadata
+      })).reverse(); // Reverse to get chronological order
+    } catch (err) {
+      console.error("Error in getLatestChatMessages:", err);
       return [];
     }
-    
-    return (data || []).map(message => ({
-      id: message.id,
-      streamId: message.stream_id,
-      userId: message.user_id,
-      username: message.profiles?.username || 'Anonymous',
-      userAvatar: message.profiles?.avatar_url,
-      message: message.message,
-      timestamp: new Date(message.created_at),
-      isModerated: message.is_moderated || false,
-      type: (message.type || 'text') as 'text' | 'emote' | 'donation' | 'system',
-      metadata: message.metadata
-    })).reverse(); // Reverse to get chronological order
   }
 };

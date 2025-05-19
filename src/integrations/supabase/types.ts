@@ -105,6 +105,8 @@ export type Database = {
           id: string
           is_streamer: boolean | null
           last_seen: string | null
+          preferences: Json | null
+          social_links: Json | null
           updated_at: string | null
           username: string
         }
@@ -119,6 +121,8 @@ export type Database = {
           id: string
           is_streamer?: boolean | null
           last_seen?: string | null
+          preferences?: Json | null
+          social_links?: Json | null
           updated_at?: string | null
           username: string
         }
@@ -133,6 +137,8 @@ export type Database = {
           id?: string
           is_streamer?: boolean | null
           last_seen?: string | null
+          preferences?: Json | null
+          social_links?: Json | null
           updated_at?: string | null
           username?: string
         }
@@ -141,40 +147,52 @@ export type Database = {
       stream_sessions: {
         Row: {
           avg_bitrate: number | null
+          avg_view_duration: number | null
           created_at: string
           duration: number | null
           ended_at: string | null
           id: string
           peak_viewers: number | null
+          recording_expiry: string | null
+          recording_url: string | null
           resolution: string | null
           started_at: string
           stream_id: string
+          stream_type: string | null
           user_id: string
           viewer_count: number | null
         }
         Insert: {
           avg_bitrate?: number | null
+          avg_view_duration?: number | null
           created_at?: string
           duration?: number | null
           ended_at?: string | null
           id?: string
           peak_viewers?: number | null
+          recording_expiry?: string | null
+          recording_url?: string | null
           resolution?: string | null
           started_at?: string
           stream_id: string
+          stream_type?: string | null
           user_id: string
           viewer_count?: number | null
         }
         Update: {
           avg_bitrate?: number | null
+          avg_view_duration?: number | null
           created_at?: string
           duration?: number | null
           ended_at?: string | null
           id?: string
           peak_viewers?: number | null
+          recording_expiry?: string | null
+          recording_url?: string | null
           resolution?: string | null
           started_at?: string
           stream_id?: string
+          stream_type?: string | null
           user_id?: string
           viewer_count?: number | null
         }
@@ -246,8 +264,11 @@ export type Database = {
           is_live: boolean | null
           is_recording: boolean | null
           peak_viewers: number | null
+          recording_expiry: string | null
+          recording_url: string | null
           started_at: string | null
           stream_key: string
+          stream_type: string | null
           tags: string[] | null
           thumbnail_url: string | null
           title: string
@@ -264,8 +285,11 @@ export type Database = {
           is_live?: boolean | null
           is_recording?: boolean | null
           peak_viewers?: number | null
+          recording_expiry?: string | null
+          recording_url?: string | null
           started_at?: string | null
           stream_key: string
+          stream_type?: string | null
           tags?: string[] | null
           thumbnail_url?: string | null
           title: string
@@ -282,8 +306,11 @@ export type Database = {
           is_live?: boolean | null
           is_recording?: boolean | null
           peak_viewers?: number | null
+          recording_expiry?: string | null
+          recording_url?: string | null
           started_at?: string | null
           stream_key?: string
+          stream_type?: string | null
           tags?: string[] | null
           thumbnail_url?: string | null
           title?: string

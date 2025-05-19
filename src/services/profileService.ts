@@ -1,6 +1,6 @@
 
 import { supabase } from "@/integrations/supabase/client";
-import { User, UserPreferences } from "@/types";
+import { User, UserPreferences, SocialLink } from "@/types";
 
 export const profileService = {
   async getProfile(userId: string): Promise<User | null> {

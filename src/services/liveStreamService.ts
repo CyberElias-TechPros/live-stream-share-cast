@@ -1,3 +1,4 @@
+
 import { supabase } from "@/integrations/supabase/client";
 import { Stream, StreamStats, StreamError, StreamSession } from "@/types";
 
@@ -20,6 +21,9 @@ export const liveStreamService = {
           thumbnail_url,
           category,
           tags,
+          stream_type,
+          recording_url,
+          recording_expiry,
           profiles:user_id (
             id, 
             username, 
@@ -35,7 +39,11 @@ export const liveStreamService = {
         return [];
       }
       
-      return (data || []).map(stream => ({
+      if (!data || data.length === 0) {
+        return [];
+      }
+      
+      return data.map(stream => ({
         id: stream.id,
         title: stream.title,
         description: stream.description,
@@ -44,7 +52,7 @@ export const liveStreamService = {
         createdAt: new Date(stream.created_at),
         viewerCount: stream.viewer_count || 0,
         isRecording: stream.is_recording || false,
-        isLocalStream: false, // default to internet streaming if column doesn't exist
+        isLocalStream: stream.stream_type === 'local',
         thumbnail: stream.thumbnail_url,
         userId: stream.profiles.id,
         username: stream.profiles.username,
@@ -54,9 +62,9 @@ export const liveStreamService = {
         endedAt: stream.ended_at ? new Date(stream.ended_at) : undefined,
         category: stream.category,
         tags: stream.tags || [],
-        recordingUrl: undefined, // If column doesn't exist
-        recordingExpiry: undefined, // If column doesn't exist
-        streamType: 'internet' // Default if column doesn't exist
+        recordingUrl: stream.recording_url,
+        recordingExpiry: stream.recording_expiry ? new Date(stream.recording_expiry) : undefined,
+        streamType: stream.stream_type || 'internet'
       }));
     } catch (err) {
       console.error("Error in getAllStreams:", err);
@@ -82,6 +90,9 @@ export const liveStreamService = {
           thumbnail_url,
           category,
           tags,
+          stream_type,
+          recording_url,
+          recording_expiry,
           profiles:user_id (
             id, 
             username, 
@@ -106,7 +117,7 @@ export const liveStreamService = {
         createdAt: new Date(data.created_at),
         viewerCount: data.viewer_count || 0,
         isRecording: data.is_recording || false,
-        isLocalStream: false, // default to internet streaming if column doesn't exist
+        isLocalStream: data.stream_type === 'local',
         thumbnail: data.thumbnail_url,
         userId: data.profiles.id,
         username: data.profiles.username,
@@ -116,9 +127,9 @@ export const liveStreamService = {
         endedAt: data.ended_at ? new Date(data.ended_at) : undefined,
         category: data.category,
         tags: data.tags || [],
-        recordingUrl: undefined, // If column doesn't exist
-        recordingExpiry: undefined, // If column doesn't exist
-        streamType: 'internet' // Default if column doesn't exist
+        recordingUrl: data.recording_url,
+        recordingExpiry: data.recording_expiry ? new Date(data.recording_expiry) : undefined,
+        streamType: data.stream_type || 'internet'
       };
     } catch (err) {
       console.error("Error in getStreamById:", err);
@@ -140,7 +151,7 @@ export const liveStreamService = {
     // Calculate recording expiry time if needed
     let recordingExpiry = null;
     if (stream.isRecording) {
-      const expiryHours = 6; // Default to 6 hours
+      const expiryHours = stream.streamType === 'local' ? 0 : 6; // Default to 6 hours for internet streams, 0 for local
       const expiryDate = new Date();
       expiryDate.setHours(expiryDate.getHours() + expiryHours);
       recordingExpiry = expiryDate.toISOString();
@@ -335,18 +346,21 @@ export const liveStreamService = {
   },
   
   async updateStreamInfo(streamId: string, updates: Partial<Stream>): Promise<boolean> {
+    const dbUpdates = {
+      title: updates.title,
+      description: updates.description,
+      category: updates.category,
+      tags: updates.tags,
+      updated_at: new Date().toISOString(),
+      thumbnail_url: updates.thumbnail,
+      stream_type: updates.streamType,
+      is_recording: updates.isRecording,
+      recording_url: updates.recordingUrl
+    };
+    
     const { error } = await supabase
       .from("streams")
-      .update({
-        title: updates.title,
-        description: updates.description,
-        category: updates.category,
-        tags: updates.tags,
-        updated_at: new Date().toISOString(),
-        thumbnail_url: updates.thumbnail,
-        stream_type: updates.streamType,
-        is_recording: updates.isRecording
-      })
+      .update(dbUpdates)
       .eq("id", streamId);
     
     if (error) {
@@ -419,60 +433,73 @@ export const liveStreamService = {
   },
   
   async getFeaturedStreams(limit: number = 5): Promise<Stream[]> {
-    const { data, error } = await supabase
-      .from("streams")
-      .select(`
-        id,
-        title,
-        description,
-        stream_key,
-        is_live,
-        is_recording,
-        started_at,
-        ended_at,
-        created_at,
-        viewer_count,
-        thumbnail_url,
-        category,
-        tags,
-        stream_type,
-        profiles:user_id (
-          id, 
-          username, 
-          display_name,
-          avatar_url
-        )
-      `)
-      .eq("is_live", true)
-      .order("viewer_count", { ascending: false })
-      .limit(limit);
-    
-    if (error) {
-      console.error("Error fetching featured streams:", error);
+    try {
+      const { data, error } = await supabase
+        .from("streams")
+        .select(`
+          id,
+          title,
+          description,
+          stream_key,
+          is_live,
+          is_recording,
+          started_at,
+          ended_at,
+          created_at,
+          viewer_count,
+          thumbnail_url,
+          category,
+          tags,
+          stream_type,
+          recording_url,
+          recording_expiry,
+          profiles:user_id (
+            id, 
+            username, 
+            display_name,
+            avatar_url
+          )
+        `)
+        .eq("is_live", true)
+        .order("viewer_count", { ascending: false })
+        .limit(limit);
+      
+      if (error) {
+        console.error("Error fetching featured streams:", error);
+        return [];
+      }
+      
+      if (!data || data.length === 0) {
+        return [];
+      }
+      
+      return data.map(stream => ({
+        id: stream.id,
+        title: stream.title,
+        description: stream.description,
+        isLive: stream.is_live,
+        streamKey: stream.stream_key,
+        createdAt: new Date(stream.created_at),
+        viewerCount: stream.viewer_count || 0,
+        isRecording: stream.is_recording || false,
+        isLocalStream: stream.stream_type === 'local',
+        thumbnail: stream.thumbnail_url,
+        userId: stream.profiles.id,
+        username: stream.profiles.username,
+        displayName: stream.profiles.display_name,
+        userAvatar: stream.profiles.avatar_url,
+        startedAt: stream.started_at ? new Date(stream.started_at) : undefined,
+        endedAt: stream.ended_at ? new Date(stream.ended_at) : undefined,
+        category: stream.category,
+        tags: stream.tags || [],
+        recordingUrl: stream.recording_url,
+        recordingExpiry: stream.recording_expiry ? new Date(stream.recording_expiry) : undefined,
+        streamType: stream.stream_type || 'internet'
+      }));
+    } catch (err) {
+      console.error("Error in getFeaturedStreams:", err);
       return [];
     }
-    
-    return (data || []).map(stream => ({
-      id: stream.id,
-      title: stream.title,
-      description: stream.description,
-      isLive: stream.is_live,
-      streamKey: stream.stream_key,
-      createdAt: new Date(stream.created_at),
-      viewerCount: stream.viewer_count || 0,
-      isRecording: stream.is_recording || false,
-      isLocalStream: stream.stream_type === 'local',
-      thumbnail: stream.thumbnail_url,
-      userId: stream.profiles.id,
-      username: stream.profiles.username,
-      displayName: stream.profiles.display_name,
-      userAvatar: stream.profiles.avatar_url,
-      startedAt: stream.started_at ? new Date(stream.started_at) : undefined,
-      endedAt: stream.ended_at ? new Date(stream.ended_at) : undefined,
-      category: stream.category,
-      tags: stream.tags || [],
-      streamType: stream.stream_type || 'internet'
-    }));
   }
 };
 

@@ -108,10 +108,15 @@ export function StreamProvider({ children }: { children: ReactNode }) {
       
       updateStreamSettings({
         streaming: {
+          codec: streamSettings.streaming.codec,
+          bitrate: streamSettings.streaming.bitrate,
+          keyFrameInterval: streamSettings.streaming.keyFrameInterval,
+          isLocalStream: userSettings.defaultStreamType === 'local',
           streamType: userSettings.defaultStreamType || 'internet',
           recordStream: userSettings.autoRecord || false,
           recordingRetentionHours: userSettings.recordingRetentionHours || 6,
-          localSave: true // Default to local saving
+          localSave: true, // Default to local saving
+          autoDeleteRecordings: userSettings.autoDeleteRecordings || false
         }
       });
     }

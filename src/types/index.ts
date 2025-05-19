@@ -1,3 +1,4 @@
+
 export interface Stream {
   id: string;
   title: string;
@@ -65,8 +66,6 @@ export interface UserPreferences {
   };
   privacy?: {
     showOnlineStatus: boolean;
-    allowMessages: boolean;
-    showProfileToUnregistered: boolean;
     allowMessages: boolean;
     showProfileToUnregistered: boolean;
   };
@@ -141,7 +140,7 @@ export interface StreamSettings {
     streamType: 'local' | 'internet';
     localSave: boolean;
     recordingRetentionHours: number;
-    autoDeleteRecordings?: boolean; // Added this property
+    autoDeleteRecordings?: boolean;
   };
 }
 
@@ -163,7 +162,6 @@ export interface WebRTCConnection {
   connectionState: RTCPeerConnectionState;
 }
 
-// Update the ChatMessage type to fix the type issue
 export interface ChatMessage {
   id: string;
   streamId: string;
@@ -173,6 +171,6 @@ export interface ChatMessage {
   message: string;
   timestamp: Date;
   isModerated?: boolean;
-  type?: 'text' | 'emote' | 'donation' | 'system';
+  type: 'text' | 'emote' | 'donation' | 'system';
   metadata?: any;
 }
