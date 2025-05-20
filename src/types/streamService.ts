@@ -3,7 +3,7 @@ import { EventEmitter } from "@/lib/eventEmitter";
 import { Stream, StreamSettings, StreamStatus } from "./index";
 
 // Extend the StreamService to include EventEmitter capabilities
-export interface StreamService extends EventEmitter {
+export interface StreamService {
   getSettings(): StreamSettings;
   updateSettings(settings: StreamSettings): void;
   getMediaStream(): Promise<MediaStream>;

@@ -1,6 +1,6 @@
-
 import { supabase } from "@/integrations/supabase/client";
 import { User, UserPreferences, SocialLink, Stream } from "@/types";
+import { parseSocialLinks, parseUserPreferences } from "@/utils/typeUtils";
 
 export const profileService = {
   async getProfile(userId: string): Promise<User | null> {
@@ -15,6 +15,10 @@ export const profileService = {
       return null;
     }
     
+    // Use type-safe parsing for JSON fields
+    const preferences = parseUserPreferences(data.preferences, defaultUserPreferences());
+    const socialLinks = parseSocialLinks(data.social_links);
+    
     return {
       id: data.id,
       username: data.username,
@@ -28,8 +32,8 @@ export const profileService = {
       createdAt: new Date(data.created_at),
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
-      preferences: data.preferences as UserPreferences || defaultUserPreferences(),
-      socialLinks: data.social_links ? (data.social_links as unknown as SocialLink[]) : []
+      preferences,
+      socialLinks
     };
   },
   
@@ -45,6 +49,10 @@ export const profileService = {
       return null;
     }
     
+    // Use type-safe parsing for JSON fields
+    const preferences = parseUserPreferences(data.preferences, defaultUserPreferences());
+    const socialLinks = parseSocialLinks(data.social_links);
+    
     return {
       id: data.id,
       username: data.username,
@@ -58,8 +66,8 @@ export const profileService = {
       createdAt: new Date(data.created_at),
       updatedAt: data.updated_at ? new Date(data.updated_at) : undefined,
       lastSeen: data.last_seen ? new Date(data.last_seen) : undefined,
-      preferences: data.preferences as UserPreferences || defaultUserPreferences(),
-      socialLinks: data.social_links ? (data.social_links as unknown as SocialLink[]) : []
+      preferences,
+      socialLinks
     };
   },
   
@@ -137,7 +145,10 @@ export const profileService = {
       return false;
     }
     
-    const currentPreferences = currentData?.preferences as UserPreferences || defaultUserPreferences();
+    // Safely parse the current preferences using our utility function
+    const currentPreferences = parseUserPreferences(currentData?.preferences, defaultUserPreferences());
+    
+    // Create updated preferences object by merging current and new preferences
     const updatedPreferences = {
       ...currentPreferences,
       ...preferences
@@ -204,12 +215,16 @@ export const profileService = {
   },
   
   async getFollowers(userId: string): Promise<User[]> {
-    // Fix: Add column hint to avoid ambiguity in the relationship
+    // Fix: Properly specify the relationship with explicit column naming
     const { data, error } = await supabase
       .from("followers")
       .select(`
         follower_id,
-        follower_profile:follower_id(*)
+        follower_profiles:profiles!follower_id(
+          id, username, email, display_name, avatar_url, bio, 
+          followers_count, following_count, is_streamer,
+          created_at, updated_at, last_seen, preferences, social_links
+        )
       `)
       .eq("following_id", userId);
     
@@ -219,8 +234,12 @@ export const profileService = {
     }
     
     return (data || []).map(item => {
-      if (!item.follower_profile) return null;
-      const profile = item.follower_profile;
+      const profile = item.follower_profiles;
+      if (!profile) return null;
+      
+      // Use type-safe parsing for JSON fields
+      const preferences = parseUserPreferences(profile.preferences, defaultUserPreferences());
+      const socialLinks = parseSocialLinks(profile.social_links);
       
       return {
         id: profile.id,
@@ -234,18 +253,24 @@ export const profileService = {
         isStreamer: profile.is_streamer || false,
         createdAt: new Date(profile.created_at),
         updatedAt: profile.updated_at ? new Date(profile.updated_at) : undefined,
-        lastSeen: profile.last_seen ? new Date(profile.last_seen) : undefined
+        lastSeen: profile.last_seen ? new Date(profile.last_seen) : undefined,
+        preferences,
+        socialLinks
       };
     }).filter(Boolean) as User[];
   },
   
   async getFollowing(userId: string): Promise<User[]> {
-    // Fix: Add column hint to avoid ambiguity in the relationship
+    // Fix: Properly specify the relationship with explicit column naming
     const { data, error } = await supabase
       .from("followers")
       .select(`
         following_id,
-        following_profile:following_id(*)
+        following_profiles:profiles!following_id(
+          id, username, email, display_name, avatar_url, bio, 
+          followers_count, following_count, is_streamer,
+          created_at, updated_at, last_seen, preferences, social_links
+        )
       `)
       .eq("follower_id", userId);
     
@@ -255,8 +280,12 @@ export const profileService = {
     }
     
     return (data || []).map(item => {
-      if (!item.following_profile) return null;
-      const profile = item.following_profile;
+      const profile = item.following_profiles;
+      if (!profile) return null;
+      
+      // Use type-safe parsing for JSON fields
+      const preferences = parseUserPreferences(profile.preferences, defaultUserPreferences());
+      const socialLinks = parseSocialLinks(profile.social_links);
       
       return {
         id: profile.id,
@@ -270,7 +299,9 @@ export const profileService = {
         isStreamer: profile.is_streamer || false,
         createdAt: new Date(profile.created_at),
         updatedAt: profile.updated_at ? new Date(profile.updated_at) : undefined,
-        lastSeen: profile.last_seen ? new Date(profile.last_seen) : undefined
+        lastSeen: profile.last_seen ? new Date(profile.last_seen) : undefined,
+        preferences,
+        socialLinks
       };
     }).filter(Boolean) as User[];
   },
