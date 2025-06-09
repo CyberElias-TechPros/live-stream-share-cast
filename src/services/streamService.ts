@@ -1,16 +1,38 @@
 
 import { Stream, StreamSettings, StreamStatus } from "@/types";
 import { EventEmitter } from "@/lib/eventEmitter";
+import { streamSettingsSchema } from "@/utils/validationUtils";
 
-// Create a class that extends EventEmitter to implement the missing methods
-class StreamServiceImpl extends EventEmitter {
+export interface StreamServiceInterface {
+  getSettings(): StreamSettings;
+  updateSettings(settings: StreamSettings): void;
+  getMediaStream(): Promise<MediaStream>;
+  stopStream(): void;
+  connectToStream(streamId: string, streamType: 'local' | 'internet'): Promise<void>;
+  startRecording(saveLocally: boolean): void;
+  stopRecording(): void;
+  downloadRecording(filename: string): void;
+  checkBrowserSupport(): {
+    supported: boolean;
+    features: Record<string, boolean>;
+  };
+  setActiveStream(stream: Stream | null): void;
+  getCurrentStatus(): StreamStatus;
+  cleanup(): void;
+}
+
+class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
   private settings: StreamSettings;
   private activeStream: Stream | null = null;
+  private currentMediaStream: MediaStream | null = null;
+  private currentStatus: StreamStatus = 'idle';
+  private mediaRecorder: MediaRecorder | null = null;
+  private recordedChunks: Blob[] = [];
   
   constructor() {
     super();
     
-    // Initialize default settings
+    // Initialize with validated default settings
     this.settings = {
       audio: {
         enabled: true,
@@ -38,15 +60,25 @@ class StreamServiceImpl extends EventEmitter {
   }
   
   getSettings(): StreamSettings {
-    return this.settings;
+    return { ...this.settings }; // Return a copy to prevent mutation
   }
   
   updateSettings(settings: StreamSettings): void {
-    this.settings = settings;
+    try {
+      // Validate settings using Zod schema
+      const validatedSettings = streamSettingsSchema.parse(settings);
+      this.settings = validatedSettings;
+      this.emit('settingsUpdated', validatedSettings);
+    } catch (error) {
+      console.error('Invalid stream settings:', error);
+      this.emit('error', new Error('Invalid stream settings provided'));
+    }
   }
   
   async getMediaStream(): Promise<MediaStream> {
     try {
+      this.setStatus('connecting');
+      
       const constraints: MediaStreamConstraints = {
         audio: this.settings.audio.enabled ? {
           echoCancellation: this.settings.audio.echoCancellation,
@@ -64,45 +96,140 @@ class StreamServiceImpl extends EventEmitter {
       };
       
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      this.currentMediaStream = stream;
+      
+      // Set up stream event listeners
+      stream.getTracks().forEach(track => {
+        track.addEventListener('ended', () => {
+          this.emit('trackEnded', track);
+        });
+      });
+      
+      this.setStatus('live');
       this.emit('streamStarted', stream);
-      this.emit('statusChange', 'live');
       return stream;
     } catch (error) {
-      console.error("Error accessing media devices:", error);
-      this.emit('statusChange', 'error');
+      this.setStatus('error');
+      this.emit('error', error);
       throw error;
     }
   }
   
   stopStream(): void {
-    this.emit('streamEnded');
-    this.emit('statusChange', 'idle');
+    try {
+      if (this.currentMediaStream) {
+        this.currentMediaStream.getTracks().forEach(track => {
+          track.stop();
+        });
+        this.currentMediaStream = null;
+      }
+      
+      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+        this.stopRecording();
+      }
+      
+      this.setStatus('idle');
+      this.emit('streamEnded');
+    } catch (error) {
+      console.error('Error stopping stream:', error);
+      this.emit('error', error);
+    }
   }
   
   async connectToStream(streamId: string, streamType: 'local' | 'internet'): Promise<void> {
-    // Implementation would go here
-    this.emit('statusChange', 'connecting');
-    
-    // Simulate successful connection
-    setTimeout(() => {
-      this.emit('statusChange', 'live');
-    }, 1000);
+    try {
+      this.setStatus('connecting');
+      
+      // Validate stream ID
+      if (!streamId || streamId.length < 10) {
+        throw new Error('Invalid stream ID');
+      }
+      
+      // Simulate connection logic - replace with actual implementation
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      this.setStatus('live');
+      this.emit('connected', { streamId, streamType });
+    } catch (error) {
+      this.setStatus('error');
+      this.emit('error', error);
+      throw error;
+    }
   }
   
   setActiveStream(stream: Stream | null): void {
     this.activeStream = stream;
+    this.emit('activeStreamChanged', stream);
   }
   
   startRecording(saveLocally: boolean): void {
-    this.emit('recordingStarted');
+    try {
+      if (!this.currentMediaStream) {
+        throw new Error('No active media stream to record');
+      }
+      
+      if (!MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        throw new Error('Recording not supported in this browser');
+      }
+      
+      this.recordedChunks = [];
+      this.mediaRecorder = new MediaRecorder(this.currentMediaStream, {
+        mimeType: 'video/webm;codecs=vp9'
+      });
+      
+      this.mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          this.recordedChunks.push(event.data);
+        }
+      };
+      
+      this.mediaRecorder.onstop = () => {
+        this.emit('recordingStopped', {
+          saveLocally,
+          chunks: this.recordedChunks
+        });
+      };
+      
+      this.mediaRecorder.start(1000); // Record in 1 second chunks
+      this.emit('recordingStarted', { saveLocally });
+    } catch (error) {
+      console.error('Error starting recording:', error);
+      this.emit('error', error);
+    }
   }
   
   stopRecording(): void {
-    this.emit('recordingStopped');
+    try {
+      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+        this.mediaRecorder.stop();
+      }
+    } catch (error) {
+      console.error('Error stopping recording:', error);
+      this.emit('error', error);
+    }
   }
   
   downloadRecording(filename: string): void {
-    this.emit('recordingSaved', { filename });
+    try {
+      if (this.recordedChunks.length === 0) {
+        throw new Error('No recording data available');
+      }
+      
+      const blob = new Blob(this.recordedChunks, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename.endsWith('.webm') ? filename : `${filename}.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      
+      this.emit('recordingSaved', { filename, size: blob.size });
+    } catch (error) {
+      console.error('Error downloading recording:', error);
+      this.emit('error', error);
+    }
   }
   
   checkBrowserSupport(): { supported: boolean; features: Record<string, boolean> } {
@@ -110,17 +237,38 @@ class StreamServiceImpl extends EventEmitter {
       webRTC: !!window.RTCPeerConnection,
       getUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
       mediaRecorder: !!window.MediaRecorder,
-      webSockets: !!window.WebSocket
+      webSockets: !!window.WebSocket,
+      webCodecs: 'VideoEncoder' in window && 'VideoDecoder' in window,
+      h264Support: MediaRecorder.isTypeSupported('video/webm;codecs=h264'),
+      vp9Support: MediaRecorder.isTypeSupported('video/webm;codecs=vp9'),
+      screenCapture: !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
     };
     
-    const supported = Object.values(features).every(Boolean);
+    const supported = features.webRTC && features.getUserMedia && features.mediaRecorder && features.webSockets;
     
-    return {
-      supported,
-      features
-    };
+    return { supported, features };
+  }
+  
+  getCurrentStatus(): StreamStatus {
+    return this.currentStatus;
+  }
+  
+  private setStatus(status: StreamStatus): void {
+    if (this.currentStatus !== status) {
+      this.currentStatus = status;
+      this.emit('statusChange', status);
+    }
+  }
+  
+  cleanup(): void {
+    this.stopStream();
+    this.removeAllListeners();
+    this.recordedChunks = [];
   }
 }
 
-// Export a singleton instance
+// Export singleton instance
 export const streamService = new StreamServiceImpl();
+
+// Export type for dependency injection
+export type StreamService = StreamServiceInterface;

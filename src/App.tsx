@@ -3,10 +3,11 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { StreamProvider } from "@/contexts/StreamContext";
 import { usePageTracking } from "@/hooks/useAnalytics";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import Index from "./pages/Index";
 import CreateStream from "./pages/CreateStream";
 import WatchStream from "./pages/WatchStream";
@@ -25,20 +26,34 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      retry: (failureCount, error) => {
+        // Don't retry on 4xx errors
+        if ((error as any)?.status >= 400 && (error as any)?.status < 500) {
+          return false;
+        }
+        return failureCount < 2;
+      },
       staleTime: 5 * 60 * 1000, // 5 minutes
+      gcTime: 10 * 60 * 1000, // 10 minutes
+    },
+    mutations: {
+      retry: 1,
     },
   },
 });
 
-// Analytics tracker component
+// Enhanced analytics tracker with error handling
 const AnalyticsTracker = () => {
-  usePageTracking();
+  try {
+    usePageTracking();
+  } catch (error) {
+    console.warn('Analytics tracking failed:', error);
+  }
   return null;
 };
 
 const AppContent = () => (
-  <>
+  <ErrorBoundary>
     <AnalyticsTracker />
     <Routes>
       <Route path="/" element={<Index />} />
@@ -77,23 +92,25 @@ const AppContent = () => (
       {/* 404 route */}
       <Route path="*" element={<NotFound />} />
     </Routes>
-  </>
+  </ErrorBoundary>
 );
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <BrowserRouter>
-      <AuthProvider>
-        <StreamProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <AppContent />
-          </TooltipProvider>
-        </StreamProvider>
-      </AuthProvider>
-    </BrowserRouter>
-  </QueryClientProvider>
+  <ErrorBoundary>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <StreamProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
+              <AppContent />
+            </TooltipProvider>
+          </StreamProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
+  </ErrorBoundary>
 );
 
 export default App;
