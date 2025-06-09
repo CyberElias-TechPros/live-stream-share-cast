@@ -220,7 +220,7 @@ const Index = () => {
               </div>
             </div>
           </div>
-        </ErrorBoundary>
+        </footer>
       </div>
     </ErrorBoundary>
   );
