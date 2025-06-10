@@ -64,8 +64,8 @@ class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
   
   updateSettings(settings: StreamSettings): void {
     try {
-      // Validate settings using Zod schema
-      const validatedSettings = streamSettingsSchema.parse(settings);
+      // Validate settings using Zod schema and explicitly cast to StreamSettings
+      const validatedSettings = streamSettingsSchema.parse(settings) as StreamSettings;
       this.settings = validatedSettings;
       this.emit('settingsUpdated', validatedSettings);
     } catch (error) {
