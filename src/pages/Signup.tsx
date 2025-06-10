@@ -93,7 +93,8 @@ export default function Signup() {
       }
       
       setIsSubmitting(true);
-      await signup(sanitizedUsername, sanitizedEmail, password, sanitizedName);
+      // Fix: Use only 3 arguments (username, email, password) instead of 4
+      await signup(sanitizedUsername, sanitizedEmail, password);
       // The auth context will handle navigation and toast on success
     } catch (error: any) {
       // Error is handled by the auth context

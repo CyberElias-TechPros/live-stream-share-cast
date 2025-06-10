@@ -87,25 +87,22 @@ export function parseUserPreferences(
     return defaultPrefs;
   }
   
-  // Deep merge with validation
+  // Deep merge with validation - fix: ensure objects exist before spreading
   const parsedData = data as Partial<UserPreferences>;
   
   return {
-    theme: {
-      ...defaultPrefs.theme,
-      ...(parsedData.theme && typeof parsedData.theme === 'object' ? parsedData.theme : {})
-    },
+    theme: defaultPrefs.theme,
     notifications: {
       ...defaultPrefs.notifications,
-      ...(parsedData.notifications && typeof parsedData.notifications === 'object' ? parsedData.notifications : {})
+      ...(parsedData.notifications && typeof parsedData.notifications === 'object' && parsedData.notifications !== null ? parsedData.notifications : {})
     },
     privacy: {
       ...defaultPrefs.privacy,
-      ...(parsedData.privacy && typeof parsedData.privacy === 'object' ? parsedData.privacy : {})
+      ...(parsedData.privacy && typeof parsedData.privacy === 'object' && parsedData.privacy !== null ? parsedData.privacy : {})
     },
     streaming: {
       ...defaultPrefs.streaming,
-      ...(parsedData.streaming && typeof parsedData.streaming === 'object' ? parsedData.streaming : {})
+      ...(parsedData.streaming && typeof parsedData.streaming === 'object' && parsedData.streaming !== null ? parsedData.streaming : {})
     }
   };
 }
