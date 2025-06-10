@@ -73,7 +73,7 @@ export default function Navigation() {
           {/* Logo */}
           <Link to="/" className="flex items-center">
             <FileVideo className="h-6 w-6 text-stream mr-2" />
-            <span className="font-bold text-lg">See-Me-Cast</span>
+            <span className="font-bold text-lg">I'm Live</span>
           </Link>
           
           {/* Desktop Navigation */}

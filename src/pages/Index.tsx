@@ -129,7 +129,7 @@ const Index = () => {
           {/* How it Works Section */}
           <section className="py-16 container">
             <h2 className="text-3xl font-bold text-center mb-12">
-              How See-Me-Cast Works
+              How I'm Live Works
             </h2>
             
             <div className="grid md:grid-cols-3 gap-8">
@@ -200,11 +200,11 @@ const Index = () => {
             <div className="flex flex-col md:flex-row justify-between items-center">
               <div className="flex items-center gap-2 mb-4 md:mb-0">
                 <Video className="h-5 w-5 text-stream" />
-                <span className="text-lg font-semibold">See-Me-Cast</span>
+                <span className="text-lg font-semibold">I'm Live</span>
               </div>
               
               <div className="text-sm text-muted-foreground">
-                © {new Date().getFullYear()} See-Me-Cast. All rights reserved.
+                © {new Date().getFullYear()} I'm Live. All rights reserved.
               </div>
               
               <div className="flex gap-6 mt-4 md:mt-0">

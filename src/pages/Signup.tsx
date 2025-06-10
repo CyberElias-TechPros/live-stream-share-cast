@@ -120,7 +120,7 @@ export default function Signup() {
           <div className="text-center">
             <Link to="/" className="inline-flex items-center gap-2 text-2xl font-bold">
               <Video className="h-8 w-8 text-stream" />
-              <span>See-Me-Cast</span>
+              <span>I'm Live</span>
             </Link>
             <h1 className="mt-6 text-3xl font-bold">Create your account</h1>
             <p className="mt-2 text-muted-foreground">
