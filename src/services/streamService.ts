@@ -1,3 +1,4 @@
+
 import { Stream, StreamSettings, StreamStatus } from "@/types";
 import { EventEmitter } from "@/lib/eventEmitter";
 import { streamSettingsSchema } from "@/utils/validationUtils";
@@ -31,7 +32,7 @@ class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
   constructor() {
     super();
     
-    // Initialize with validated default settings - fix: ensure all required properties are provided
+    // Initialize with validated default settings - fix: provide all required properties explicitly
     this.settings = {
       audio: {
         enabled: true,
