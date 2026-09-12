@@ -206,7 +206,7 @@ export default function Settings() {
       <div className="min-h-screen flex flex-col">
         <Navigation />
         
-        <main className="flex-1 container py-8">
+        <main className="flex-1 container pt-28 pb-16">
           <div className="max-w-4xl mx-auto">
             <div className="flex flex-col lg:flex-row gap-8">
               <div className="lg:w-64 space-y-6">
@@ -230,7 +230,7 @@ export default function Settings() {
     <div className="min-h-screen flex flex-col">
       <Navigation />
       
-      <main className="flex-1 container py-8">
+      <main className="flex-1 container pt-28 pb-16">
         <div className="max-w-4xl mx-auto">
           <div className="flex flex-col lg:flex-row gap-8">
             <div className="lg:w-64 space-y-1">

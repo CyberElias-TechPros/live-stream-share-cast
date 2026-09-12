@@ -16,7 +16,7 @@ import {
   LineChart,
   Line,
 } from "recharts";
-import { UserRound, Video, Clock, Eye, BarChart3, Play, Settings, ListFilter } from "lucide-react";
+import { UserRound, Video, Clock, Eye, BarChart3, Play, Settings, ListFilter, Radio } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import { Stream, StreamSession } from "@/types";
 import { useAuth } from "@/contexts/AuthContext";
@@ -26,6 +26,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAccentColor } from "@/hooks/useAccent";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +42,7 @@ export default function Dashboard() {
   
   const { user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const accentColor = useAccentColor("--accent-mid");
   
   useEffect(() => {
     if (!isAuthenticated) {
@@ -107,20 +109,32 @@ export default function Dashboard() {
   };
   
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="relative min-h-svh bg-background">
+      <div className="grain-fixed" />
+      <div className="relative z-10 flex min-h-svh flex-col">
       <Navigation />
-      
-      <main className="flex-1 container py-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between mb-8">
+
+      <main className="flex-1 container pt-28 pb-16">
+        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-6 mb-10">
           <div>
-            <h1 className="text-3xl font-bold">Dashboard</h1>
-            <p className="text-muted-foreground">Manage your streams and view analytics</p>
+            <p className="overline mb-3 flex items-center gap-2">
+              <span className="eq text-[hsl(var(--accent-mid))]">
+                <span /><span /><span /><span />
+              </span>
+              Control room
+            </p>
+            <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">
+              Your <span className="text-gradient">studio</span>.
+            </h1>
+            <p className="mt-2 text-muted-foreground">
+              Manage your streams and read the numbers that matter.
+            </p>
           </div>
-          
-          <div className="mt-4 lg:mt-0">
-            <Button onClick={handleCreateStream}>
-              <Video className="mr-2 h-4 w-4" />
-              Create New Stream
+
+          <div>
+            <Button variant="glow" size="lg" onClick={handleCreateStream}>
+              <Radio className="h-4 w-4" />
+              Go live
             </Button>
           </div>
         </div>
@@ -138,57 +152,57 @@ export default function Dashboard() {
           <>
             {/* Stats Cards */}
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
-              <Card>
+              <Card className="edge-light rounded-2xl border-white/8 bg-card/70 backdrop-blur-md transition-colors hover:border-white/20">
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground mb-1">Total Streams</p>
-                      <p className="text-3xl font-bold">{streams.length}</p>
+                      <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground/70 uppercase mb-1.5">Total streams</p>
+                      <p className="font-display text-3xl font-bold">{streams.length}</p>
                     </div>
-                    <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Video className="h-6 w-6 text-primary" />
+                    <div className="grid h-12 w-12 place-items-center rounded-xl bg-signature-soft text-[hsl(var(--accent-hi))] ring-1 ring-white/10">
+                      <Video className="h-5 w-5" />
                     </div>
                   </div>
                 </CardContent>
               </Card>
               
-              <Card>
+              <Card className="edge-light rounded-2xl border-white/8 bg-card/70 backdrop-blur-md transition-colors hover:border-white/20">
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground mb-1">Live Streams</p>
-                      <p className="text-3xl font-bold">{liveStreams.length}</p>
+                      <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground/70 uppercase mb-1.5">Live now</p>
+                      <p className="font-display text-3xl font-bold">{liveStreams.length}</p>
                     </div>
-                    <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
-                      <Play className="h-6 w-6 text-green-500" />
+                    <div className="grid h-12 w-12 place-items-center rounded-xl bg-live/10 text-[hsl(349_86%_65%)] ring-1 ring-live/20">
+                      <Play className="h-5 w-5 fill-current" />
                     </div>
                   </div>
                 </CardContent>
               </Card>
               
-              <Card>
+              <Card className="edge-light rounded-2xl border-white/8 bg-card/70 backdrop-blur-md transition-colors hover:border-white/20">
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground mb-1">Total Viewers</p>
-                      <p className="text-3xl font-bold">{totalViewers}</p>
+                      <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground/70 uppercase mb-1.5">Total viewers</p>
+                      <p className="font-display text-3xl font-bold">{totalViewers}</p>
                     </div>
-                    <div className="h-12 w-12 rounded-full bg-blue-500/10 flex items-center justify-center">
-                      <Eye className="h-6 w-6 text-blue-500" />
+                    <div className="grid h-12 w-12 place-items-center rounded-xl bg-[hsl(190_90%_50%/0.1)] text-[hsl(190_90%_62%)] ring-1 ring-[hsl(190_90%_50%/0.2)]">
+                      <Eye className="h-5 w-5" />
                     </div>
                   </div>
                 </CardContent>
               </Card>
               
-              <Card>
+              <Card className="edge-light rounded-2xl border-white/8 bg-card/70 backdrop-blur-md transition-colors hover:border-white/20">
                 <CardContent className="pt-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm font-medium text-muted-foreground mb-1">Stream Sessions</p>
-                      <p className="text-3xl font-bold">{sessions.length}</p>
+                      <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground/70 uppercase mb-1.5">Sessions</p>
+                      <p className="font-display text-3xl font-bold">{sessions.length}</p>
                     </div>
-                    <div className="h-12 w-12 rounded-full bg-orange-500/10 flex items-center justify-center">
-                      <Clock className="h-6 w-6 text-orange-500" />
+                    <div className="grid h-12 w-12 place-items-center rounded-xl bg-[hsl(330_90%_55%/0.1)] text-[hsl(330_90%_68%)] ring-1 ring-[hsl(330_90%_55%/0.2)]">
+                      <Clock className="h-5 w-5" />
                     </div>
                   </div>
                 </CardContent>
@@ -335,12 +349,15 @@ export default function Dashboard() {
                   <CardContent>
                     <ResponsiveContainer width="100%" height={400}>
                       <BarChart data={viewsByStream}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="name" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Bar dataKey="views" fill="#8884d8" name="Total Viewers" />
+                        <CartesianGrid stroke="hsl(252 20% 16%)" strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" stroke="hsl(252 14% 64%)" fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis stroke="hsl(252 14% 64%)" fontSize={12} tickLine={false} axisLine={false} />
+                        <Tooltip
+                          contentStyle={{ background: "hsl(252 36% 6%)", border: "1px solid hsl(252 20% 16%)", borderRadius: "12px", color: "hsl(250 30% 96%)" }}
+                          labelStyle={{ color: "hsl(250 30% 96%)" }}
+                        />
+                        <Legend wrapperStyle={{ color: "hsl(252 14% 64%)" }} />
+                        <Bar dataKey="views" fill={accentColor} radius={[8, 8, 0, 0]} name="Total Viewers" />
                       </BarChart>
                     </ResponsiveContainer>
                   </CardContent>
@@ -431,12 +448,15 @@ export default function Dashboard() {
                   <CardContent>
                     <ResponsiveContainer width="100%" height={400}>
                       <LineChart data={sessionData}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" />
-                        <YAxis />
-                        <Tooltip />
-                        <Legend />
-                        <Line type="monotone" dataKey="sessions" stroke="#8884d8" name="Sessions" />
+                        <CartesianGrid stroke="hsl(252 20% 16%)" strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="date" stroke="hsl(252 14% 64%)" fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis stroke="hsl(252 14% 64%)" fontSize={12} tickLine={false} axisLine={false} allowDecimals={false} />
+                        <Tooltip
+                          contentStyle={{ background: "hsl(252 36% 6%)", border: "1px solid hsl(252 20% 16%)", borderRadius: "12px", color: "hsl(250 30% 96%)" }}
+                          labelStyle={{ color: "hsl(250 30% 96%)" }}
+                        />
+                        <Legend wrapperStyle={{ color: "hsl(252 14% 64%)" }} />
+                        <Line type="monotone" dataKey="sessions" stroke={accentColor} strokeWidth={2.5} dot={{ r: 3, fill: accentColor }} activeDot={{ r: 5 }} name="Sessions" />
                       </LineChart>
                     </ResponsiveContainer>
                   </CardContent>
@@ -446,6 +466,7 @@ export default function Dashboard() {
           </>
         )}
       </main>
+      </div>
     </div>
   );
 }
