@@ -15,6 +15,7 @@ import {
   handleListStreams,
   handleMyStreams,
   handleStartStream,
+  handleJoinCall,
   handleStopStream,
   handleUpdateStream,
   handleUploadRecording,
@@ -64,6 +65,7 @@ router.get('/api/streams/:id', guard(handleGetStream));
 router.patch('/api/streams/:id', guard(handleUpdateStream));
 router.delete('/api/streams/:id', guard(handleDeleteStream));
 router.post('/api/streams/:id/start', guard(handleStartStream));
+router.post('/api/streams/:id/join-call', guard(handleJoinCall));
 router.post('/api/streams/:id/stop', guard(handleStopStream));
 router.get('/api/streams/:id/chat', guard(handleGetChat));
 router.post('/api/streams/:id/chat', guard(handlePostChat));
@@ -253,6 +255,7 @@ export default {
         env.DB.prepare('DELETE FROM stream_stats WHERE timestamp < ?').bind(weekAgo),
         env.DB.prepare('DELETE FROM login_attempts WHERE created_at < ?').bind(twoDaysAgo),
         env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(weekAgoSessions),
+        env.DB.prepare('DELETE FROM room_tickets WHERE expires_at < ?').bind(now),
       ]);
     } catch (error) {
       console.error('scheduled maintenance failed', error);

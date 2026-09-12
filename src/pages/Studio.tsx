@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -17,7 +16,9 @@ import {
   Radio,
   Settings2,
   Square,
+  Users,
   Video,
+  Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 import Navigation from "@/components/Navigation";
@@ -31,14 +32,16 @@ import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { MessageList } from "@/components/MessageList";
 import { useAuth } from "@/contexts/AuthContext";
+import { useConfig, useIsLan } from "@/contexts/ConfigContext";
 import { useReveal } from "@/hooks/useReveal";
 import { useSEO } from "@/hooks/useSEO";
 import { useElapsedSeconds, formatDuration } from "@/hooks/useElapsedSeconds";
 import { api, absoluteUrl, ApiError } from "@/lib/api";
 import { RoomSocket } from "@/lib/roomSocket";
+import { QRCodeSVG } from "qrcode.react";
 import { Broadcaster } from "@/lib/webrtc";
 import { cn } from "@/lib/utils";
-import type { AppConfig, ChatMessage, Stream } from "@/types";
+import type { ChatMessage, Stream } from "@/types";
 
 type Step = "setup" | "check" | "live";
 
@@ -86,11 +89,7 @@ export default function Studio() {
   const micRafRef = useRef<number | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  const { data: config } = useQuery({
-    queryKey: ["config"],
-    queryFn: () => api.get<AppConfig>("/api/config"),
-    staleTime: Infinity,
-  });
+  const config = useConfig();
 
   useEffect(() => {
     if (user?.preferences?.streaming) {
@@ -203,13 +202,14 @@ export default function Studio() {
   };
 
   // ---- Step 1: create the stream -------------------------------------------
-  const createStream = async (form: { title: string; description: string; category: string; tags: string }) => {
+  const createStream = async (form: { title: string; description: string; category: string; tags: string; kind: "broadcast" | "call" }) => {
     setCreating(true);
     try {
       const res = await api.post<{ stream: Stream }>("/api/streams", {
         title: form.title,
         description: form.description || undefined,
         category: form.category,
+        kind: form.kind,
         tags:
           form.tags
             .split(",")
@@ -217,6 +217,12 @@ export default function Studio() {
             .filter(Boolean)
             .slice(0, 10) || undefined,
       });
+      if (form.kind === "call") {
+        // Calls run in their own room page (pre-join → mesh), not the studio console.
+        toast.success("Call created — open it to start.");
+        navigate(`/watch/${res.stream.id}`);
+        return;
+      }
       setStream(res.stream);
       setStep("check");
     } catch (err) {
@@ -462,11 +468,12 @@ function SetupStep({
   creating,
   defaultCategory,
 }: {
-  onSubmit: (form: { title: string; description: string; category: string; tags: string }) => void;
+  onSubmit: (form: { title: string; description: string; category: string; tags: string; kind: "broadcast" | "call" }) => void;
   creating: boolean;
   defaultCategory: string;
 }) {
   const categories = ["Gaming", "Music", "Talk", "Tech", "Art", "Sports", "Education", "IRL", "Other"];
+  const [kind, setKind] = useState<"broadcast" | "call">("broadcast");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState(defaultCategory);
@@ -485,9 +492,47 @@ function SetupStep({
         className="panel mt-8 space-y-5 p-6"
         onSubmit={(e) => {
           e.preventDefault();
-          if (titleValid) onSubmit({ title: title.trim(), description, category, tags });
+          if (titleValid) onSubmit({ title: title.trim(), description, category, tags, kind });
         }}
       >
+        <div className="space-y-2">
+          <Label>What are we doing?</Label>
+          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Room type">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={kind === "broadcast"}
+              onClick={() => setKind("broadcast")}
+              className={cn(
+                "flex items-start gap-3 rounded-lg border p-3 text-left transition-colors",
+                kind === "broadcast" ? "border-accent bg-accent/10" : "border-line bg-bg-raised hover:border-line-strong"
+              )}
+            >
+              <Radio className={cn("mt-0.5 h-4 w-4", kind === "broadcast" ? "text-accent" : "text-text-faint")} aria-hidden="true" />
+              <span>
+                <span className="block text-sm font-semibold text-white">Broadcast</span>
+                <span className="block text-xs text-text-faint">You present, they watch — live</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={kind === "call"}
+              onClick={() => setKind("call")}
+              className={cn(
+                "flex items-start gap-3 rounded-lg border p-3 text-left transition-colors",
+                kind === "call" ? "border-accent bg-accent/10" : "border-line bg-bg-raised hover:border-line-strong"
+              )}
+            >
+              <Users className={cn("mt-0.5 h-4 w-4", kind === "call" ? "text-accent" : "text-text-faint")} aria-hidden="true" />
+              <span>
+                <span className="block text-sm font-semibold text-white">Video call</span>
+                <span className="block text-xs text-text-faint">Everyone on camera, up to 8</span>
+              </span>
+            </button>
+          </div>
+        </div>
+
         <div className="space-y-2">
           <Label htmlFor="title">Title *</Label>
           <Input
@@ -541,7 +586,7 @@ function SetupStep({
 
         <div className="flex justify-end border-t border-line pt-5">
           <Button type="submit" variant="accent" disabled={!titleValid || creating}>
-            {creating ? "Creating…" : "Continue to devices"}
+            {creating ? "Creating…" : kind === "call" ? "Create the call" : "Continue to devices"}
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
@@ -761,6 +806,7 @@ function LiveStep({
   onEnd: () => void;
   ending: boolean;
 }) {
+  const isLan = useIsLan();
   const [copied, setCopied] = useState(false);
 
   // Keep the preview element bound to the media stream.
@@ -869,6 +915,21 @@ function LiveStep({
               {copied ? "Copied" : "Copy link"}
             </Button>
           </div>
+          {isLan && (
+            <div className="mt-3 flex items-center gap-3 rounded-lg border border-line bg-bg-raised p-3">
+              <div className="shrink-0 rounded-md bg-white p-1.5">
+                <QRCodeSVG value={shareUrl} size={72} role="img" aria-label={`QR code for ${shareUrl}`} />
+              </div>
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-white">
+                  <Wifi className="h-3.5 w-3.5 text-accent" aria-hidden="true" /> LAN mode
+                </p>
+                <p className="mt-0.5 text-xs text-text-muted">
+                  This server is running on your local network — anyone on the same Wi-Fi/LAN can watch or join by opening this address. No internet needed.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

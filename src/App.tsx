@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ConfigProvider } from "@/contexts/ConfigContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import Index from "@/pages/Index";
@@ -139,10 +140,12 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <AuthProvider>
-            <TooltipProvider delayDuration={250}>
-              <SonnerToaster />
-              <AppRoutes />
-            </TooltipProvider>
+            <ConfigProvider>
+              <TooltipProvider delayDuration={250}>
+                <SonnerToaster />
+                <AppRoutes />
+              </TooltipProvider>
+            </ConfigProvider>
           </AuthProvider>
         </BrowserRouter>
       </QueryClientProvider>

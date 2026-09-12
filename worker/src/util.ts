@@ -173,6 +173,7 @@ export interface PublicStream {
   title: string;
   description: string;
   category: string;
+  kind: StreamKind;
   tags: string[];
   isLive: boolean;
   viewerCount: number;
@@ -191,6 +192,7 @@ export interface StreamRow {
   title: string;
   description: string;
   category: string;
+  kind: StreamKind;
   tags: string;
   is_live: number;
   is_recording: number;
@@ -206,6 +208,27 @@ export interface StreamRow {
   host_avatar_color?: string | null;
 }
 
+/**
+ * Decide the deployment mode from the request host. 'lan' means the app is
+ * being served on a private/loopback address — the client can skip internet
+ * ICE (STUN) and every feature runs against a server on the local network.
+ * DEPLOY_MODE env var ('lan' | 'cloud') overrides detection for unusual setups.
+ */
+export function resolveDeployMode(hostHeader: string | null, override: string | undefined): 'cloud' | 'lan' {
+  const forced = (override ?? '').trim().toLowerCase();
+  if (forced === 'lan' || forced === 'cloud') return forced;
+  const raw = (hostHeader ?? '').split(',')[0]!.trim().toLowerCase();
+  const bracketed = /^\[(.+)\](?::\d+)?$/.exec(raw);
+  const unbracketed = bracketed ? null : raw.split(':');
+  // A single colon means host:port; multiple colons mean a bare IPv6 literal.
+  const host = bracketed?.[1] ?? (unbracketed && unbracketed.length === 2 ? raw.replace(/:\d+$/, '') : raw);
+  if (!host) return 'cloud';
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.local') || host.endsWith('.localdomain') || host.endsWith('.lan')) return 'lan';
+  if (/^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host)) return 'lan';
+  if (/^(fc|fd)[0-9a-f]{2}:/.test(host)) return 'lan'; // IPv6 unique-local fc00::/7
+  return 'cloud';
+}
+
 export function toPublicStream(row: StreamRow): PublicStream {
   let tags: string[] = [];
   try {
@@ -219,6 +242,7 @@ export function toPublicStream(row: StreamRow): PublicStream {
     title: row.title,
     description: row.description,
     category: row.category,
+    kind: row.kind === 'call' ? 'call' : 'broadcast',
     tags,
     isLive: row.is_live === 1,
     viewerCount: row.viewer_count,
@@ -237,6 +261,8 @@ export function toPublicStream(row: StreamRow): PublicStream {
 }
 
 export const STREAM_SELECT_HOST = `streams.id, streams.user_id, streams.title, streams.description, streams.category,
-  streams.tags, streams.is_live, streams.is_recording, streams.recording_key, streams.recording_expires_at,
+  streams.kind, streams.tags, streams.is_live, streams.is_recording, streams.recording_key, streams.recording_expires_at,
   streams.viewer_count, streams.peak_viewers, streams.started_at, streams.ended_at, streams.created_at,
-  users.username AS host_username, users.display_name AS host_display_name, users.avatar_color AS host_avatar_color`;
+  users.username AS host_username, users.display_name AS host_display_name, users.avatar_color AS host_avatar_color`
+
+export type StreamKind = 'broadcast' | 'call';

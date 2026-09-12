@@ -48,6 +48,10 @@ ALLOWED_ORIGINS = "*"
 # Public base URL of the frontend, used for canonical URLs/sitemap/emails.
 # Leave empty to derive from the request.
 PUBLIC_URL = ""
+# Force the deployment mode: "lan" or "cloud". Empty = auto-detect from the
+# request host (private/loopback/.local hosts → lan, which disables internet
+# STUN ice servers so everything works offline on a local network).
+DEPLOY_MODE = ""
 # Optional TURN server for WebRTC behind symmetric NATs, e.g. "turn:turn.example.com:3478"
 TURN_URL = ""
 TURN_USERNAME = ""

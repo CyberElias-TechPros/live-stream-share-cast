@@ -33,14 +33,18 @@ export default function Browse() {
     setSearch(searchParams.get("q") ?? "");
   }, [searchParams]);
 
+  const kindParam = searchParams.get("kind");
+  const kindTab = kindParam === "broadcast" || kindParam === "call" ? kindParam : "all";
+
   const { data: streams = [], isLoading } = useQuery({
-    queryKey: ["streams", "browse", q, category],
+    queryKey: ["streams", "browse", q, category, kindTab],
     queryFn: () =>
       api.get<{ streams: Stream[] }>("/api/streams", {
         live: 1,
         limit: 48,
         q: q || undefined,
         category: category !== "All" ? category : undefined,
+        kind: kindTab !== "all" ? kindTab : undefined,
       }),
     select: (d) => d.streams,
     refetchInterval: 20_000,
@@ -88,7 +92,27 @@ export default function Browse() {
             </form>
           </header>
 
-          <nav className="mt-7 flex flex-wrap gap-2" aria-label="Filter by category">
+          <nav className="mt-7 flex flex-wrap gap-2" aria-label="Filter by room type">
+            {([
+              ["all", "Everything"],
+              ["broadcast", "Broadcasts"],
+              ["call", "Video calls"],
+            ] as const).map(([value, label]) => (
+              <button
+                key={value}
+                onClick={() => setParam("kind", value)}
+                aria-pressed={kindTab === value}
+                className={cn(
+                  "rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-all duration-200",
+                  kindTab === value
+                    ? "border-transparent bg-text text-bg"
+                    : "border-line text-text-muted hover:border-line-strong hover:text-text"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="mx-1 hidden w-px self-stretch bg-line sm:block" aria-hidden="true" />
             {ALL_CATEGORIES.map((c) => (
               <button
                 key={c}

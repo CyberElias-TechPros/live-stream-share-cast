@@ -27,11 +27,14 @@ export interface SocialLink {
   url: string;
 }
 
+export type StreamKind = "broadcast" | "call";
+
 export interface Stream {
   id: string;
   title: string;
   description: string;
   category: string;
+  kind: StreamKind;
   tags: string[];
   isLive: boolean;
   viewerCount: number;
@@ -81,6 +84,7 @@ export interface Profile extends PublicUser {
 }
 
 export interface AppConfig {
+  mode: "cloud" | "lan";
   iceServers: RTCIceServer[];
   turnConfigured: boolean;
   recordingsEnabled: boolean;
@@ -92,3 +96,10 @@ export interface ApiErrorBody {
 }
 
 export type ConnectionQuality = "excellent" | "good" | "fair" | "poor" | "unknown";
+
+/** One remote participant in a mesh call room. */
+export interface CallPeer {
+  id: string;
+  username: string;
+  isHost: boolean;
+}

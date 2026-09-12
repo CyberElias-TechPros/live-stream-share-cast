@@ -21,6 +21,7 @@ const createStreamSchema = z.object({
   title: z.string().trim().min(3, 'Title must be at least 3 characters').max(100),
   description: z.string().trim().max(2000).optional(),
   category: z.enum(CATEGORIES).optional(),
+  kind: z.enum(['broadcast', 'call']).optional(), // default: broadcast
   tags: z.array(z.string().trim().min(1).max(24)).max(10).optional(),
 });
 
@@ -43,6 +44,7 @@ export async function handleListStreams(ctx: Ctx): Promise<Response> {
   const liveOnly = url.searchParams.get('live') !== '0';
   const q = (url.searchParams.get('q') ?? '').trim().slice(0, 80);
   const category = url.searchParams.get('category')?.trim();
+  const kind = url.searchParams.get('kind');
   const limitRaw = Number(url.searchParams.get('limit') ?? '24');
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 48) : 24;
 
@@ -52,6 +54,10 @@ export async function handleListStreams(ctx: Ctx): Promise<Response> {
   if (category && (CATEGORIES as readonly string[]).includes(category)) {
     conditions.push('streams.category = ?');
     binds.push(category);
+  }
+  if (kind === 'broadcast' || kind === 'call') {
+    conditions.push('streams.kind = ?');
+    binds.push(kind);
   }
   if (q) {
     conditions.push('(streams.title LIKE ? OR users.username LIKE ? OR users.display_name LIKE ?)');
@@ -80,7 +86,7 @@ export async function handleCreateStream(ctx: Ctx): Promise<Response> {
   if (!parsed.success) {
     return apiError(400, 'validation_error', parsed.error.issues[0]?.message ?? 'Invalid input', corsHeaders(env, req));
   }
-  const { title, description = '', category = 'Other', tags = [] } = parsed.data;
+  const { title, description = '', category = 'Other', kind = 'broadcast', tags = [] } = parsed.data;
 
   // Don't let a single account accumulate unbounded offline streams.
   const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM streams WHERE user_id = ?').bind(auth.user.id).first<{ n: number }>();
@@ -91,10 +97,10 @@ export async function handleCreateStream(ctx: Ctx): Promise<Response> {
   const id = shortId();
   const now = nowISO();
   await env.DB.prepare(
-    `INSERT INTO streams (id, user_id, title, description, category, tags, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO streams (id, user_id, title, description, category, kind, tags, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(id, auth.user.id, title, description, category, JSON.stringify(tags), now, now)
+    .bind(id, auth.user.id, title, description, category, kind, JSON.stringify(tags), now, now)
     .run();
 
   const row = await env.DB.prepare(
@@ -149,14 +155,23 @@ export async function handleGetStream(ctx: Ctx): Promise<Response> {
   return json({ stream: toPublicStream(row) }, 200, corsHeaders(env, req));
 }
 
-async function requireOwnedStream(ctx: Ctx): Promise<{ row: StreamRow } | Response> {
+async function requireStream(ctx: Ctx): Promise<{ row: StreamRow; userId: string } | Response> {
   const { req, env, params } = ctx;
   const auth = await getSessionUser(env, req);
   if (!auth) return apiError(401, 'unauthenticated', 'Not signed in', corsHeaders(env, req));
   const row = await env.DB.prepare('SELECT * FROM streams WHERE id = ?').bind(params.id ?? '').first<StreamRow>();
   if (!row) return apiError(404, 'not_found', 'Stream not found', corsHeaders(env, req));
-  if (row.user_id !== auth.user.id) return apiError(403, 'forbidden', 'You do not own this stream', corsHeaders(env, req));
-  return { row };
+  return { row, userId: auth.user.id };
+}
+
+async function requireOwnedStream(ctx: Ctx): Promise<{ row: StreamRow } | Response> {
+  const result = await requireStream(ctx);
+  if (result instanceof Response) return result;
+  const { req, env } = ctx;
+  if (result.row.user_id !== result.userId) {
+    return apiError(403, 'forbidden', 'You do not own this stream', corsHeaders(env, req));
+  }
+  return { row: result.row };
 }
 
 // PATCH /api/streams/:id
@@ -225,6 +240,35 @@ export async function handleStartStream(ctx: Ctx): Promise<Response> {
 
   const row = await getStreamRow(env, id);
   return json({ stream: row ? toPublicStream(row) : null, ticket, ticketExpiresAt: expiresAt }, 200, corsHeaders(env, req));
+}
+
+// POST /api/streams/:id/join-call
+// Issues a participant ticket for a live call room (kind = 'call'). Same
+// ticket mechanism as /start: the WebSocket handshake can't carry the session
+// cookie in split-origin deployments, so participants present a short-lived
+// ticket as their first WS frame. The room DO enforces the participant cap.
+export async function handleJoinCall(ctx: Ctx): Promise<Response> {
+  const session = await requireStream(ctx); // session auth + existence (no ownership — anyone may join)
+  if (session instanceof Response) return session;
+  const { req, env, params } = ctx;
+  const id = params.id ?? '';
+  const row = session.row;
+
+  if (row.kind !== 'call') {
+    return apiError(400, 'not_a_call', 'This stream is a broadcast — viewers just watch, no ticket needed', corsHeaders(env, req));
+  }
+  if (row.is_live !== 1) {
+    return apiError(409, 'not_live', 'This call has not started yet', corsHeaders(env, req));
+  }
+
+  const ticket = randomId(32);
+  const ticketId = await sha256Hex(ticket);
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  await env.DB.prepare('INSERT INTO room_tickets (id, stream_id, user_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(ticketId, id, session.userId, nowISO(), expiresAt)
+    .run();
+
+  return json({ ticket, ticketExpiresAt: expiresAt }, 200, corsHeaders(env, req));
 }
 
 // POST /api/streams/:id/stop

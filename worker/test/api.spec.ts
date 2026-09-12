@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveDeployMode } from '../src/util';
 import { api, getTestServer, makeUser, nextMessage, roomSocket, send, type TestServer } from './helpers';
 
 let server: TestServer;
@@ -393,5 +394,240 @@ describe('realtime room (WebSocket signaling, presence, chat)', () => {
     send(ws, { type: 'join', role: 'viewer' });
     expect(await nextMessage(ws)).toMatchObject({ type: 'rejected', code: 'not_found' });
     ws.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LAN/deploy-mode + call rooms
+// ---------------------------------------------------------------------------
+
+describe('deploy mode (LAN detection)', () => {
+  it('classifies hosts: private/loopback/.local → lan, public → cloud', async () => {
+    const lan = (h: string | null) => resolveDeployMode(h, undefined);
+    expect(lan('192.168.1.10:8787')).toBe('lan');
+    expect(lan('localhost:5173')).toBe('lan');
+    expect(lan('127.0.0.1:8787')).toBe('lan');
+    expect(lan('[::1]:8787')).toBe('lan');
+    expect(lan('study-pc.local')).toBe('lan');
+    expect(lan('10.0.4.2')).toBe('lan');
+    expect(lan('172.20.1.9:8787')).toBe('lan');
+    expect(lan('imlive.example.workers.dev')).toBe('cloud');
+    expect(lan('myapp.vercel.app')).toBe('cloud');
+    expect(lan('172.32.1.1')).toBe('cloud'); // just outside the private range
+    expect(lan(null)).toBe('cloud');
+    // Explicit operator override wins over detection.
+    expect(resolveDeployMode('192.168.1.10:8787', 'cloud')).toBe('cloud');
+    expect(resolveDeployMode('imlive.example.com', 'lan')).toBe('lan');
+  });
+
+  it('reports lan mode with no internet ICE when served on a loopback host', async () => {
+    // The test runtime serves on 127.0.0.1 → LAN mode: no STUN, fully offline.
+    const res = await api(server.url, '/api/config');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { mode: string; iceServers: unknown[]; categories: string[] };
+    expect(body.mode).toBe('lan');
+    expect(Array.isArray(body.iceServers)).toBe(true);
+    expect(body.iceServers.length).toBe(0); // no internet-dependent ICE in LAN mode
+    expect(body.categories.length).toBeGreaterThan(0);
+  });
+});
+
+describe('call rooms (mesh video calls)', () => {
+  it('issues participant tickets only for live call streams', async () => {
+    const owner = await makeUser(server.url);
+    const guest = await makeUser(server.url);
+
+    // Unauthenticated joins are rejected before anything else.
+    const created = await api(server.url, '/api/streams', {
+      method: 'POST',
+      cookie: owner.cookie,
+      body: JSON.stringify({ title: 'design review call', kind: 'call', category: 'Talk' }),
+    });
+    expect(created.status).toBe(201);
+    const { stream } = (await created.json()) as { stream: { id: string; kind: string } };
+    expect(stream.kind).toBe('call');
+
+    expect((await api(server.url, `/api/streams/${stream.id}/join-call`, { method: 'POST' })).status).toBe(401);
+
+    // A broadcast-kind stream never issues call tickets.
+    const broadcast = await api(server.url, '/api/streams', {
+      method: 'POST',
+      cookie: owner.cookie,
+      body: JSON.stringify({ title: 'plain broadcast here', kind: 'broadcast' }),
+    });
+    const { stream: bStream } = (await broadcast.json()) as { stream: { id: string; kind: string } };
+    expect(bStream.kind).toBe('broadcast');
+    const wrongKind = await api(server.url, `/api/streams/${bStream.id}/join-call`, { method: 'POST', cookie: guest.cookie });
+    expect(wrongKind.status).toBe(400);
+    expect(((await wrongKind.json()) as { error: { code: string } }).error.code).toBe('not_a_call');
+
+    // Offline call: no ticket until the owner starts it.
+    const offline = await api(server.url, `/api/streams/${stream.id}/join-call`, { method: 'POST', cookie: guest.cookie });
+    expect(offline.status).toBe(409);
+    expect(((await offline.json()) as { error: { code: string } }).error.code).toBe('not_live');
+
+    // Owner starts → guests get tickets.
+    const start = await api(server.url, `/api/streams/${stream.id}/start`, { method: 'POST', cookie: owner.cookie });
+    expect(start.status).toBe(200);
+    const guestTicket = await api(server.url, `/api/streams/${stream.id}/join-call`, { method: 'POST', cookie: guest.cookie });
+    expect(guestTicket.status).toBe(200);
+    const { ticket, ticketExpiresAt } = (await guestTicket.json()) as { ticket: string; ticketExpiresAt: string };
+    expect(ticket).toBeTruthy();
+    expect(Number.isNaN(Date.parse(ticketExpiresAt))).toBe(false);
+  });
+
+  /** (Re)start is idempotent once live — returns a fresh owner ticket each call. */
+  async function ownerTicket(streamId: string, cookie: string): Promise<string> {
+    const res = await api(server.url, `/api/streams/${streamId}/start`, { method: 'POST', cookie });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { ticket: string }).ticket;
+  }
+
+  /** Next frame that isn't an idempotent presence update (order-stable drain). */
+  async function waitFor(ws: WebSocket, type: string): Promise<Record<string, unknown>> {
+    for (;;) {
+      const msg = await nextMessage(ws);
+      if (msg.type !== 'presence') {
+        expect(msg.type).toBe(type);
+        return msg;
+      }
+    }
+  }
+
+  it('runs a mesh call: any-to-any signaling, join/leave fan-out, end for all', async () => {
+    const owner = await makeUser(server.url);
+    const alice = await makeUser(server.url);
+    const bob = await makeUser(server.url);
+
+    const created = await api(server.url, '/api/streams', {
+      method: 'POST',
+      cookie: owner.cookie,
+      body: JSON.stringify({ title: 'three-way call', kind: 'call' }),
+    });
+    const { stream } = (await created.json()) as { stream: { id: string } };
+    await api(server.url, `/api/streams/${stream.id}/start`, { method: 'POST', cookie: owner.cookie });
+    const ticketFor = async (cookie: string) => {
+      const res = await api(server.url, `/api/streams/${stream.id}/join-call`, { method: 'POST', cookie });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { ticket: string }).ticket;
+    };
+
+    const wsUrl = `${server.url.replace('http', 'ws')}/api/room/${stream.id}/ws`;
+
+    // Viewers are not a thing in calls — join as a participant or nothing.
+    const peeker = await roomSocket(wsUrl);
+    send(peeker, { type: 'join', role: 'viewer' });
+    expect(await nextMessage(peeker)).toMatchObject({ type: 'rejected', code: 'forbidden' });
+    peeker.close();
+
+    // Host joins first (empty room).
+    const hostWs = await roomSocket(wsUrl);
+    send(hostWs, { type: 'join', role: 'host', token: await ownerTicket(stream.id, owner.cookie) });
+    const hostWelcome = await nextMessage(hostWs);
+    expect(hostWelcome).toMatchObject({ type: 'welcome', role: 'host' });
+    expect(hostWelcome.peers).toEqual([]);
+
+    // Alice joins: welcome lists the host; host learns about Alice.
+    const aliceWs = await roomSocket(wsUrl);
+    send(aliceWs, { type: 'join', role: 'caller', token: await ticketFor(alice.cookie) });
+    const aliceWelcome = await nextMessage(aliceWs);
+    expect(aliceWelcome).toMatchObject({ type: 'welcome', role: 'caller' });
+    expect(aliceWelcome.peers).toEqual([{ id: 'host', username: owner.username, isHost: true }]);
+    const aliceId = aliceWelcome.viewerId as string;
+    await waitFor(hostWs, 'peer-joined'); // alice announced (order: peer-joined → presence)
+
+    // Alice → host signaling.
+    send(aliceWs, { type: 'signal', to: 'host', payload: { type: 'offer', sdp: 'a-offer' } });
+    expect(await waitFor(hostWs, 'signal')).toMatchObject({ from: aliceId, payload: { type: 'offer' } });
+    // Host → Alice signaling.
+    send(hostWs, { type: 'signal', to: aliceId, payload: { type: 'answer', sdp: 'a-answer' } });
+    expect(await waitFor(aliceWs, 'signal')).toMatchObject({ payload: { type: 'answer' } });
+
+    // Bob joins: welcome lists BOTH existing participants.
+    const bobWs = await roomSocket(wsUrl);
+    send(bobWs, { type: 'join', role: 'caller', token: await ticketFor(bob.cookie) });
+    const bobWelcome = await nextMessage(bobWs);
+    expect(bobWelcome).toMatchObject({ type: 'welcome', role: 'caller' });
+    const bobPeers = bobWelcome.peers as { id: string; username: string; isHost: boolean }[];
+    expect(bobPeers.map((p) => p.id).sort()).toEqual([aliceId, 'host'].sort());
+    const bobId = bobWelcome.viewerId as string;
+    // Alice (and the host) learn about Bob.
+    const aliceSeesBob = await waitFor(aliceWs, 'peer-joined');
+    expect(aliceSeesBob).toMatchObject({ peer: { id: bobId, username: bob.username, isHost: false } });
+    await waitFor(hostWs, 'peer-joined'); // the host is told about Bob too
+
+    // Any-to-any: Bob signals Alice directly (not via host).
+    send(bobWs, { type: 'signal', to: aliceId, payload: { type: 'offer', sdp: 'b-offer' } });
+    expect(await waitFor(aliceWs, 'signal')).toMatchObject({ from: bobId, payload: { sdp: 'b-offer' } });
+
+    // Chat works inside calls for participants.
+    const chat = await api(server.url, `/api/streams/${stream.id}/chat`, {
+      method: 'POST',
+      cookie: bob.cookie,
+      body: JSON.stringify({ text: 'can everyone hear me?' }),
+    });
+    expect(chat.status).toBe(201);
+    expect(await waitFor(hostWs, 'chat')).toMatchObject({ text: 'can everyone hear me?' });
+    // Every participant receives the fan-out, not just the host.
+    expect(await waitFor(bobWs, 'chat')).toMatchObject({ text: 'can everyone hear me?' });
+
+    // Alice leaves → everyone is told.
+    aliceWs.close();
+    expect(await waitFor(hostWs, 'peer-left')).toMatchObject({ peerId: aliceId });
+    expect(await waitFor(bobWs, 'peer-left')).toMatchObject({ peerId: aliceId });
+
+    // Owner stops → the call ends for everyone still in it.
+    const stopped = await api(server.url, `/api/streams/${stream.id}/stop`, { method: 'POST', cookie: owner.cookie });
+    expect(stopped.status).toBe(200);
+    const bobEnd = await waitFor(bobWs, 'stream-ended');
+    expect(['stream-ended', '__closed__']).toContain(bobEnd.type);
+
+    const after = await api(server.url, `/api/streams/${stream.id}`);
+    expect(((await after.json()) as { stream: { isLive: boolean } }).stream.isLive).toBe(false);
+
+    hostWs.close();
+    bobWs.close();
+  });
+
+  it('caps mesh calls at eight participants', async () => {
+    const owner = await makeUser(server.url);
+    const created = await api(server.url, '/api/streams', {
+      method: 'POST',
+      cookie: owner.cookie,
+      body: JSON.stringify({ title: 'full house call', kind: 'call' }),
+    });
+    const { stream } = (await created.json()) as { stream: { id: string } };
+    await api(server.url, `/api/streams/${stream.id}/start`, { method: 'POST', cookie: owner.cookie });
+
+    const wsUrl = `${server.url.replace('http', 'ws')}/api/room/${stream.id}/ws`;
+    const sockets: WebSocket[] = [];
+    const hostWs = await roomSocket(wsUrl);
+    send(hostWs, { type: 'join', role: 'host', token: await ownerTicket(stream.id, owner.cookie) });
+    expect(await nextMessage(hostWs)).toMatchObject({ type: 'welcome' });
+
+    // Host + 7 callers fill the room; the 9th participant is rejected.
+    for (let i = 0; i < 7; i++) {
+      const user = await makeUser(server.url);
+      const ws = await roomSocket(wsUrl);
+      const res = await api(server.url, `/api/streams/${stream.id}/join-call`, { method: 'POST', cookie: user.cookie });
+      expect(res.status).toBe(200);
+      const { ticket } = (await res.json()) as { ticket: string };
+      send(ws, { type: 'join', role: 'caller', token: ticket });
+      const welcome = await nextMessage(ws);
+      expect(welcome).toMatchObject({ type: 'welcome', role: 'caller' });
+      sockets.push(ws);
+    }
+
+    const overflow = await makeUser(server.url);
+    const overflowTicket = await api(server.url, `/api/streams/${stream.id}/join-call`, { method: 'POST', cookie: overflow.cookie });
+    expect(overflowTicket.status).toBe(200);
+    const overflowWs = await roomSocket(wsUrl);
+    const { ticket } = (await overflowTicket.json()) as { ticket: string };
+    send(overflowWs, { type: 'join', role: 'caller', token: ticket });
+    expect(await nextMessage(overflowWs)).toMatchObject({ type: 'rejected', code: 'room_full' });
+
+    overflowWs.close();
+    hostWs.close();
+    for (const ws of sockets) ws.close();
   });
 });

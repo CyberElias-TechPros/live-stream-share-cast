@@ -30,6 +30,7 @@ import { useElapsedSeconds, initialsOf } from "@/hooks/useElapsedSeconds";
 import { api, ApiError } from "@/lib/api";
 import { RoomSocket } from "@/lib/roomSocket";
 import { ViewerEngine, readViewerStats, type ViewerState } from "@/lib/webrtc";
+import { CallRoom } from "@/components/CallRoom";
 import { cn } from "@/lib/utils";
 import type { AppConfig, ChatMessage, Stream } from "@/types";
 
@@ -305,6 +306,19 @@ export default function WatchStream() {
               </Button>
             }
           />
+        </main>
+        <Footer />
+      </div>
+    );
+  }
+
+  // Mesh video calls get their own room UI (pre-join, tiles, participant chat).
+  if (stream.kind === "call") {
+    return (
+      <div className="flex min-h-screen flex-col">
+        <Navigation />
+        <main className="container-app flex-1 py-6">
+          <CallRoom streamId={streamId} initialStream={stream} />
         </main>
         <Footer />
       </div>

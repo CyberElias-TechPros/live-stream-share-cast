@@ -31,6 +31,7 @@ export async function getTestServer(): Promise<TestServer> {
     vars: {
       ALLOWED_ORIGINS: '*',
       PUBLIC_URL: '',
+      SIGNUP_RATE_LIMIT: '1000',
       TURN_URL: '',
       TURN_USERNAME: '',
       TURN_CREDENTIAL: '',

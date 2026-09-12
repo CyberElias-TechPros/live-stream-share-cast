@@ -20,6 +20,8 @@ Reconstructed core jobs:
 
 Non-negotiables inferred and honored: real WebRTC media (the legacy code only faked it), real presence (legacy faked it with `Math.random()` and local counters), authenticated chat with attribution, and an honest auth model. The "On Air" console visual language (near-black `#08080D`, live red `#FF3B47`, Space Grotesk display type) was kept and systematized rather than replaced — it was the strongest existing product decision.
 
+**Architecture decision (calls & LAN):** calls reuse the stream/room/ticket/presence/chat machinery rather than introducing a second stack — a call is a `streams.kind = 'call'` row whose RoomDO relays signals **any-to-any** (broadcasts stay host↔viewer). Mesh caps at 8 participants (upload bandwidth grows linearly in P2P; an SFU is the documented path beyond). LAN mode is not a separate app: the same Worker runtime serves the same SPA+API on `0.0.0.0`, ICE goes STUN-free (host candidates suffice on-subnet), and `resolveDeployMode()` (host-header heuristics + `DEPLOY_MODE` override) flips client affordances — badge, QR invites.
+
 **Architecture decision:** the target platform mandate (Vercel + Cloudflare) was adopted. Supabase was **removed entirely** (client, integrations, edge functions, `supabase/` directory, lockfile) because its edge functions held service-role assumptions and CORS-`*` patterns, its realtime channel was unused/fake in the client, and the WebRTC-signaling requirement needs WebSockets with server-side presence — exactly what Durable Objects provide. Replacing it was not familiarity-driven: signaling/presence/host-watchdog state is precisely the DO use-case.
 
 ## B. Problems Found & Fixed
@@ -64,6 +66,8 @@ Non-negotiables inferred and honored: real WebRTC media (the legacy code only fa
 
 | Feature | Status |
 |---|---|
+| **LAN mode** — whole app runs on a LAN host with zero internet (auto-detected; no-STUN ICE, LAN badge, QR invites) | ✅ protocol/server verified · 🌐 multi-device needs a real LAN |
+| **Mesh video calls** (`kind: "call"`) — any-to-any WebRTC, up to 8 participants, participant tickets, chat/presence/history shared with broadcasts | ✅ protocol-level E2E |
 | Signup / login (email **or** username) / logout / session | ✅ |
 | Stream CRUD, per-host limit (≤ 50), live/offline states | ✅ |
 | Start/stop with conflict guards; start issues room ticket | ✅ |
@@ -125,7 +129,7 @@ The "broadcast console" design system (dark-only, by design — a live venue, no
 - **Passwords:** PBKDF2-SHA256, 100 000 iterations, per-user salt, format-versioned string; constant-shape verification; login compares against a dummy hash for unknown users (timing defense).
 - **Sessions:** 256-bit tokens; DB stores SHA-256 only; `il_session` HttpOnly, 30 d, `SameSite=None+Secure` when cross-origin else `Lax`; every cookie-authenticated mutation validates `Origin` against host/allowlist.
 - **Authorization:** every stream mutation is ownership-checked; host room access requires either a valid ticket or a session + ownership; one live host per stream (`conflict`); delete-while-live returns `409`.
-- **Abuse limits:** login 10/15 min → `429`; signup ≤ 25/h/IP (disclosed here as a deliberate anti-abuse measure); chat ≤ 8/10 s/user; chat text 1–500 chars; WS frames ≤ 64 KB; `MAX_VIEWERS` 250 per room (P2P topology soft cap).
+- **Abuse limits:** login 10/15 min → `429`; signup ≤ 25/h/IP on the public internet, **100/h/IP in LAN mode** (a household shares one private IP), env-tunable via `SIGNUP_RATE_LIMIT` (disclosed anti-abuse measure); chat ≤ 8/10 s/user; chat text 1–500 chars; WS frames ≤ 64 KB; `MAX_VIEWERS` 250 per broadcast room; **8 participants** per call room (server-enforced, tested).
 - **Transport/headers:** CSP (documents), `Permissions-Policy` (camera/mic scoped), `X-Frame-Options: DENY`, `Referrer-Policy`, `nosniff`; HSTS inherited from Cloudflare edge.
 - **Data access:** prepared statements exclusively; zod validation at every boundary; no string-interpolated SQL; no secrets in client code (no service keys exist client-side at all).
 - **WS auth model (why room tickets exist):** the HttpOnly session cookie cannot ride a cross-origin WS handshake, so the host authenticates over REST (`POST /start`) and receives a 10-minute single-purpose ticket presented as the first WS frame. Viewers join tokenless (rooms are public by design). Chat rides REST for the same cookie reason, with real-time delivery via DO fan-out. This is documented in README + architecture below.
@@ -139,7 +143,7 @@ The "broadcast console" design system (dark-only, by design — a live venue, no
 
 ## K. Performance
 
-- **Code splitting (route-level, final build):** entry `index` 421.91 kB / **133.05 kB gzip**; per-route chunks (kB/gzip): select 23.26/8.02, Studio 22.85/7.26, Dashboard 18.81/6.47, WatchStream 15.25/5.37, Settings 7.57/2.77, Profile 6.65/2.51, webrtc 8.45/3.12, Browse 3.98/1.92, StreamCard 3.53/1.35; CSS 66.42/12.24; raw JS total ≈ 527 kB (was 532.64 kB single-bundle pre-splitting).
+- **Code splitting (route-level, final build):** entry `index` 423.33 kB / **133.49 kB gzip**; per-route chunks (kB/gzip): WatchStream 35.91/11.08 (absorbs the call room + mesh engine), Studio 24.21/7.57, Dashboard ~19/6.5, Settings ~7.6/2.8, Profile ~6.7/2.5, Browse ~4/1.9; CSS 67.89/12.51. `qrcode.react` added for LAN QR invites — bundled into the route chunks that use it.
 - Fonts self-hosted via `@fontsource` (bundled, cacheable, no external requests).
 - React Query: `refetchOnWindowFocus` off, 4xx responses excluded from retries, `staleTime` 30 s, `gcTime` 10 m.
 - OG images palette-optimized (116/65 KB at 1200×630); favicon is an SVG (~1 KB).
@@ -152,6 +156,7 @@ D1 (SQLite) with versioned migrations:
 
 - `0001_init.sql` — `users` (unique username/email), `sessions` (id = sha256(token)), `streams`, `stream_sessions`, `stream_stats`, `chat_messages`, `follows`, `login_attempts`.
 - `0002_room_tickets.sql` — `room_tickets` (id = sha256(ticket), `stream_id`, `user_id`, `expires_at` 10 min, `idx_tickets_stream`).
+- `0003_stream_kind.sql` — `streams.kind` (`'broadcast'` default | `'call'`), enabling mesh call rooms.
 - Conventions: prepared statements only; cascading deletes for owned rows; counter columns (`broadcast_count`, `total_broadcast_seconds`) maintained transactionally; **D1 index names are database-global — never reused across tables** (learned constraint, encoded in migrations).
 - Test run applies migrations fresh (local state wiped per suite) — the exact migration path production gets.
 
@@ -173,15 +178,16 @@ Browser (host) ──┐                            ┌── Browser (viewer A)
                         └─ cron hourly: recordings expiry, stats/attempt/session pruning
 ```
 
-- **RoomDO** = hibernatable DO keyed by stream id. Hibernation means an idle room costs no memory while keeping sockets open; wake on any frame or internal `/chat`, `/force-end` POST.
+- **RoomDO** = hibernatable DO keyed by stream id. Hibernation means an idle room costs no memory while keeping sockets open; wake on any frame or internal `/chat`, `/force-end` POST. Rooms are kind-aware: **broadcast** rooms relay viewer↔host only; **call** rooms keep participants (host + callers) in the presence map and relay signals any-to-any, with a hard 8-participant cap, per-user single-slot supersede (refresh-safe), and `peer-joined`/`peer-left` fan-out without self-echo. Caller authorization reuses room tickets (issued by `POST /:id/join-call` for live call streams only).
 - **Why tickets/REST-chat** (see §I): HttpOnly cookies can't cross the WS handshake origin boundary; the ticket is a short-lived capability bound to stream+user, stored hashed.
-- **Failure containment:** host disconnect → grace → auto end; DO eviction → cron reclaim; viewer socket death → heartbeat sweep (65 s, close 4000); chat persistence failure → logged, delivery unaffected (persist-after-broadcast with `waitUntil`).
+- **Failure containment:** host disconnect → grace → auto end (calls: the creator leaving ends the call for everyone — ownership is deliberately simple); DO eviction → cron reclaim; dead sockets → heartbeat sweep (65 s, close 4000); chat persistence failure → logged, delivery unaffected (`waitUntil`); mid-call refresh → the rejoiner re-offers via perfect negotiation, stale PCs torn down by `peer-left`.
+- **LAN/offline:** the same Worker + D1 + DO run locally (`npm run lan`); `/api/config` omits internet ICE in LAN mode; nothing else differs — there is no second code path to maintain.
 - **Deployment topologies:** single-origin (Worker serves `../dist`, `VITE_API_URL` unset, same-origin cookies `Lax`) or split (frontend on Vercel, `VITE_API_URL` set, cookies `None+Secure`, CORS allowlist). Both are first-class; neither is a retrofit.
 
 ## N. Testing & Verification
 
-- **Worker integration suite (vitest + stable DO/D1 local runtime): 15/15 passing ✅** — fresh DB per run, migrations auto-applied; covers signup/login/logout/session, lockout, stream CRUD + limits + conflict, start/stop lifecycle, tickets, chat REST (auth/validation/history/throttle), presence fan-out, broadcast-end reconciliation, profile/follow, browse shape, sitemap, security headers. One suite deliberately accepts `stream-ended` **or** `__closed__` on stop (a known benign race between DO fan-out and socket close) — disclosed, not papered over.
-- **E2E integrated-stack journey: 22/22 checks passing ✅** (`worker/test/e2e-journey.mjs`) — runs against the *production-shaped* single-origin server (Worker serving built SPA): signup → create → start+ticket → PATCH mid-flight → host WS join → anonymous viewer join (presence=1) → signaling relay both directions → REST chat 201 + WS fan-out + history → anonymous chat 401 → viewer leave → stop → host notified → offline state → session stats (peak viewers) → public profile → SPA served with CSP → deep-link fallback → browse API shape. (Three early "failures" during development were test-script listener races — server broadcasts beating HTTP responses — fixed in the script, not the product; the DO chat fan-out itself was separately probed and proven correct.)
+- **Worker integration suite (vitest + stable DO/D1 local runtime): 20/20 passing ✅** — fresh DB per run, migrations auto-applied; covers signup/login/logout/session, lockout, stream CRUD + limits + conflict, start/stop lifecycle, tickets, chat REST (auth/validation/history/throttle), presence fan-out, broadcast-end reconciliation, profile/follow, browse shape, sitemap, security headers, **deploy-mode detection** (pure `resolveDeployMode` host matrix + live `/api/config` LAN assertion: `mode: 'lan'`, zero internet ICE) and **mesh call rooms** (ticket gating 401/400/409, owner welcome snapshot, guest join + peers list, any-to-any signaling, chat fan-out to all participants, `peer-left`, end-for-all, and the 8-participant cap rejecting with `room_full`). One suite deliberately accepts `stream-ended` **or** `__closed__` on stop (a known benign race between DO fan-out and socket close) — disclosed, not papered over.
+- **E2E integrated-stack journey: 33/33 checks passing ✅** (`worker/test/e2e-journey.mjs`) — runs against the *production-shaped* single-origin server (Worker serving built SPA): signup → create → start+ticket → PATCH mid-flight → host WS join → anonymous viewer join (presence=1) → signaling relay both directions → REST chat 201 + WS fan-out + history → anonymous chat 401 → viewer leave → stop → host notified → offline state → session stats (peak viewers) → public profile → **LAN config (mode=lan, zero internet ICE)** → **call lifecycle: create call-kind stream, offline join 409, participant tickets, owner welcome, guest peers list, mesh guest→owner signaling, in-call chat fan-out, end-for-all** → SPA served with CSP → deep-link fallback → browse API shape. (During development three "failures" were test-script listener races — server broadcasts beating HTTP responses — fixed in the script, not the product. Repeated runs against a long-lived dev server can exhaust the signup rate limit by design; reset with `rm -rf worker/.wrangler/state && npm run db:migrate:local`.)
 - **Frontend:** `tsc -b` strict ✅ (0 errors), `eslint .` ✅ (0 errors, 0 warnings), `npm run build` ✅ (sizes in §K).
 - **Environment-dependent 🌐:** true multi-party media (two browsers with cameras, NAT traversal scenarios, TURN) — signaling, presence, chat and lifecycle are proven at the protocol level above; actual A/V decoding requires real devices and networks.
 
@@ -209,13 +215,18 @@ Browser (host) ──┐                            ┌── Browser (viewer A)
 4. **P2P topology ceiling** — `MAX_VIEWERS` 250 is a soft cap; scaling beyond needs an SFU (Cloudflare Calls or similar). This is a deliberate architecture boundary, not an oversight.
 5. **Browser-level E2E automation** (Playwright) and a real two-browser WebRTC smoke are the natural next hardening steps; the protocol-level E2E journey shipped in their place this pass.
 6. **Sitemap is dynamic but shallow** — includes canonical routes; per-stream pages intentionally excluded (ephemeral content, robots-disallowed).
+7. **Calls have no silent audience** — joining a call means joining on camera (mesh cap 8). Listen-only watchers would need a hybrid mesh+fanout room; documented as a next step if wanted.
+8. **LAN discovery is link/QR-based** — browsers cannot enumerate LAN peers (mDNS/UDP discovery is unavailable to web apps by design), so joining means opening the host's address, shown as QR + copyable URL in-app; `npm run lan` prints the addresses to share.
 
 ## R. Verification Ledger
 
 | Area | Status |
 |---|---|
-| Worker integration tests (15) | ✅ 15/15, fresh-migrated DB per run |
-| E2E integrated journey (22 checks) | ✅ 22/22 on production-shaped server |
+| Worker integration tests (20) | ✅ 20/20, fresh-migrated DB per run |
+| E2E integrated journey (33 checks) | ✅ 33/33 on production-shaped server |
+| Mesh call signaling/caps/end (DO level) | ✅ vitest + E2E covered |
+| LAN mode config + deploy-mode detection | ✅ single-host verified (multi-device needs a real LAN → 🌐) |
+| Call media decode on real devices | 🌐 needs cameras/browsers, like broadcasts |
 | `tsc -b` strict / `eslint` / `vite build` | ✅ 0 errors / 0 problems / clean split build |
 | Auth, sessions, lockout, rate limits, CORS/origin checks | ✅ (suite-covered) |
 | WebRTC signaling, presence, chat fan-out, lifecycle | ✅ protocol-level E2E |

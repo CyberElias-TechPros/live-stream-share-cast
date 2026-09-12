@@ -5,6 +5,8 @@ export interface Env {
   RECORDINGS?: R2Bucket;
   ALLOWED_ORIGINS: string;
   PUBLIC_URL: string;
+  DEPLOY_MODE?: string;
+  SIGNUP_RATE_LIMIT?: string;
   TURN_URL: string;
   TURN_USERNAME: string;
   TURN_CREDENTIAL: string;

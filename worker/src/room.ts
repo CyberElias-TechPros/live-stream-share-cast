@@ -18,11 +18,20 @@ const HEARTBEAT_TIMEOUT_MS = 65_000;
 const HOST_GRACE_MS = 12_000;
 const FLUSH_INTERVAL_MS = 8_000;
 const MAX_VIEWERS = 250; // soft cap appropriate for a P2P (host-publisher) topology
+// Mesh calls: every participant uploads to every other participant, so upload
+// bandwidth scales linearly. 8 is the honest ceiling for peer-to-peer mesh.
+const MAX_CALL_PARTICIPANTS = 8;
+
+export interface CallPeerInfo {
+  id: string;
+  username: string;
+  isHost: boolean;
+}
 
 interface Connection {
   ws: WebSocket;
   id: string;
-  role: 'host' | 'viewer';
+  role: 'host' | 'viewer' | 'caller';
   userId: string | null;
   username: string | null;
   lastSeen: number;
@@ -39,6 +48,7 @@ export class RoomDO implements DurableObject {
   private chatRate = new ChatRateTracker();
   private loaded = false;
   private streamIsValid = false;
+  private roomKind: 'broadcast' | 'call' = 'broadcast';
   private hostGraceTimer: number | null = null;
   private peakViewers = 0;
 
@@ -114,11 +124,16 @@ export class RoomDO implements DurableObject {
     if (conn.role === 'host') {
       this.host = null;
       this.broadcastToViewers({ type: 'host-left' });
+      if (this.roomKind === 'call') {
+        this.broadcast({ type: 'peer-left', peerId: 'host' });
+      }
       this.scheduleHostGrace();
     } else {
       this.viewers.delete(ws);
       this.ensureFlushAlarm();
-      if (this.host && isOpen(this.host.ws)) {
+      if (conn.role === 'caller') {
+        this.broadcast({ type: 'peer-left', peerId: conn.id });
+      } else if (this.host && isOpen(this.host.ws)) {
         this.send(this.host.ws, { type: 'viewer-left', viewerId: conn.id });
       }
       this.broadcastPresence();
@@ -148,12 +163,21 @@ export class RoomDO implements DurableObject {
       this.rejectAndClose(ws, 'not_found', 'Stream not found');
       return;
     }
-    if (msg.type !== 'join' || (msg.role !== 'host' && msg.role !== 'viewer')) {
+    if (msg.type !== 'join' || (msg.role !== 'host' && msg.role !== 'viewer' && msg.role !== 'caller')) {
       this.rejectAndClose(ws, 'bad_request', 'Expected a join message');
       return;
     }
     if (msg.role === 'host') {
       await this.joinHost(ws, msg.token ?? null);
+    } else if (msg.role === 'caller') {
+      if (this.roomKind !== 'call') {
+        this.rejectAndClose(ws, 'bad_request', 'This room is a broadcast, not a call');
+        return;
+      }
+      await this.joinCaller(ws, msg.token ?? null);
+    } else if (this.roomKind === 'call') {
+      // Calls are participant-only in v1: there is no silent audience.
+      this.rejectAndClose(ws, 'forbidden', 'This room is a call — join it as a participant');
     } else {
       this.joinViewer(ws);
     }
@@ -226,9 +250,95 @@ export class RoomDO implements DurableObject {
       console.error('room: host reconcile failed', e);
     }
 
-    this.send(ws, { type: 'welcome', role: 'host', viewerCount: this.viewers.size });
+    this.send(ws, {
+      type: 'welcome',
+      role: 'host',
+      viewerCount: this.viewers.size,
+      // Call rooms: the host's snapshot lists the callers already waiting
+      // (never the host itself — assignment above precedes this send).
+      ...(this.roomKind === 'call' ? { peers: this.callPeerList().filter((p) => !p.isHost) } : {}),
+    });
     this.broadcastToViewers({ type: 'host-present' });
+    if (this.roomKind === 'call') {
+      // Existing callers learn the host (re)joined so they can (re)connect.
+      this.broadcastToViewers({ type: 'peer-joined', peer: { id: 'host', username: session.username, isHost: true } });
+    }
     this.ensureFlushAlarm();
+  }
+
+  /** All current call participants (host + callers), for welcome snapshots. */
+  private callPeerList(): CallPeerInfo[] {
+    const peers: CallPeerInfo[] = [];
+    if (this.host && isOpen(this.host.ws)) {
+      peers.push({ id: 'host', username: this.host.username ?? 'host', isHost: true });
+    }
+    for (const conn of this.viewers.values()) {
+      if (conn.role === 'caller') peers.push({ id: conn.id, username: conn.username ?? 'guest', isHost: false });
+    }
+    return peers;
+  }
+
+  private callParticipantCount(): number {
+    return this.viewers.size + (this.host && isOpen(this.host.ws) ? 1 : 0);
+  }
+
+  private async joinCaller(ws: WebSocket, token: string | null) {
+    if (!token) {
+      this.rejectAndClose(ws, 'unauthorized', 'Join the call from the call page to get a ticket');
+      return;
+    }
+    const credentialId = await sha256Hex(token);
+    const participant = await this.env.DB.prepare(
+      `SELECT t.user_id AS id, u.username FROM room_tickets t JOIN users u ON u.id = t.user_id
+       WHERE t.id = ? AND t.expires_at > ?`
+    )
+      .bind(credentialId, nowISO())
+      .first<{ id: string; username: string }>();
+    if (!participant) {
+      this.rejectAndClose(ws, 'unauthorized', 'Call ticket is invalid or expired');
+      return;
+    }
+
+    const stream = await this.env.DB.prepare('SELECT is_live FROM streams WHERE id = ?')
+      .bind(this.streamId)
+      .first<{ is_live: number }>();
+    if (!stream || stream.is_live !== 1) {
+      this.rejectAndClose(ws, 'not_live', 'This call has not started yet');
+      return;
+    }
+    if (this.callParticipantCount() >= MAX_CALL_PARTICIPANTS) {
+      this.rejectAndClose(ws, 'room_full', `This call is full (${MAX_CALL_PARTICIPANTS} participants max)`);
+      return;
+    }
+    // A user can occupy only one caller slot (refresh gets a fresh connection
+    // first because the old socket closes before the new join is processed).
+    for (const conn of this.viewers.values()) {
+      if (conn.role === 'caller' && conn.userId === participant.id) {
+        this.safeClose(conn.ws, 4000, 'superseded');
+        this.viewers.delete(conn.ws);
+      }
+    }
+
+    const callConn: Connection = {
+      ws,
+      id: `c_${randomId(8)}`,
+      role: 'caller',
+      userId: participant.id,
+      username: participant.username,
+      lastSeen: Date.now(),
+    };
+    this.viewers.set(ws, callConn);
+    this.peakViewers = Math.max(this.peakViewers, this.viewers.size);
+
+    this.send(ws, {
+      type: 'welcome',
+      role: 'caller',
+      viewerId: callConn.id,
+      viewerCount: this.callParticipantCount(),
+      peers: this.callPeerList().filter((p) => p.id !== callConn.id),
+    });
+    this.broadcastExcept(ws, { type: 'peer-joined', peer: { id: callConn.id, username: callConn.username, isHost: false } });
+    this.broadcastPresence();
   }
 
   private joinViewer(ws: WebSocket) {
@@ -273,6 +383,13 @@ export class RoomDO implements DurableObject {
         const to = typeof msg.to === 'string' ? msg.to : null;
         if (!to || typeof msg.payload !== 'object' || msg.payload === null) return;
         const signal = { type: 'signal', from: conn.id, payload: msg.payload };
+        if (this.roomKind === 'call') {
+          // Mesh calls: any participant may signal any participant by id.
+          const target =
+            to === 'host' ? this.host : [...this.viewers.values()].find((v) => v.id === to && v.role === 'caller');
+          if (target && target.ws !== conn.ws) this.send(target.ws, signal);
+          return;
+        }
         if (conn.role === 'viewer') {
           if (to !== 'host' || !this.host) return;
           this.send(this.host.ws, signal);
@@ -391,11 +508,12 @@ export class RoomDO implements DurableObject {
     if (this.loaded) return;
     this.loaded = true;
     try {
-      const row = await this.env.DB.prepare('SELECT peak_viewers FROM streams WHERE id = ?')
+      const row = await this.env.DB.prepare('SELECT peak_viewers, kind FROM streams WHERE id = ?')
         .bind(this.streamId)
-        .first<{ peak_viewers: number | null }>();
+        .first<{ peak_viewers: number | null; kind: string | null }>();
       this.streamIsValid = !!row;
       this.peakViewers = row?.peak_viewers ?? 0;
+      this.roomKind = row?.kind === 'call' ? 'call' : 'broadcast';
     } catch {
       this.streamIsValid = false;
     }
@@ -425,6 +543,22 @@ export class RoomDO implements DurableObject {
       ws.close(code, reason);
     } catch {
       /* already closed */
+    }
+  }
+
+  /** Broadcast to every open connection except `exceptWs` (e.g. a join echo). */
+  private broadcastExcept(exceptWs: WebSocket, data: unknown) {
+    const payload = JSON.stringify(data);
+    for (const [ws] of this.viewers) {
+      if (ws === exceptWs || !isOpen(ws)) continue;
+      try {
+        ws.send(payload);
+      } catch { /* closing */ }
+    }
+    if (this.host && isOpen(this.host.ws) && this.host.ws !== exceptWs) {
+      try {
+        this.host.ws.send(payload);
+      } catch { /* closing */ }
     }
   }
 

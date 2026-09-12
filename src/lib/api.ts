@@ -86,3 +86,10 @@ export function roomWsUrl(streamId: string): string {
 export function absoluteUrl(path: string): string {
   return `${window.location.origin}${path}`;
 }
+
+/** Issue a participant ticket for a live call room (kind = "call"). */
+export function joinCall(streamId: string) {
+  return request<{ ticket: string; ticketExpiresAt: string }>(`/api/streams/${encodeURIComponent(streamId)}/join-call`, {
+    method: "POST",
+  });
+}

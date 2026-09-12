@@ -1,5 +1,5 @@
 import type { Ctx } from '../router';
-import { corsHeaders, escapeXml, json, nowISO } from '../util';
+import { corsHeaders, escapeXml, json, nowISO, resolveDeployMode } from '../util';
 import { CATEGORIES } from './auth';
 
 // GET /api/health
@@ -17,9 +17,14 @@ export async function handleHealth(ctx: Ctx): Promise<Response> {
 // GET /api/config — ICE servers and feature flags for the client.
 export async function handleConfig(ctx: Ctx): Promise<Response> {
   const { req, env } = ctx;
-  const iceServers: RTCIceServerLike[] = [
-    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
-  ];
+  // On a LAN/loopback deployment the client needs no internet ICE at all —
+  // same-subnet WebRTC connects with host candidates alone. An explicitly
+  // configured TURN server is always honored (operator intent).
+  const mode = resolveDeployMode(req.headers.get('host') ?? req.headers.get('x-forwarded-host'), env.DEPLOY_MODE);
+  const iceServers: RTCIceServerLike[] = [];
+  if (mode === 'cloud') {
+    iceServers.push({ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] });
+  }
   if (env.TURN_URL) {
     iceServers.push({
       urls: env.TURN_URL.split(',').map((u) => u.trim()),
@@ -29,6 +34,7 @@ export async function handleConfig(ctx: Ctx): Promise<Response> {
   }
   return json(
     {
+      mode,
       iceServers,
       turnConfigured: !!env.TURN_URL,
       recordingsEnabled: !!env.RECORDINGS,

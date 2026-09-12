@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { LayoutDashboard, LogOut, Radio, Search, Settings, UserRound } from "lucide-react";
+import { LayoutDashboard, LogOut, Radio, Search, Settings, UserRound, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -12,12 +12,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Logo } from "@/components/Brand";
 import { useAuth } from "@/contexts/AuthContext";
+import { useIsLan } from "@/contexts/ConfigContext";
 import { initialsOf } from "@/hooks/useElapsedSeconds";
 
 export default function Navigation() {
   const { isAuthenticated, user, logout } = useAuth();
+  const isLan = useIsLan();
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
 
@@ -46,6 +49,19 @@ export default function Navigation() {
         <Link to="/" aria-label="I'm Live — home" className="flex items-center gap-2.5">
           <Logo className="text-lg" />
         </Link>
+        {isLan && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="hidden items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent sm:inline-flex"
+                aria-label="Local network mode — this app is served from a server on your LAN and works without internet"
+              >
+                <Wifi className="h-3 w-3" aria-hidden="true" /> LAN
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Local network mode — served from a LAN host, works offline</TooltipContent>
+          </Tooltip>
+        )}
 
         <nav className="ml-4 hidden items-center gap-1 md:flex" aria-label="Primary">
           <NavLink to="/browse" className={navLinkClass}>

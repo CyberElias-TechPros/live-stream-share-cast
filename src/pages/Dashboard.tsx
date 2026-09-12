@@ -176,8 +176,18 @@ export default function Dashboard() {
                       <Trash2 className="h-4 w-4" aria-hidden="true" />
                     </Button>
                     {stream.isLive ? (
-                      <Button variant="live" size="sm" onClick={() => navigate("/studio")}>
-                        Open studio
+                      stream.kind === "call" ? (
+                        <Button variant="live" size="sm" asChild>
+                          <Link to={`/watch/${stream.id}`}>Rejoin call</Link>
+                        </Button>
+                      ) : (
+                        <Button variant="live" size="sm" onClick={() => navigate("/studio")}>
+                          Open studio
+                        </Button>
+                      )
+                    ) : stream.kind === "call" ? (
+                      <Button asChild variant="outline" size="sm">
+                        <Link to={`/watch/${stream.id}`}>Open call</Link>
                       </Button>
                     ) : (
                       <Button asChild variant="outline" size="sm">

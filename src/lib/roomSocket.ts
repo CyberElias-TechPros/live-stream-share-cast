@@ -1,25 +1,38 @@
 import { roomWsUrl } from "./api";
+import type { CallPeer } from "@/types";
 
 /**
  * RoomSocket — resilient client for the per-stream Durable Object room.
  *
  * Protocol:
- *   → { type: "join", role: "host"|"viewer", token? }
+ *   → { type: "join", role: "host"|"viewer"|"caller", token? }
  *   → { type: "signal", to, payload }        (WebRTC offer/answer/ICE relay)
  *   → { type: "ping" }
  *
  * Chat is sent over authenticated REST (session cookie) and received here.
  *   ← { type: "welcome" | "presence" | "viewer-joined" | "viewer-left"
- *      | "host-present" | "host-left" | "signal" | "chat" | "chat-enabled"
- *      | "chat-error" | "chat-throttled" | "stream-ended" | "rejected" | "pong" }
+ *      | "peer-joined" | "peer-left" | "host-present" | "host-left"
+ *      | "signal" | "chat" | "stream-ended" | "rejected" | "pong" }
+ *
+ * "caller" + peer-* frames belong to mesh call rooms (kind = "call"): every
+ * participant publishes to everyone else. welcome carries a `peers` snapshot
+ * and the joiner never receives its own peer-joined echo.
  */
 
 export interface RoomEvents {
   onOpen?: () => void;
-  onWelcome?: (msg: { role: "host" | "viewer"; viewerId?: string; viewerCount?: number; hostPresent?: boolean }) => void;
+  onWelcome?: (msg: {
+    role: "host" | "viewer" | "caller";
+    viewerId?: string;
+    viewerCount?: number;
+    hostPresent?: boolean;
+    peers?: CallPeer[];
+  }) => void;
   onPresence?: (viewerCount: number) => void;
   onViewerJoined?: (viewerId: string) => void;
   onViewerLeft?: (viewerId: string) => void;
+  onPeerJoined?: (peer: CallPeer) => void;
+  onPeerLeft?: (peerId: string) => void;
   onHostPresent?: () => void;
   onHostLeft?: () => void;
   onSignal?: (from: string, payload: unknown) => void;
@@ -106,10 +119,11 @@ export class RoomSocket {
         if (this.everConnected) this.events.onReconnected?.();
         this.everConnected = true;
         this.events.onWelcome?.({
-          role: msg.role as "host" | "viewer",
+          role: msg.role as "host" | "viewer" | "caller",
           viewerId: msg.viewerId as string | undefined,
           viewerCount: msg.viewerCount as number | undefined,
           hostPresent: !!msg.hostPresent,
+          peers: Array.isArray(msg.peers) ? (msg.peers as CallPeer[]) : undefined,
         });
         break;
       case "presence":
@@ -120,6 +134,16 @@ export class RoomSocket {
         break;
       case "viewer-left":
         this.events.onViewerLeft?.(String(msg.viewerId));
+        break;
+      case "peer-joined": {
+        const peer = msg.peer as CallPeer | undefined;
+        if (peer && typeof peer.id === "string") {
+          this.events.onPeerJoined?.({ id: peer.id, username: String(peer.username ?? "guest"), isHost: !!peer.isHost });
+        }
+        break;
+      }
+      case "peer-left":
+        this.events.onPeerLeft?.(String(msg.peerId));
         break;
       case "host-present":
         this.events.onHostPresent?.();

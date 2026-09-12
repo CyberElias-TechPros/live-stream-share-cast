@@ -9,8 +9,7 @@ import {
   randomId,
   readJson,
   toSelfUser,
-  type UserRow,
-} from '../util';
+  type UserRow, resolveDeployMode } from '../util';
 import {
   clearSessionCookie,
   createSession,
@@ -95,8 +94,14 @@ export async function handleSignup(ctx: Ctx): Promise<Response> {
   const { email, username, password } = parsed.data;
   const ip = getClientIp(req);
 
+  // Anti-abuse: 25 signups/hour/IP on the public internet. LAN deployments get
+  // a higher default (100) because a whole household shares one private IP.
+  // SIGNUP_RATE_LIMIT overrides both for load tests / special deployments.
+  const mode = resolveDeployMode(req.headers.get('host') ?? req.headers.get('x-forwarded-host'), env.DEPLOY_MODE);
+  const signupLimit = Number.parseInt(env.SIGNUP_RATE_LIMIT ?? '', 10);
+  const limit = Number.isFinite(signupLimit) && signupLimit > 0 ? signupLimit : mode === 'lan' ? 100 : 25;
   const signupCount = await recentAttemptCount(env.DB, { identity: `signup:${ip}`, sinceMs: 60 * 60 * 1000 });
-  if (signupCount >= 25) {
+  if (signupCount >= limit) {
     return apiError(429, 'rate_limited', 'Too many signup attempts from this address. Try again later.', {
       'retry-after': '3600',
       ...corsHeaders(env, req),
