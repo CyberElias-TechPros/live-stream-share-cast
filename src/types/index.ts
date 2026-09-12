@@ -1,79 +1,24 @@
-export interface Stream {
-  id: string;
-  title: string;
-  description?: string;
-  isLive: boolean;
-  streamKey: string;
-  createdAt: Date;
-  viewerCount: number;
-  isRecording: boolean;
-  isLocalStream: boolean;
-  thumbnail?: string;
-  url?: string;
-  userId: string;
-  roomId?: string;
-  qualityOptions?: StreamQuality[];
-  startedAt?: Date;
-  endedAt?: Date;
-  bandwidth?: number;
-  category?: string;
-  tags?: string[];
-  username?: string;
-  displayName?: string;
-  userAvatar?: string;
-  recordingUrl?: string;
-  recordingExpiry?: Date;
-  streamType: 'local' | 'internet';
-}
-
-export interface StreamQuality {
-  id: string;
-  label: string; // e.g. "720p", "480p", "360p"
-  resolution: {
-    width: number;
-    height: number;
-  };
-  bitrate: number;
-  codec: string; // e.g. "H.264", "VP8"
-}
-
-export interface User {
+export interface PublicUser {
   id: string;
   username: string;
-  email: string;
-  avatar?: string;
-  displayName?: string;
-  bio?: string;
-  followers?: number;
-  following?: number;
-  isStreamer?: boolean;
-  createdAt: Date;
-  updatedAt?: Date;
-  lastSeen?: Date;
-  socialLinks?: SocialLink[];
-  preferences?: UserPreferences;
+  displayName: string;
+  bio: string;
+  avatarColor: string;
+  followersCount: number;
+  followingCount: number;
+  socialLinks: SocialLink[];
+  createdAt: string;
 }
 
-export interface UserPreferences {
-  theme?: 'light' | 'dark' | 'system';
-  notifications?: {
-    email: boolean;
-    push: boolean;
-    streamStart: boolean;
-    comments: boolean;
-    followers: boolean;
-  };
-  privacy?: {
-    showOnlineStatus: boolean;
-    allowMessages: boolean;
-    showProfileToUnregistered: boolean;
-  };
-  streaming?: {
-    defaultStreamType: 'local' | 'internet';
-    defaultQuality: string;
-    autoRecord: boolean;
-    autoDeleteRecordings: boolean;
-    recordingRetentionHours: number;
+export interface SelfUser extends PublicUser {
+  email: string;
+  preferences: {
+    streaming?: {
+      defaultResolution?: "1080p" | "720p" | "480p";
+      defaultFps?: 24 | 30 | 60;
+      autoRecord?: boolean;
+      recordingRetentionHours?: number;
+    };
   };
 }
 
@@ -82,94 +27,68 @@ export interface SocialLink {
   url: string;
 }
 
-export interface StreamSession {
+export interface Stream {
   id: string;
-  streamId: string;
-  userId: string;
-  startedAt: Date;
-  endedAt?: Date;
+  title: string;
+  description: string;
+  category: string;
+  tags: string[];
+  isLive: boolean;
   viewerCount: number;
-  duration?: number;
-  recordingUrl?: string;
-  recordingExpiry?: Date;
-  peakViewers?: number;
-  avgViewDuration?: number;
-  streamStats?: StreamStats[];
-  streamType: 'local' | 'internet';
-}
-
-export interface StreamStats {
-  timestamp: Date;
-  viewerCount: number;
-  bandwidth: number;
-  cpuUsage?: number;
-  memoryUsage?: number;
-  errors?: StreamError[];
-}
-
-export interface StreamError {
-  timestamp: Date;
-  code: string;
-  message: string;
-  details?: any;
-}
-
-export interface StreamSettings {
-  audio: {
-    enabled: boolean;
-    deviceId?: string;
-    echoCancellation: boolean;
-    noiseSuppression: boolean;
-    autoGainControl: boolean;
+  peakViewers: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  createdAt: string;
+  host: {
+    username: string;
+    displayName: string;
+    avatarColor: string;
   };
-  video: {
-    enabled: boolean;
-    deviceId?: string;
-    width: number;
-    height: number;
-    frameRate: number;
-    facingMode?: 'user' | 'environment';
-  };
-  streaming: {
-    codec: 'VP8' | 'VP9' | 'H264';
-    bitrate: number;
-    keyFrameInterval: number;
-    isLocalStream: boolean;
-    recordStream: boolean;
-    streamType: 'local' | 'internet';
-    localSave: boolean;
-    recordingRetentionHours: number;
-    autoDeleteRecordings?: boolean;
-  };
+  hasRecording: boolean;
+  recordingExpiresAt: string | null;
 }
 
-export type StreamStatus = 
-  | "idle"
-  | "connecting"
-  | "live"
-  | "error"
-  | "ended"
-  | "loading"
-  | "buffering";
-
-export interface WebRTCConnection {
-  peerConnection: RTCPeerConnection;
-  dataChannel?: RTCDataChannel;
-  stream?: MediaStream;
-  streamId: string;
-  userId?: string;
-  connectionState: RTCPeerConnectionState;
+export interface StreamWithLastSession extends Stream {
+  lastSession: {
+    peakViewers: number | null;
+    durationSeconds: number | null;
+  };
 }
 
 export interface ChatMessage {
   id: string;
-  streamId: string;
-  userId: string;
   username: string;
-  userAvatar?: string;
-  message: string;
-  timestamp: Date;
-  isModerated?: boolean;
-  type: 'text' | 'emote' | 'donation' | 'system';
-  metadata?: any;
+  text: string;
+  ts: number | string;
+  pending?: boolean;
 }
+
+export interface BroadcastSession {
+  id: string;
+  streamId: string;
+  streamTitle: string;
+  startedAt: string;
+  endedAt: string | null;
+  durationSeconds: number | null;
+  peakViewers: number;
+}
+
+export interface Profile extends PublicUser {
+  isSelf: boolean;
+  isFollowing: boolean;
+  broadcastCount: number;
+  totalBroadcastSeconds: number;
+}
+
+export interface AppConfig {
+  iceServers: RTCIceServer[];
+  turnConfigured: boolean;
+  recordingsEnabled: boolean;
+  categories: string[];
+}
+
+export interface ApiErrorBody {
+  error: { code: string; message: string };
+}
+
+export type ConnectionQuality = "excellent" | "good" | "fair" | "poor" | "unknown";

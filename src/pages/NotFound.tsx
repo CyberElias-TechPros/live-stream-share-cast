@@ -1,27 +1,37 @@
-import { useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { Link } from "react-router-dom";
+import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/Brand";
+import Navigation from "@/components/Navigation";
+import { useSEO } from "@/hooks/useSEO";
 
-const NotFound = () => {
-  const location = useLocation();
-
-  useEffect(() => {
-    console.error(
-      "404 Error: User attempted to access non-existent route:",
-      location.pathname
-    );
-  }, [location.pathname]);
-
+export default function NotFound() {
+  useSEO({ title: "Page not found", robots: "noindex" });
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">404</h1>
-        <p className="text-xl text-gray-600 mb-4">Oops! Page not found</p>
-        <a href="/" className="text-blue-500 hover:text-blue-700 underline">
-          Return to Home
-        </a>
-      </div>
+    <div className="flex min-h-screen flex-col">
+      <Navigation />
+      <main className="relative flex flex-1 items-center justify-center overflow-hidden px-6 py-24">
+        <div className="grid-bg absolute inset-0" aria-hidden="true" />
+        <div className="relative text-center">
+          <p className="micro">Signal lost</p>
+          <h1 className="mt-3 font-display text-[clamp(5rem,18vw,10rem)] font-bold leading-none tracking-tighter text-panel-2">
+            4<span className="text-live">0</span>4
+          </h1>
+          <p className="mx-auto mt-4 max-w-sm text-text-muted">
+            This page isn't on air. It may have been moved, deleted, or never existed.
+          </p>
+          <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <Button asChild variant="live">
+              <Link to="/">Back to home</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/browse">Browse live streams</Link>
+            </Button>
+          </div>
+          <div className="mt-10 flex justify-center opacity-80">
+            <Logo className="text-lg" />
+          </div>
+        </div>
+      </main>
     </div>
   );
-};
-
-export default NotFound;
+}

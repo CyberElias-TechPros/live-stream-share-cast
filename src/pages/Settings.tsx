@@ -1,772 +1,273 @@
-
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
-import { Label } from "@/components/ui/label";
-import { 
-  UserRound, 
-  Settings as SettingsIcon, 
-  BellRing, 
-  Shield, 
-  Video, 
-  Save, 
-  UploadCloud,
-  Globe, 
-  Wifi, 
-  Clock,
-  Moon,
-  Sun,
-  Laptop
-} from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import Navigation from "@/components/Navigation";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import Footer from "@/components/Footer";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { PageLoader } from "@/components/States";
+import { useSEO } from "@/hooks/useSEO";
 import { useAuth } from "@/contexts/AuthContext";
-import { UserPreferences } from "@/types";
-import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { 
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage 
-} from "@/components/ui/form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import * as z from "zod";
+import { api, ApiError } from "@/lib/api";
+import { initialsOf } from "@/hooks/useElapsedSeconds";
+import { cn } from "@/lib/utils";
+import type { SocialLink } from "@/types";
 
-const profileFormSchema = z.object({
-  username: z.string().min(3, {
-    message: "Username must be at least 3 characters.",
-  }),
-  displayName: z.string().optional(),
-  bio: z.string().max(500, {
-    message: "Bio must not be longer than 500 characters.",
-  }).optional(),
-  isStreamer: z.boolean().optional(),
-});
-
-const streamingSettingsSchema = z.object({
-  defaultStreamType: z.enum(["local", "internet"]),
-  defaultQuality: z.string(),
-  autoRecord: z.boolean(),
-  localSave: z.boolean(),
-  autoDeleteRecordings: z.boolean(),
-  recordingRetentionHours: z.number().min(1).max(72),
-});
+const AVATAR_COLORS = ["#7C5CFF", "#FF3B30", "#FF8A3C", "#2DD4BF", "#38BDF8", "#F472B6", "#A3E635", "#FACC15"];
+const PLATFORMS = ["website", "github", "x", "instagram", "youtube", "twitch", "tiktok", "mastodon"];
 
 export default function Settings() {
-  const [activeTab, setActiveTab] = useState("profile");
-  const { user, isAuthenticated, updateProfile, updateStreamerStatus, updateUserPreferences } = useAuth();
+  useSEO({ title: "Settings", robots: "noindex" });
+  const { user, setUser } = useAuth();
   const navigate = useNavigate();
-  
+
+  const [displayName, setDisplayName] = useState("");
+  const [bio, setBio] = useState("");
+  const [avatarColor, setAvatarColor] = useState(AVATAR_COLORS[0]!);
+  const [links, setLinks] = useState<SocialLink[]>([]);
+  const [resolution, setResolution] = useState<"1080p" | "720p" | "480p">("720p");
+  const [fps, setFps] = useState<"24" | "30" | "60">("30");
+  const [autoRecord, setAutoRecord] = useState(false);
+  const [retention, setRetention] = useState<"24" | "48" | "72" | "168">("48");
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
-    if (!isAuthenticated) {
-      navigate("/login");
-    }
-  }, [isAuthenticated, navigate]);
-  
-  const profileForm = useForm<z.infer<typeof profileFormSchema>>({
-    resolver: zodResolver(profileFormSchema),
-    defaultValues: {
-      username: user?.username || "",
-      displayName: user?.displayName || "",
-      bio: user?.bio || "",
-      isStreamer: user?.isStreamer || false,
-    },
-  });
-  
-  const streamingSettingsForm = useForm<z.infer<typeof streamingSettingsSchema>>({
-    resolver: zodResolver(streamingSettingsSchema),
-    defaultValues: {
-      defaultStreamType: user?.preferences?.streaming?.defaultStreamType || "internet",
-      defaultQuality: user?.preferences?.streaming?.defaultQuality || "720p",
-      autoRecord: user?.preferences?.streaming?.autoRecord || false,
-      localSave: true,
-      autoDeleteRecordings: user?.preferences?.streaming?.autoDeleteRecordings || true,
-      recordingRetentionHours: user?.preferences?.streaming?.recordingRetentionHours || 6,
-    },
-  });
-  
-  useEffect(() => {
-    if (user) {
-      profileForm.reset({
-        username: user.username,
-        displayName: user.displayName || "",
-        bio: user.bio || "",
-        isStreamer: user.isStreamer || false,
-      });
-      
-      streamingSettingsForm.reset({
-        defaultStreamType: user.preferences?.streaming?.defaultStreamType || "internet",
-        defaultQuality: user.preferences?.streaming?.defaultQuality || "720p",
-        autoRecord: user.preferences?.streaming?.autoRecord || false,
-        localSave: true,
-        autoDeleteRecordings: user.preferences?.streaming?.autoDeleteRecordings || true,
-        recordingRetentionHours: user.preferences?.streaming?.recordingRetentionHours || 6,
-      });
-    }
-  }, [user, profileForm, streamingSettingsForm]);
-  
-  const handleProfileSubmit = async (data: z.infer<typeof profileFormSchema>) => {
     if (!user) return;
-    
-    try {
-      // Update profile
-      await updateProfile({
-        username: data.username,
-        displayName: data.displayName,
-        bio: data.bio,
-      });
-      
-      // Update streamer status if changed
-      if (data.isStreamer !== user.isStreamer) {
-        await updateStreamerStatus(!!data.isStreamer);
-      }
-    } catch (error) {
-      console.error("Failed to update profile:", error);
+    setDisplayName(user.displayName);
+    setBio(user.bio);
+    setAvatarColor(user.avatarColor);
+    setLinks(user.socialLinks);
+    const prefs = user.preferences?.streaming;
+    if (prefs?.defaultResolution) setResolution(prefs.defaultResolution);
+    if (prefs?.defaultFps) setFps(String(prefs.defaultFps) as "24" | "30" | "60");
+    setAutoRecord(!!prefs?.autoRecord);
+    if (prefs?.recordingRetentionHours) {
+      const opts = ["24", "48", "72", "168"] as const;
+      setRetention((opts.find((o) => Number(o) === prefs.recordingRetentionHours) ?? "48"));
     }
-  };
-  
-  const handleStreamingSettingsSubmit = async (data: z.infer<typeof streamingSettingsSchema>) => {
-    if (!user) return;
-    
-    try {
-      await updateUserPreferences({
-        streaming: {
-          defaultStreamType: data.defaultStreamType,
-          defaultQuality: data.defaultQuality,
-          autoRecord: data.autoRecord,
-          autoDeleteRecordings: data.autoDeleteRecordings,
-          recordingRetentionHours: data.recordingRetentionHours
-        }
-      });
-    } catch (error) {
-      console.error("Failed to update streaming settings:", error);
-    }
-  };
-  
-  const handleNotificationsUpdate = async (preferences: Partial<UserPreferences['notifications']>) => {
-    if (!user) return;
-    
-    try {
-      await updateUserPreferences({
-        notifications: {
-          ...user.preferences?.notifications,
-          ...preferences
-        }
-      });
-    } catch (error) {
-      console.error("Failed to update notification settings:", error);
-    }
-  };
-  
-  const handlePrivacyUpdate = async (preferences: Partial<UserPreferences['privacy']>) => {
-    if (!user) return;
-    
-    try {
-      await updateUserPreferences({
-        privacy: {
-          ...user.preferences?.privacy,
-          ...preferences
-        }
-      });
-    } catch (error) {
-      console.error("Failed to update privacy settings:", error);
-    }
-  };
-  
-  const handleThemeUpdate = async (theme: UserPreferences['theme']) => {
-    if (!user) return;
-    
-    try {
-      await updateUserPreferences({
-        theme
-      });
-    } catch (error) {
-      console.error("Failed to update theme settings:", error);
-    }
-  };
-  
-  if (!isAuthenticated || !user) {
+  }, [user]);
+
+  if (!user) {
     return (
-      <div className="min-h-screen flex flex-col">
+      <div className="flex min-h-screen flex-col">
         <Navigation />
-        
-        <main className="flex-1 container py-8">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex flex-col lg:flex-row gap-8">
-              <div className="lg:w-64 space-y-6">
-                {[1, 2, 3, 4, 5].map(i => (
-                  <Skeleton key={i} className="h-10 w-full" />
-                ))}
-              </div>
-              
-              <div className="flex-1">
-                <Skeleton className="h-64 w-full mb-8" />
-                <Skeleton className="h-96 w-full" />
-              </div>
-            </div>
-          </div>
-        </main>
+        <PageLoader />
       </div>
     );
   }
-  
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const { user: updated } = await api.patch<{ user: import("@/types").PublicUser }>("/api/users/me", {
+        displayName: displayName.trim(),
+        bio,
+        avatarColor,
+        socialLinks: links.filter((l) => l.platform.trim() && l.url.trim()),
+        preferences: {
+          streaming: {
+            defaultResolution: resolution,
+            defaultFps: Number(fps),
+            autoRecord,
+            recordingRetentionHours: Number(retention),
+          },
+        },
+      });
+      // Merge back into the auth state (patch returns public fields only).
+      setUser({ ...user, ...updated, preferences: user.preferences });
+      toast.success("Settings saved");
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="flex min-h-screen flex-col">
       <Navigation />
-      
-      <main className="flex-1 container py-8">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex flex-col lg:flex-row gap-8">
-            <div className="lg:w-64 space-y-1">
-              <Button 
-                variant={activeTab === "profile" ? "default" : "ghost"} 
-                className="w-full justify-start"
-                onClick={() => setActiveTab("profile")}
-              >
-                <UserRound className="mr-2 h-4 w-4" />
-                Profile
-              </Button>
-              
-              <Button 
-                variant={activeTab === "appearance" ? "default" : "ghost"} 
-                className="w-full justify-start"
-                onClick={() => setActiveTab("appearance")}
-              >
-                <Sun className="mr-2 h-4 w-4" />
-                Appearance
-              </Button>
-              
-              <Button 
-                variant={activeTab === "notifications" ? "default" : "ghost"} 
-                className="w-full justify-start"
-                onClick={() => setActiveTab("notifications")}
-              >
-                <BellRing className="mr-2 h-4 w-4" />
-                Notifications
-              </Button>
-              
-              <Button 
-                variant={activeTab === "privacy" ? "default" : "ghost"} 
-                className="w-full justify-start"
-                onClick={() => setActiveTab("privacy")}
-              >
-                <Shield className="mr-2 h-4 w-4" />
-                Privacy
-              </Button>
-              
-              <Button 
-                variant={activeTab === "streaming" ? "default" : "ghost"} 
-                className="w-full justify-start"
-                onClick={() => setActiveTab("streaming")}
-              >
-                <Video className="mr-2 h-4 w-4" />
-                Streaming
-              </Button>
+      <main className="container-app max-w-3xl flex-1 py-10">
+        <header className="mb-8">
+          <p className="micro">Account</p>
+          <h1 className="mt-1 font-display text-3xl font-bold tracking-tight">Settings</h1>
+        </header>
+
+        <form
+          className="space-y-8"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          {/* profile */}
+          <section className="panel p-6" aria-labelledby="profile-section">
+            <h2 id="profile-section" className="font-display text-lg font-semibold">Public profile</h2>
+
+            <div className="mt-5 flex items-center gap-4">
+              <Avatar className="h-16 w-16">
+                <AvatarFallback style={{ background: `${avatarColor}22`, color: avatarColor }} className="text-xl">
+                  {initialsOf(displayName || user.username)}
+                </AvatarFallback>
+              </Avatar>
+              <fieldset>
+                <legend className="micro mb-2">Avatar color</legend>
+                <div className="flex flex-wrap gap-2">
+                  {AVATAR_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      role="radio"
+                      aria-checked={avatarColor === c}
+                      aria-label={`Avatar color ${c}`}
+                      onClick={() => setAvatarColor(c)}
+                      className={cn(
+                        "h-7 w-7 rounded-full border-2 transition-transform hover:scale-110",
+                        avatarColor === c ? "border-text scale-110" : "border-transparent"
+                      )}
+                      style={{ background: c }}
+                    />
+                  ))}
+                </div>
+              </fieldset>
             </div>
-            
-            <div className="flex-1 space-y-6">
-              {activeTab === "profile" && (
-                <Form {...profileForm}>
-                  <form onSubmit={profileForm.handleSubmit(handleProfileSubmit)} className="space-y-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Profile</CardTitle>
-                        <CardDescription>
-                          Update your personal information and streamer status
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-6">
-                        <div className="flex items-center gap-6">
-                          <Avatar className="h-20 w-20">
-                            <AvatarImage src={user.avatar} alt={user.displayName || user.username} />
-                            <AvatarFallback>
-                              {(user.displayName || user.username).charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          
-                          <div>
-                            <Button variant="outline">
-                              <UploadCloud className="mr-2 h-4 w-4" />
-                              Change Avatar
-                            </Button>
-                          </div>
-                        </div>
-                        
-                        <FormField
-                          control={profileForm.control}
-                          name="username"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Username</FormLabel>
-                              <FormControl>
-                                <Input placeholder="username" {...field} />
-                              </FormControl>
-                              <FormDescription>
-                                This is your public username. It must be unique.
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        
-                        <FormField
-                          control={profileForm.control}
-                          name="displayName"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Display Name</FormLabel>
-                              <FormControl>
-                                <Input placeholder="Display Name" {...field} />
-                              </FormControl>
-                              <FormDescription>
-                                This is the name that will be displayed to others.
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        
-                        <FormField
-                          control={profileForm.control}
-                          name="bio"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Bio</FormLabel>
-                              <FormControl>
-                                <Textarea 
-                                  placeholder="Tell us about yourself" 
-                                  className="resize-none min-h-[120px]" 
-                                  {...field} 
-                                />
-                              </FormControl>
-                              <FormDescription>
-                                Write a short bio about yourself. This will be visible on your profile.
-                              </FormDescription>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        
-                        <FormField
-                          control={profileForm.control}
-                          name="isStreamer"
-                          render={({ field }) => (
-                            <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                              <div className="space-y-0.5">
-                                <FormLabel className="text-base">Streamer Status</FormLabel>
-                                <FormDescription>
-                                  Enable this to create and broadcast streams
-                                </FormDescription>
-                              </div>
-                              <FormControl>
-                                <Switch
-                                  checked={field.value}
-                                  onCheckedChange={field.onChange}
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                      </CardContent>
-                      <CardFooter>
-                        <Button type="submit">
-                          <Save className="mr-2 h-4 w-4" />
-                          Save Changes
-                        </Button>
-                      </CardFooter>
-                    </Card>
-                  </form>
-                </Form>
-              )}
-              
-              {activeTab === "appearance" && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Appearance</CardTitle>
-                    <CardDescription>
-                      Customize the appearance of the application
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div>
-                      <h3 className="text-lg font-medium mb-4">Theme</h3>
-                      <div className="grid grid-cols-3 gap-4">
-                        <Card 
-                          className={`cursor-pointer border-2 ${user.preferences?.theme === 'light' ? 'border-primary' : 'border-transparent'}`}
-                          onClick={() => handleThemeUpdate('light')}
-                        >
-                          <CardContent className="p-4 flex flex-col items-center">
-                            <Sun className="h-8 w-8 mb-2" />
-                            <span>Light</span>
-                          </CardContent>
-                        </Card>
-                        
-                        <Card 
-                          className={`cursor-pointer border-2 ${user.preferences?.theme === 'dark' ? 'border-primary' : 'border-transparent'}`}
-                          onClick={() => handleThemeUpdate('dark')}
-                        >
-                          <CardContent className="p-4 flex flex-col items-center">
-                            <Moon className="h-8 w-8 mb-2" />
-                            <span>Dark</span>
-                          </CardContent>
-                        </Card>
-                        
-                        <Card 
-                          className={`cursor-pointer border-2 ${user.preferences?.theme === 'system' ? 'border-primary' : 'border-transparent'}`}
-                          onClick={() => handleThemeUpdate('system')}
-                        >
-                          <CardContent className="p-4 flex flex-col items-center">
-                            <Laptop className="h-8 w-8 mb-2" />
-                            <span>System</span>
-                          </CardContent>
-                        </Card>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-              
-              {activeTab === "notifications" && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Notification Settings</CardTitle>
-                    <CardDescription>
-                      Manage your notification preferences
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="email-notifications" className="flex flex-col space-y-1">
-                          <span>Email Notifications</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Receive notifications via email
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="email-notifications" 
-                          checked={user.preferences?.notifications?.email || false}
-                          onCheckedChange={(checked) => handleNotificationsUpdate({ email: checked })}
-                        />
-                      </div>
-                      
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="push-notifications" className="flex flex-col space-y-1">
-                          <span>Push Notifications</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Receive notifications in your browser
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="push-notifications" 
-                          checked={user.preferences?.notifications?.push || false}
-                          onCheckedChange={(checked) => handleNotificationsUpdate({ push: checked })}
-                        />
-                      </div>
-                      
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="stream-start-notifications" className="flex flex-col space-y-1">
-                          <span>Stream Start Notifications</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Get notified when streamers you follow go live
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="stream-start-notifications" 
-                          checked={user.preferences?.notifications?.streamStart || false}
-                          onCheckedChange={(checked) => handleNotificationsUpdate({ streamStart: checked })}
-                        />
-                      </div>
-                      
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="comment-notifications" className="flex flex-col space-y-1">
-                          <span>Comment Notifications</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Get notified about new comments on your streams
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="comment-notifications" 
-                          checked={user.preferences?.notifications?.comments || false}
-                          onCheckedChange={(checked) => handleNotificationsUpdate({ comments: checked })}
-                        />
-                      </div>
-                      
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="followers-notifications" className="flex flex-col space-y-1">
-                          <span>Follower Notifications</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Get notified when someone follows you
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="followers-notifications" 
-                          checked={user.preferences?.notifications?.followers || false}
-                          onCheckedChange={(checked) => handleNotificationsUpdate({ followers: checked })}
-                        />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-              
-              {activeTab === "privacy" && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Privacy Settings</CardTitle>
-                    <CardDescription>
-                      Manage your privacy preferences
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="show-online-status" className="flex flex-col space-y-1">
-                          <span>Show Online Status</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Let others see when you're online
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="show-online-status" 
-                          checked={user.preferences?.privacy?.showOnlineStatus || false}
-                          onCheckedChange={(checked) => handlePrivacyUpdate({ showOnlineStatus: checked })}
-                        />
-                      </div>
-                      
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="allow-messages" className="flex flex-col space-y-1">
-                          <span>Allow Direct Messages</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Let others send you direct messages
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="allow-messages" 
-                          checked={user.preferences?.privacy?.allowMessages || false}
-                          onCheckedChange={(checked) => handlePrivacyUpdate({ allowMessages: checked })}
-                        />
-                      </div>
-                      
-                      <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="show-profile-unregistered" className="flex flex-col space-y-1">
-                          <span>Public Profile</span>
-                          <span className="font-normal text-sm text-muted-foreground">
-                            Allow unregistered users to view your profile
-                          </span>
-                        </Label>
-                        <Switch 
-                          id="show-profile-unregistered" 
-                          checked={user.preferences?.privacy?.showProfileToUnregistered || false}
-                          onCheckedChange={(checked) => handlePrivacyUpdate({ showProfileToUnregistered: checked })}
-                        />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-              
-              {activeTab === "streaming" && (
-                <Form {...streamingSettingsForm}>
-                  <form onSubmit={streamingSettingsForm.handleSubmit(handleStreamingSettingsSubmit)} className="space-y-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Streaming Settings</CardTitle>
-                        <CardDescription>
-                          Configure your streaming preferences
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <FormField
-                            control={streamingSettingsForm.control}
-                            name="defaultStreamType"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Default Streaming Type</FormLabel>
-                                <Select 
-                                  onValueChange={field.onChange} 
-                                  defaultValue={field.value}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select a streaming type" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="local">
-                                      <div className="flex items-center">
-                                        <Wifi className="h-4 w-4 mr-2" />
-                                        Local (LAN/WLAN)
-                                      </div>
-                                    </SelectItem>
-                                    <SelectItem value="internet">
-                                      <div className="flex items-center">
-                                        <Globe className="h-4 w-4 mr-2" />
-                                        Internet
-                                      </div>
-                                    </SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  Choose where your streams will be available by default
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                          
-                          <FormField
-                            control={streamingSettingsForm.control}
-                            name="defaultQuality"
-                            render={({ field }) => (
-                              <FormItem>
-                                <FormLabel>Default Quality</FormLabel>
-                                <Select 
-                                  onValueChange={field.onChange} 
-                                  defaultValue={field.value}
-                                >
-                                  <FormControl>
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select a quality preset" />
-                                    </SelectTrigger>
-                                  </FormControl>
-                                  <SelectContent>
-                                    <SelectItem value="1080p">1080p (High Quality)</SelectItem>
-                                    <SelectItem value="720p">720p (Balanced)</SelectItem>
-                                    <SelectItem value="480p">480p (Low Bandwidth)</SelectItem>
-                                    <SelectItem value="360p">360p (Mobile Friendly)</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <FormDescription>
-                                  Choose your default streaming quality
-                                </FormDescription>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </div>
-                        
-                        <div className="space-y-4">
-                          <FormField
-                            control={streamingSettingsForm.control}
-                            name="autoRecord"
-                            render={({ field }) => (
-                              <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                                <div className="space-y-0.5">
-                                  <FormLabel className="text-base">Auto-Record Streams</FormLabel>
-                                  <FormDescription>
-                                    Automatically record all your streams
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  <Switch
-                                    checked={field.value}
-                                    onCheckedChange={field.onChange}
-                                  />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-                          
-                          <FormField
-                            control={streamingSettingsForm.control}
-                            name="localSave"
-                            render={({ field }) => (
-                              <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                                <div className="space-y-0.5">
-                                  <FormLabel className="text-base">Save Recordings Locally</FormLabel>
-                                  <FormDescription>
-                                    Save recordings to your device instead of the cloud
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  <Switch
-                                    checked={field.value}
-                                    onCheckedChange={field.onChange}
-                                  />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-                          
-                          <FormField
-                            control={streamingSettingsForm.control}
-                            name="autoDeleteRecordings"
-                            render={({ field }) => (
-                              <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                                <div className="space-y-0.5">
-                                  <FormLabel className="text-base">Auto-Delete Cloud Recordings</FormLabel>
-                                  <FormDescription>
-                                    Automatically delete cloud recordings after a set period
-                                  </FormDescription>
-                                </div>
-                                <FormControl>
-                                  <Switch
-                                    checked={field.value}
-                                    onCheckedChange={field.onChange}
-                                  />
-                                </FormControl>
-                              </FormItem>
-                            )}
-                          />
-                          
-                          {streamingSettingsForm.watch("autoDeleteRecordings") && (
-                            <FormField
-                              control={streamingSettingsForm.control}
-                              name="recordingRetentionHours"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel>Recording Retention (Hours)</FormLabel>
-                                  <FormControl>
-                                    <Input 
-                                      type="number" 
-                                      min={1} 
-                                      max={72} 
-                                      {...field}
-                                      onChange={e => field.onChange(Number(e.target.value))}
-                                    />
-                                  </FormControl>
-                                  <FormDescription>
-                                    How long to keep cloud recordings before auto-deletion (1-72 hours)
-                                  </FormDescription>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          )}
-                        </div>
-                      </CardContent>
-                      <CardFooter>
-                        <Button type="submit">
-                          <Save className="mr-2 h-4 w-4" />
-                          Save Streaming Settings
-                        </Button>
-                      </CardFooter>
-                    </Card>
-                  </form>
-                </Form>
-              )}
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="displayName">Display name</Label>
+                <Input id="displayName" value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={32} required />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="username">Username</Label>
+                <Input id="username" value={`@${user.username}`} disabled aria-describedby="username-hint" />
+                <p id="username-hint" className="text-xs text-text-faint">Usernames are permanent.</p>
+              </div>
             </div>
+
+            <div className="mt-4 space-y-1.5">
+              <Label htmlFor="bio">Bio</Label>
+              <Textarea id="bio" value={bio} onChange={(e) => setBio(e.target.value)} maxLength={500} rows={3} placeholder="Tell viewers what you stream…" />
+            </div>
+
+            <div className="mt-5">
+              <Label>Links</Label>
+              <div className="mt-2 space-y-2">
+                {links.map((link, i) => (
+                  <div key={i} className="flex gap-2">
+                    <Select
+                      value={link.platform}
+                      onValueChange={(v) => setLinks((prev) => prev.map((l, j) => (j === i ? { ...l, platform: v } : l)))}
+                    >
+                      <SelectTrigger className="w-36" aria-label={`Platform for link ${i + 1}`}>
+                        <SelectValue placeholder="Platform" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PLATFORMS.map((p) => (
+                          <SelectItem key={p} value={p} className="capitalize">
+                            {p}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      value={link.url}
+                      onChange={(e) => setLinks((prev) => prev.map((l, j) => (j === i ? { ...l, url: e.target.value } : l)))}
+                      placeholder="https://…"
+                      className="flex-1"
+                      aria-label={`URL for link ${i + 1}`}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Remove link ${i + 1}`}
+                      onClick={() => setLinks((prev) => prev.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+                ))}
+                {links.length < 6 && (
+                  <Button type="button" variant="outline" size="sm" onClick={() => setLinks((prev) => [...prev, { platform: "website", url: "" }])}>
+                    <Plus className="h-4 w-4" aria-hidden="true" /> Add link
+                  </Button>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* streaming defaults */}
+          <section className="panel p-6" aria-labelledby="streaming-section">
+            <h2 id="streaming-section" className="font-display text-lg font-semibold">Streaming defaults</h2>
+            <p className="mt-1 text-sm text-text-muted">Pre-fills the studio every time you go live.</p>
+
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Default resolution</Label>
+                <Select value={resolution} onValueChange={(v) => setResolution(v as "1080p" | "720p" | "480p")}>
+                  <SelectTrigger aria-label="Default resolution"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="1080p">1080p</SelectItem>
+                    <SelectItem value="720p">720p</SelectItem>
+                    <SelectItem value="480p">480p</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Default frame rate</Label>
+                <Select value={fps} onValueChange={(v) => setFps(v as "24" | "30" | "60")}>
+                  <SelectTrigger aria-label="Default frame rate"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="24">24 fps</SelectItem>
+                    <SelectItem value="30">30 fps</SelectItem>
+                    <SelectItem value="60">60 fps</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="pref-autorec" className="text-sm">Start recording automatically</Label>
+                  <p className="mt-0.5 text-xs text-text-faint">Recordings save to your device (browser storage).</p>
+                </div>
+                <Switch id="pref-autorec" checked={autoRecord} onCheckedChange={setAutoRecord} />
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <Label className="text-sm">Cloud recording retention</Label>
+                  <p className="mt-0.5 text-xs text-text-faint">
+                    How long uploaded recordings are kept when cloud storage is configured for this deployment.
+                  </p>
+                </div>
+                <Select value={retention} onValueChange={(v) => setRetention(v as "24" | "48" | "72" | "168")}>
+                  <SelectTrigger className="w-40" aria-label="Recording retention"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="24">24 hours</SelectItem>
+                    <SelectItem value="48">48 hours</SelectItem>
+                    <SelectItem value="72">3 days</SelectItem>
+                    <SelectItem value="168">7 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </section>
+
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="ghost" onClick={() => navigate(-1)}>Cancel</Button>
+            <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save settings"}</Button>
           </div>
-        </div>
+        </form>
       </main>
+      <Footer />
     </div>
   );
 }
