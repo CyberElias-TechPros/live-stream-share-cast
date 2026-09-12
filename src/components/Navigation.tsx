@@ -1,13 +1,9 @@
-
 import { useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { LayoutDashboard, LogOut, Radio, Search, Settings, UserRound, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,324 +12,142 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Logo } from "@/components/Brand";
 import { useAuth } from "@/contexts/AuthContext";
-import { 
-  Menu, 
-  LogOut, 
-  User, 
-  Video, 
-  Settings,
-  FileVideo,
-  LayoutDashboard,
-  Search,
-  Home
-} from "lucide-react";
-import { Input } from "./ui/input";
-import ErrorBoundary from "./ErrorBoundary";
-import LoadingSpinner from "./LoadingSpinner";
-import { sanitizeInput } from "@/utils/validationUtils";
+import { useIsLan } from "@/contexts/ConfigContext";
+import { initialsOf } from "@/hooks/useElapsedSeconds";
 
 export default function Navigation() {
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const { isAuthenticated, user, logout } = useAuth();
-  const location = useLocation();
+  const isLan = useIsLan();
+  const [search, setSearch] = useState("");
   const navigate = useNavigate();
-  
-  const isActive = (path: string) => {
-    return location.pathname === path;
-  };
-  
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const sanitizedQuery = sanitizeInput(searchQuery);
-      if (sanitizedQuery.trim()) {
-        navigate(`/stream?q=${encodeURIComponent(sanitizedQuery.trim())}`);
-        setSearchQuery("");
-      }
-    } catch (error) {
-      console.error('Search error:', error);
+    const q = search.trim();
+    if (q) {
+      navigate(`/browse?q=${encodeURIComponent(q)}`);
+      setSearch("");
     }
   };
-  
+
   const handleLogout = async () => {
-    try {
-      await logout();
-      setMobileMenuOpen(false);
-    } catch (error) {
-      console.error('Logout error:', error);
-    }
+    await logout();
+    navigate("/");
   };
-  
+
+  const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `rounded-lg px-3 py-1.5 text-sm transition-colors duration-200 ${
+      isActive ? "text-text bg-panel-2" : "text-text-muted hover:text-text hover:bg-panel/70"
+    }`;
+
   return (
-    <ErrorBoundary>
-      <nav className="border-b">
-        <div className="container h-16 flex items-center justify-between">
-          {/* Logo */}
-          <Link to="/" className="flex items-center">
-            <FileVideo className="h-6 w-6 text-stream mr-2" />
-            <span className="font-bold text-lg">I'm Live</span>
-          </Link>
-          
-          {/* Desktop Navigation */}
-          <div className="hidden md:flex md:items-center md:space-x-4">
-            <Link to="/">
-              <Button 
-                variant={isActive("/") ? "default" : "ghost"}
-                size="sm"
+    <header className="sticky top-0 z-40 border-b border-line bg-bg/80 backdrop-blur-xl">
+      <div className="container-app flex h-16 items-center gap-3">
+        <Link to="/" aria-label="I'm Live — home" className="flex items-center gap-2.5">
+          <Logo className="text-lg" />
+        </Link>
+        {isLan && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className="hidden items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent sm:inline-flex"
+                aria-label="Local network mode — this app is served from a server on your LAN and works without internet"
               >
-                <Home className="h-4 w-4 mr-2" />
-                Home
+                <Wifi className="h-3 w-3" aria-hidden="true" /> LAN
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Local network mode — served from a LAN host, works offline</TooltipContent>
+          </Tooltip>
+        )}
+
+        <nav className="ml-4 hidden items-center gap-1 md:flex" aria-label="Primary">
+          <NavLink to="/browse" className={navLinkClass}>
+            Browse
+          </NavLink>
+          {isAuthenticated && (
+            <NavLink to="/dashboard" className={navLinkClass}>
+              Dashboard
+            </NavLink>
+          )}
+        </nav>
+
+        <form onSubmit={handleSearch} role="search" className="relative ml-auto hidden w-56 sm:block lg:w-72">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-faint" aria-hidden="true" />
+          <Input
+            type="search"
+            placeholder="Search streams"
+            className="h-9 rounded-full border-line bg-panel pl-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search live streams"
+          />
+        </form>
+
+        <div className="ml-auto flex items-center gap-2 sm:ml-0">
+          {isAuthenticated ? (
+            <>
+              <Button asChild variant="live" size="sm" className="hidden sm:inline-flex">
+                <Link to="/studio">
+                  <Radio className="h-3.5 w-3.5" aria-hidden="true" />
+                  Go live
+                </Link>
               </Button>
-            </Link>
-            
-            <Link to="/stream">
-              <Button 
-                variant={isActive("/stream") ? "default" : "ghost"}
-                size="sm"
-              >
-                <Video className="h-4 w-4 mr-2" />
-                Browse
-              </Button>
-            </Link>
-            
-            {isAuthenticated && user?.isStreamer && (
-              <Link to="/stream/create">
-                <Button 
-                  variant={isActive("/stream/create") ? "default" : "ghost"}
-                  size="sm"
-                >
-                  <FileVideo className="h-4 w-4 mr-2" />
-                  Stream
-                </Button>
-              </Link>
-            )}
-            
-            {isAuthenticated && (
-              <Link to="/dashboard">
-                <Button 
-                  variant={isActive("/dashboard") ? "default" : "ghost"}
-                  size="sm"
-                >
-                  <LayoutDashboard className="h-4 w-4 mr-2" />
-                  Dashboard
-                </Button>
-              </Link>
-            )}
-          </div>
-          
-          {/* Search */}
-          <form onSubmit={handleSearch} className="hidden md:flex flex-1 max-w-sm mx-4">
-            <div className="relative w-full">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                type="search"
-                placeholder="Search streams..."
-                className="pl-8 w-full"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                maxLength={100}
-              />
-            </div>
-          </form>
-          
-          {/* Desktop User Menu */}
-          <div className="hidden md:flex md:items-center md:space-x-4">
-            {isAuthenticated ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="rounded-full">
-                    <Avatar className="h-8 w-8">
-                      <AvatarImage src={user?.avatar} alt={user?.username} />
-                      <AvatarFallback>{user?.username?.charAt(0).toUpperCase() || "U"}</AvatarFallback>
+                  <button
+                    className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+                    aria-label="Account menu"
+                  >
+                    <Avatar className="h-9 w-9">
+                      <AvatarFallback style={{ background: `${user?.avatarColor ?? "#7C5CFF"}22`, color: user?.avatarColor }}>
+                        {initialsOf(user?.displayName || user?.username || "?")}
+                      </AvatarFallback>
                     </Avatar>
-                  </Button>
+                  </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuLabel>
+                    <div className="truncate text-sm font-semibold text-text">{user?.displayName}</div>
+                    <div className="truncate text-xs font-normal text-text-faint">@{user?.username}</div>
+                  </DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  
-                  <DropdownMenuItem onClick={() => navigate(`/profile/${user?.username}`)}>
-                    <User className="mr-2 h-4 w-4" />
-                    <span>Profile</span>
+                  <DropdownMenuItem asChild>
+                    <Link to={`/profile/${user?.username}`}>
+                      <UserRound aria-hidden="true" /> Profile
+                    </Link>
                   </DropdownMenuItem>
-                  
-                  <DropdownMenuItem onClick={() => navigate("/dashboard")}>
-                    <LayoutDashboard className="mr-2 h-4 w-4" />
-                    <span>Dashboard</span>
+                  <DropdownMenuItem asChild>
+                    <Link to="/dashboard">
+                      <LayoutDashboard aria-hidden="true" /> Dashboard
+                    </Link>
                   </DropdownMenuItem>
-                  
-                  <DropdownMenuItem onClick={() => navigate("/settings")}>
-                    <Settings className="mr-2 h-4 w-4" />
-                    <span>Settings</span>
+                  <DropdownMenuItem asChild>
+                    <Link to="/settings">
+                      <Settings aria-hidden="true" /> Settings
+                    </Link>
                   </DropdownMenuItem>
-                  
                   <DropdownMenuSeparator />
-                  
-                  <DropdownMenuItem onClick={handleLogout}>
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Logout</span>
+                  <DropdownMenuItem onClick={() => void handleLogout()} className="text-live focus:text-live">
+                    <LogOut aria-hidden="true" /> Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            ) : (
-              <>
-                <Button variant="ghost" size="sm" asChild>
-                  <Link to="/login">Log in</Link>
-                </Button>
-                <Button size="sm" asChild>
-                  <Link to="/signup">Sign up</Link>
-                </Button>
-              </>
-            )}
-          </div>
-          
-          {/* Mobile Menu Button */}
-          <div className="md:hidden">
-            <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-              <SheetTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <Menu />
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="right" className="w-[85%] sm:w-[350px]">
-                <div className="space-y-4 py-4">
-                  <form onSubmit={handleSearch} className="mb-6">
-                    <div className="relative w-full">
-                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        type="search"
-                        placeholder="Search streams..."
-                        className="pl-8 w-full"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        maxLength={100}
-                      />
-                    </div>
-                  </form>
-                  
-                  {isAuthenticated && (
-                    <div className="flex items-center mb-6">
-                      <Avatar className="h-9 w-9 mr-3">
-                        <AvatarImage src={user?.avatar} alt={user?.username} />
-                        <AvatarFallback>{user?.username?.charAt(0).toUpperCase() || "U"}</AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="font-medium">{user?.displayName || user?.username}</p>
-                        <p className="text-sm text-muted-foreground">@{user?.username}</p>
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div className="space-y-1">
-                    <Link to="/" onClick={() => setMobileMenuOpen(false)}>
-                      <Button 
-                        variant={isActive("/") ? "default" : "ghost"} 
-                        className="w-full justify-start"
-                      >
-                        <Home className="mr-2 h-4 w-4" />
-                        Home
-                      </Button>
-                    </Link>
-                    
-                    <Link to="/stream" onClick={() => setMobileMenuOpen(false)}>
-                      <Button 
-                        variant={isActive("/stream") ? "default" : "ghost"} 
-                        className="w-full justify-start"
-                      >
-                        <Video className="mr-2 h-4 w-4" />
-                        Browse Streams
-                      </Button>
-                    </Link>
-                    
-                    {isAuthenticated && user?.isStreamer && (
-                      <Link to="/stream/create" onClick={() => setMobileMenuOpen(false)}>
-                        <Button 
-                          variant={isActive("/stream/create") ? "default" : "ghost"} 
-                          className="w-full justify-start"
-                        >
-                          <FileVideo className="mr-2 h-4 w-4" />
-                          Create Stream
-                        </Button>
-                      </Link>
-                    )}
-                    
-                    {isAuthenticated && (
-                      <>
-                        <Link to="/dashboard" onClick={() => setMobileMenuOpen(false)}>
-                          <Button 
-                            variant={isActive("/dashboard") ? "default" : "ghost"} 
-                            className="w-full justify-start"
-                          >
-                            <LayoutDashboard className="mr-2 h-4 w-4" />
-                            Dashboard
-                          </Button>
-                        </Link>
-                        
-                        <Link to={`/profile/${user?.username}`} onClick={() => setMobileMenuOpen(false)}>
-                          <Button 
-                            variant={isActive(`/profile/${user?.username}`) ? "default" : "ghost"} 
-                            className="w-full justify-start"
-                          >
-                            <User className="mr-2 h-4 w-4" />
-                            Profile
-                          </Button>
-                        </Link>
-                        
-                        <Link to="/settings" onClick={() => setMobileMenuOpen(false)}>
-                          <Button 
-                            variant={isActive("/settings") ? "default" : "ghost"} 
-                            className="w-full justify-start"
-                          >
-                            <Settings className="mr-2 h-4 w-4" />
-                            Settings
-                          </Button>
-                        </Link>
-                      </>
-                    )}
-                  </div>
-                  
-                  <div className="mt-6 pt-6 border-t">
-                    {isAuthenticated ? (
-                      <Button 
-                        variant="ghost" 
-                        className="w-full justify-start" 
-                        onClick={handleLogout}
-                      >
-                        <LogOut className="mr-2 h-4 w-4" />
-                        Logout
-                      </Button>
-                    ) : (
-                      <div className="space-y-3">
-                        <Button 
-                          className="w-full" 
-                          onClick={() => {
-                            navigate("/login");
-                            setMobileMenuOpen(false);
-                          }}
-                        >
-                          Log in
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          className="w-full" 
-                          onClick={() => {
-                            navigate("/signup");
-                            setMobileMenuOpen(false);
-                          }}
-                        >
-                          Sign up
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </SheetContent>
-            </Sheet>
-          </div>
+            </>
+          ) : (
+            <>
+              <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+                <Link to="/login">Sign in</Link>
+              </Button>
+              <Button asChild variant="live" size="sm">
+                <Link to="/signup">Start streaming</Link>
+              </Button>
+            </>
+          )}
         </div>
-      </nav>
-    </ErrorBoundary>
+      </div>
+    </header>
   );
 }

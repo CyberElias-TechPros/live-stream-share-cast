@@ -1,278 +1,189 @@
-
-import { useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { Check, Eye, EyeOff, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Video, Eye, EyeOff } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { Logo } from "@/components/Brand";
 import { useAuth } from "@/contexts/AuthContext";
-import ErrorBoundary from "@/components/ErrorBoundary";
-import LoadingSpinner from "@/components/LoadingSpinner";
-import { 
-  isValidEmail, 
-  isValidUsername, 
-  validatePasswordStrength, 
-  sanitizeInput 
-} from "@/utils/validationUtils";
+import { useSEO } from "@/hooks/useSEO";
+import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
+
+const USERNAME_RE = /^[a-z0-9_]{3,24}$/;
 
 export default function Signup() {
-  const [name, setName] = useState("");
+  useSEO({ title: "Create your account", robots: "noindex" });
+  const { signup } = useAuth();
+  const navigate = useNavigate();
+
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  
-  const { toast } = useToast();
-  const navigate = useNavigate();
-  const { isAuthenticated, signup, isLoading } = useAuth();
-  
-  // Redirect if already authenticated
-  useEffect(() => {
-    if (isAuthenticated && !isLoading) {
-      navigate("/stream", { replace: true });
-    }
-  }, [isAuthenticated, isLoading, navigate]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Real-time validation
-  useEffect(() => {
-    const errors: Record<string, string> = {};
-    
-    if (username && !isValidUsername(username)) {
-      errors.username = "Username can only contain letters, numbers and underscores (3-30 chars)";
-    }
-    
-    if (email && !isValidEmail(email)) {
-      errors.email = "Please enter a valid email address";
-    }
-    
-    if (password) {
-      const passwordValidation = validatePasswordStrength(password);
-      if (!passwordValidation.isValid) {
-        errors.password = passwordValidation.errors[0];
-      }
-    }
-    
-    if (confirmPassword && password && password !== confirmPassword) {
-      errors.confirmPassword = "Passwords do not match";
-    }
-    
-    setFieldErrors(errors);
-  }, [username, email, password, confirmPassword]);
+  const usernameValid = USERNAME_RE.test(username.toLowerCase());
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const rules = useMemo(
+    () => [
+      { label: "8+ characters", ok: password.length >= 8 },
+      { label: "a number or symbol", ok: /[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(password) },
+      { label: "not your username/email", ok: password.length > 0 && !password.toLowerCase().includes(username.toLowerCase()) && !password.toLowerCase().includes(email.split("@")[0]?.toLowerCase() ?? "•") },
+    ],
+    [password, username, email]
+  );
+  const passwordValid = rules.every((r) => r.ok);
 
-  const handleSignup = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+    if (busy || !usernameValid || !emailValid || !passwordValid) return;
+    setBusy(true);
+    setError(null);
     try {
-      // Sanitize inputs
-      const sanitizedName = name ? sanitizeInput(name) : "";
-      const sanitizedUsername = sanitizeInput(username);
-      const sanitizedEmail = sanitizeInput(email);
-      
-      // Validation
-      if (!sanitizedUsername || !sanitizedEmail || !password || !confirmPassword) {
-        toast({
-          title: "Error",
-          description: "Please fill in all required fields",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      if (Object.keys(fieldErrors).length > 0) {
-        toast({
-          title: "Error", 
-          description: "Please fix the validation errors",
-          variant: "destructive",
-        });
-        return;
-      }
-      
-      setIsSubmitting(true);
-      // Fix: Use only 3 arguments (username, email, password) instead of 4
-      await signup(sanitizedUsername, sanitizedEmail, password);
-      // The auth context will handle navigation and toast on success
-    } catch (error: any) {
-      // Error is handled by the auth context
-      console.error("Signup error:", error);
+      await signup(username.toLowerCase(), email.trim(), password);
+      toast.success("Account created", { description: "Welcome to I'm Live — your studio is ready." });
+      navigate("/studio", { replace: true });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Signup failed. Check your connection.");
     } finally {
-      setIsSubmitting(false);
+      setBusy(false);
     }
   };
 
-  // Show loading spinner while checking auth status
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <LoadingSpinner size="lg" text="Loading..." />
-      </div>
-    );
-  }
-
   return (
-    <ErrorBoundary>
-      <div className="min-h-screen flex items-center justify-center px-4">
-        <div className="w-full max-w-md space-y-8">
-          <div className="text-center">
-            <Link to="/" className="inline-flex items-center gap-2 text-2xl font-bold">
-              <Video className="h-8 w-8 text-stream" />
-              <span>I'm Live</span>
-            </Link>
-            <h1 className="mt-6 text-3xl font-bold">Create your account</h1>
-            <p className="mt-2 text-muted-foreground">
-              Sign up to start streaming or watching live content
-            </p>
-          </div>
-          
-          <form onSubmit={handleSignup} className="mt-8 space-y-6">
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="name">Full Name (optional)</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder="Enter your name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={isSubmitting}
-                  autoComplete="name"
-                  maxLength={100}
-                />
-              </div>
-              
-              <div>
-                <Label htmlFor="username">Username *</Label>
-                <Input
-                  id="username"
-                  type="text"
-                  placeholder="Choose a unique username"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  disabled={isSubmitting}
-                  required
-                  autoComplete="username"
-                  maxLength={30}
-                  className={fieldErrors.username ? "border-destructive" : ""}
-                />
-                {fieldErrors.username && (
-                  <p className="text-sm text-destructive mt-1">{fieldErrors.username}</p>
-                )}
-              </div>
-              
-              <div>
-                <Label htmlFor="email">Email *</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="Enter your email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  disabled={isSubmitting}
-                  required
-                  autoComplete="email"
-                  className={fieldErrors.email ? "border-destructive" : ""}
-                />
-                {fieldErrors.email && (
-                  <p className="text-sm text-destructive mt-1">{fieldErrors.email}</p>
-                )}
-              </div>
-              
-              <div>
-                <Label htmlFor="password">Password *</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Create a strong password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    disabled={isSubmitting}
-                    required
-                    autoComplete="new-password"
-                    className={fieldErrors.password ? "border-destructive pr-10" : "pr-10"}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                    onClick={() => setShowPassword(!showPassword)}
-                    disabled={isSubmitting}
-                  >
-                    {showPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                {fieldErrors.password && (
-                  <p className="text-sm text-destructive mt-1">{fieldErrors.password}</p>
-                )}
-              </div>
-              
-              <div>
-                <Label htmlFor="confirmPassword">Confirm Password *</Label>
-                <div className="relative">
-                  <Input
-                    id="confirmPassword"
-                    type={showConfirmPassword ? "text" : "password"}
-                    placeholder="Confirm your password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    disabled={isSubmitting}
-                    required
-                    autoComplete="new-password"
-                    className={fieldErrors.confirmPassword ? "border-destructive pr-10" : "pr-10"}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    disabled={isSubmitting}
-                  >
-                    {showConfirmPassword ? (
-                      <EyeOff className="h-4 w-4" />
-                    ) : (
-                      <Eye className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-                {fieldErrors.confirmPassword && (
-                  <p className="text-sm text-destructive mt-1">{fieldErrors.confirmPassword}</p>
-                )}
-              </div>
-            </div>
-            
-            <Button 
-              type="submit" 
-              className="w-full" 
-              disabled={isSubmitting || Object.keys(fieldErrors).length > 0}
-            >
-              {isSubmitting ? (
-                <LoadingSpinner size="sm" text="Creating account..." />
-              ) : (
-                "Sign up"
-              )}
-            </Button>
-            
-            <div className="text-center">
-              <p className="text-muted-foreground">
-                Already have an account?{" "}
-                <Link to="/login" className="text-stream hover:underline">
-                  Log in
-                </Link>
+    <div className="grid min-h-screen lg:grid-cols-[1fr_1.1fr]">
+      <main className="flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-sm">
+          <Link to="/" className="mb-8 block lg:hidden" aria-label="I'm Live home">
+            <Logo className="text-xl" />
+          </Link>
+
+          <h1 className="font-display text-2xl font-bold tracking-tight">Create your account</h1>
+          <p className="mt-1.5 text-sm text-text-muted">Free forever. Go live in the next minute.</p>
+
+          <form onSubmit={submit} className="mt-8 space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="username">Username</Label>
+              <Input
+                id="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value.toLowerCase())}
+                placeholder="nova_streams"
+                autoComplete="username"
+                autoFocus
+                required
+                aria-invalid={username.length > 0 && !usernameValid}
+                aria-describedby="username-rules"
+              />
+              <p id="username-rules" className={cn("text-xs", username.length === 0 ? "text-text-faint" : usernameValid ? "text-ok" : "text-warn")}>
+                3–24 characters — letters, numbers, underscores. This is your public handle.
               </p>
             </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="email"
+                required
+                aria-invalid={email.length > 0 && !emailValid}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="password">Password</Label>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((s) => !s)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-text-faint hover:text-text"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+                </button>
+              </div>
+              <ul className="space-y-1 pt-1">
+                {rules.map((rule) => (
+                  <li key={rule.label} className={cn("flex items-center gap-1.5 text-xs", rule.ok ? "text-ok" : "text-text-faint")}>
+                    {rule.ok ? <Check className="h-3 w-3" aria-hidden="true" /> : <X className="h-3 w-3" aria-hidden="true" />}
+                    {rule.label}
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {error && (
+              <p className="rounded-lg border border-live/30 bg-live/10 px-3.5 py-2.5 text-sm text-live" role="alert">
+                {error}
+              </p>
+            )}
+
+            <Button type="submit" className="w-full" size="lg" variant="live" disabled={busy || !usernameValid || !emailValid || !passwordValid}>
+              {busy ? "Creating…" : "Create account"}
+            </Button>
+
+            <p className="text-center text-xs text-text-faint">
+              By creating an account you agree to our{" "}
+              <Link to="/terms" className="underline hover:text-text">terms</Link> and{" "}
+              <Link to="/privacy" className="underline hover:text-text">privacy policy</Link>.
+            </p>
           </form>
+
+          <p className="mt-6 text-center text-sm text-text-muted">
+            Already streaming?{" "}
+            <Link to="/login" className="font-medium text-accent hover:underline">
+              Sign in
+            </Link>
+          </p>
         </div>
-      </div>
-    </ErrorBoundary>
+      </main>
+
+      <aside className="noise relative hidden overflow-hidden border-l border-line lg:block" aria-hidden="true">
+        <div className="grid-bg absolute inset-0" />
+        <div
+          className="absolute -top-24 -right-24 h-[480px] w-[480px] rounded-full blur-3xl"
+          style={{ background: "radial-gradient(closest-side, hsl(var(--live)/0.16), transparent)" }}
+        />
+        <div className="relative flex h-full flex-col justify-between p-12">
+          <Link to="/" aria-label="I'm Live home">
+            <Logo className="text-2xl" />
+          </Link>
+          <div>
+            <p className="max-w-md font-display text-4xl font-bold leading-tight tracking-tight">
+              One link. Any device. <span className="text-gradient">Zero installs.</span>
+            </p>
+            <ul className="mt-8 space-y-4 text-sm text-text-muted">
+              {[
+                "Peer-to-peer WebRTC — sub-second latency",
+                "Real-time chat with your audience",
+                "One-click local recording",
+                "Unlisted rooms — share only with who you choose",
+              ].map((item) => (
+                <li key={item} className="flex items-center gap-3">
+                  <span className="live-dot" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="micro">Live video for the open web</p>
+        </div>
+      </aside>
+    </div>
   );
 }

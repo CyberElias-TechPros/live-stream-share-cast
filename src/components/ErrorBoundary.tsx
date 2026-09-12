@@ -1,7 +1,6 @@
-
-import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { Button } from '@/components/ui/button';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { Component, ErrorInfo, ReactNode } from "react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface Props {
   children: ReactNode;
@@ -25,7 +24,7 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Error caught by boundary:', error, errorInfo);
+    console.error("Error caught by boundary:", error, errorInfo);
     this.props.onError?.(error, errorInfo);
   }
 
@@ -35,41 +34,30 @@ class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) {
-        return this.props.fallback;
-      }
+      if (this.props.fallback) return this.props.fallback;
 
       return (
-        <div className="min-h-screen flex items-center justify-center p-4">
-          <div className="text-center max-w-md">
-            <AlertTriangle className="h-16 w-16 text-destructive mx-auto mb-4" />
-            <h1 className="text-2xl font-bold mb-2">Something went wrong</h1>
-            <p className="text-muted-foreground mb-6">
-              We encountered an unexpected error. Please try refreshing the page.
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="panel max-w-md p-8 text-center">
+            <AlertTriangle className="mx-auto mb-4 h-12 w-12 text-live" aria-hidden="true" />
+            <h1 className="font-display text-2xl font-bold">Something went wrong</h1>
+            <p className="mt-2 text-sm leading-relaxed text-text-muted">
+              We hit an unexpected error. Retrying usually fixes it — if not, refreshing the page will.
             </p>
-            <div className="space-y-2">
+            {this.state.error && import.meta.env.DEV && (
+              <pre className="mt-4 max-h-32 overflow-auto rounded-lg bg-bg-raised p-3 text-left text-xs text-text-faint">
+                {String(this.state.error)}
+              </pre>
+            )}
+            <div className="mt-6 space-y-2">
               <Button onClick={this.handleRetry} className="w-full">
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Try Again
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                Try again
               </Button>
-              <Button 
-                variant="outline" 
-                onClick={() => window.location.reload()}
-                className="w-full"
-              >
-                Refresh Page
+              <Button variant="outline" className="w-full" onClick={() => window.location.reload()}>
+                Refresh page
               </Button>
             </div>
-            {process.env.NODE_ENV === 'development' && this.state.error && (
-              <details className="mt-4 text-left">
-                <summary className="cursor-pointer text-sm text-muted-foreground">
-                  Error Details
-                </summary>
-                <pre className="mt-2 text-xs bg-muted p-2 rounded overflow-auto">
-                  {this.state.error.stack}
-                </pre>
-              </details>
-            )}
           </div>
         </div>
       );

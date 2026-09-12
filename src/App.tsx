@@ -1,116 +1,154 @@
-
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { lazy, Suspense, useEffect } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { Toaster as SonnerToaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/contexts/AuthContext";
-import { StreamProvider } from "@/contexts/StreamContext";
-import { usePageTracking } from "@/hooks/useAnalytics";
+import { ConfigProvider } from "@/contexts/ConfigContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
-import Index from "./pages/Index";
-import CreateStream from "./pages/CreateStream";
-import WatchStream from "./pages/WatchStream";
-import Browse from "./pages/Browse";
-import Login from "./pages/Login";
-import Signup from "./pages/Signup";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import Profile from "./pages/Profile"; 
-import Dashboard from "./pages/Dashboard";
-import Settings from "./pages/Settings";
-import NotFound from "./pages/NotFound";
-import ProtectedRoute from "./components/ProtectedRoute";
+import ProtectedRoute from "@/components/ProtectedRoute";
+import Index from "@/pages/Index";
+import Login from "@/pages/Login";
+import Signup from "@/pages/Signup";
+import { PrivacyPolicy, TermsOfService } from "@/pages/Legal";
+import NotFound from "@/pages/NotFound";
+
+// Heavy routes are code-split: the landing page stays lean.
+const Browse = lazy(() => import("@/pages/Browse"));
+const WatchStream = lazy(() => import("@/pages/WatchStream"));
+const Studio = lazy(() => import("@/pages/Studio"));
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Settings = lazy(() => import("@/pages/Settings"));
+const Profile = lazy(() => import("@/pages/Profile"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
       retry: (failureCount, error) => {
-        // Don't retry on 4xx errors
-        if ((error as any)?.status >= 400 && (error as any)?.status < 500) {
-          return false;
-        }
+        const status = error instanceof Error && "status" in error ? (error as { status: number }).status : undefined;
+        if (status !== undefined && status >= 400 && status < 500) return false;
         return failureCount < 2;
       },
-      staleTime: 5 * 60 * 1000, // 5 minutes
-      gcTime: 10 * 60 * 1000, // 10 minutes
+      staleTime: 30_000,
+      gcTime: 10 * 60_000,
     },
-    mutations: {
-      retry: 1,
-    },
+    mutations: { retry: 0 },
   },
 });
 
-// Enhanced analytics tracker with error handling
-const AnalyticsTracker = () => {
-  try {
-    usePageTracking();
-  } catch (error) {
-    console.warn('Analytics tracking failed:', error);
-  }
+function RouteFallback() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center" role="status" aria-live="polite">
+      <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-line-strong border-t-text" />
+    </div>
+  );
+}
+
+/** Scrolls to top on route change (respects reduced motion via CSS `scroll-behavior`). */
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, [pathname]);
   return null;
-};
+}
 
-const AppContent = () => (
-  <ErrorBoundary>
-    <AnalyticsTracker />
-    <Routes>
-      <Route path="/" element={<Index />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="/stream" element={<Browse />} />
-      <Route path="/watch/:streamId" element={<WatchStream />} />
-      
-      {/* Protected routes */}
-      <Route path="/stream/create" element={
-        <ProtectedRoute requireStreamer={true}>
-          <CreateStream />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/profile/:username" element={
-        <ProtectedRoute>
-          <Profile />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/dashboard" element={
-        <ProtectedRoute>
-          <Dashboard />
-        </ProtectedRoute>
-      } />
-      
-      <Route path="/settings" element={
-        <ProtectedRoute>
-          <Settings />
-        </ProtectedRoute>
-      } />
-      
-      {/* 404 route */}
-      <Route path="*" element={<NotFound />} />
-    </Routes>
-  </ErrorBoundary>
-);
+function AppRoutes() {
+  return (
+    <>
+      <ScrollToTop />
+      <Routes>
+        <Route path="/" element={<Index />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
 
-const App = () => (
-  <ErrorBoundary>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <StreamProvider>
-            <TooltipProvider>
-              <Toaster />
-              <Sonner />
-              <AppContent />
-            </TooltipProvider>
-          </StreamProvider>
-        </AuthProvider>
-      </BrowserRouter>
-    </QueryClientProvider>
-  </ErrorBoundary>
-);
+        <Route
+          path="/browse"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <Browse />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/watch/:streamId"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <WatchStream />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/profile/:username"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <Profile />
+            </Suspense>
+          }
+        />
 
-export default App;
+        {/* Auth-gated app routes */}
+        <Route
+          path="/studio"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <ProtectedRoute>
+                <Studio />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <Suspense fallback={<RouteFallback />}>
+              <ProtectedRoute>
+                <Settings />
+              </ProtectedRoute>
+            </Suspense>
+          }
+        />
+
+        {/* Legacy URL redirects (v1 paths) */}
+        <Route path="/stream" element={<Navigate to="/browse" replace />} />
+        <Route path="/stream/create" element={<Navigate to="/studio" replace />} />
+        <Route path="/forgot-password" element={<Navigate to="/login" replace />} />
+        <Route path="/reset-password" element={<Navigate to="/login" replace />} />
+
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <AuthProvider>
+            <ConfigProvider>
+              <TooltipProvider delayDuration={250}>
+                <SonnerToaster />
+                <AppRoutes />
+              </TooltipProvider>
+            </ConfigProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ErrorBoundary>
+  );
+}
