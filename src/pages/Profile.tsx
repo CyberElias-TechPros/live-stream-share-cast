@@ -190,7 +190,7 @@ export default function Profile() {
       <div className="min-h-screen flex flex-col">
         <Navigation />
         
-        <main className="flex-1 container py-8">
+        <main className="flex-1 container pt-28 pb-16">
           <div className="max-w-5xl mx-auto text-center">
             <h1 className="text-2xl font-bold mb-4">User Not Found</h1>
             <p className="text-muted-foreground mb-6">The user you're looking for doesn't exist or has been removed.</p>
@@ -206,7 +206,7 @@ export default function Profile() {
       <div className="min-h-screen flex flex-col">
         <Navigation />
         
-        <main className="flex-1 container py-8">
+        <main className="flex-1 container pt-28 pb-16">
           <div className="max-w-5xl mx-auto">
             <div className="mb-8 flex items-start gap-6">
               <Skeleton className="w-24 h-24 rounded-full" />
@@ -235,7 +235,7 @@ export default function Profile() {
       <div className="min-h-screen flex flex-col">
         <Navigation />
         
-        <main className="flex-1 container py-8">
+        <main className="flex-1 container pt-28 pb-16">
           <div className="max-w-5xl mx-auto text-center">
             <h1 className="text-2xl font-bold mb-4">User Not Found</h1>
             <p className="text-muted-foreground mb-6">The user you're looking for doesn't exist or has been removed.</p>
@@ -250,25 +250,25 @@ export default function Profile() {
     <div className="min-h-screen flex flex-col">
       <Navigation />
       
-      <main className="flex-1 container py-8">
+      <main className="flex-1 container pt-28 pb-16">
         <div className="max-w-5xl mx-auto">
           {/* Profile Header */}
           <div className="mb-8">
             <div className="flex flex-col sm:flex-row sm:items-start gap-6">
               {isEditing ? (
                 <div className="flex flex-col items-center">
-                  <Avatar className="w-24 h-24">
+                  <Avatar className="w-24 h-24 ring-2 ring-[hsl(var(--accent-mid)_/_0.5)] ring-offset-4 ring-offset-background">
                     <AvatarImage src={profile.avatar} alt={profile.displayName || profile.username} />
-                    <AvatarFallback>{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
+                    <AvatarFallback className="bg-signature text-white text-2xl font-bold">{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
                   </Avatar>
                   <Button variant="link" className="text-xs mt-2">
                     Change Avatar
                   </Button>
                 </div>
               ) : (
-                <Avatar className="w-24 h-24">
+                <Avatar className="w-24 h-24 ring-2 ring-[hsl(var(--accent-mid)_/_0.5)] ring-offset-4 ring-offset-background">
                   <AvatarImage src={profile.avatar} alt={profile.displayName || profile.username} />
-                  <AvatarFallback>{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
+                  <AvatarFallback className="bg-signature text-white text-2xl font-bold">{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
                 </Avatar>
               )}
               
@@ -316,7 +316,7 @@ export default function Profile() {
                   <>
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                       <div>
-                        <h1 className="text-2xl font-bold">
+                        <h1 className="font-display text-3xl font-bold tracking-tight">
                           {profile.displayName || profile.username}
                         </h1>
                         <div className="flex items-center gap-2 text-muted-foreground">

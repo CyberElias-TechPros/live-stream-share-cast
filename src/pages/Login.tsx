@@ -1,13 +1,17 @@
-
 import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Video } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import AuthLayout from "@/components/AuthLayout";
+import ErrorBoundary from "@/components/ErrorBoundary";
+
+const inputClass =
+  "h-12 w-full rounded-xl border-white/10 bg-white/[0.04] px-4 text-sm outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-[hsl(var(--accent-mid)_/_0.55)] focus:bg-white/[0.06]";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -18,7 +22,7 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const { isAuthenticated, login, isLoading } = useAuth();
-  
+
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
@@ -30,20 +34,19 @@ export default function Login() {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    
+
     if (!email || !password) {
       setErrorMessage("Please provide both email and password");
       return;
     }
-    
+
     try {
       setIsSubmitting(true);
       await login(email, password);
       // The auth context will handle the navigation and toast
     } catch (error: any) {
       console.error("Login error:", error);
-      
-      // Handle specific error cases
+
       if (error?.code === "email_not_confirmed") {
         setErrorMessage("Please verify your email before logging in. Check your inbox for a confirmation link.");
       } else if (error?.message) {
@@ -56,85 +59,83 @@ export default function Login() {
     }
   };
 
-  // If still checking authentication status, show loading
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-12 h-12 rounded-full border-4 border-stream-light border-t-transparent animate-spin"></div>
+      <div className="grid min-h-svh place-items-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <div className="h-10 w-10 rounded-full border-2 border-[hsl(var(--accent-mid))] border-t-transparent animate-spin" />
+          <p className="font-mono text-[11px] tracking-[0.3em] text-muted-foreground uppercase">Tuning in</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-md space-y-8">
-        <div className="text-center">
-          <Link to="/" className="inline-flex items-center gap-2 text-2xl font-bold">
-            <Video className="h-8 w-8 text-stream" />
-            <span>LiveCast</span>
-          </Link>
-          <h1 className="mt-6 text-3xl font-bold">Log in to your account</h1>
-          <p className="mt-2 text-muted-foreground">
-            Enter your email to access your account
-          </p>
-        </div>
-        
+    <ErrorBoundary>
+      <AuthLayout
+        title="Welcome back."
+        subtitle="Your audience keeps waiting — get back on air."
+        footer={
+          <>
+            Don&rsquo;t have an account?{" "}
+            <Link to="/signup" className="font-medium text-[hsl(var(--accent-hi))] hover:underline">
+              Create one
+            </Link>
+          </>
+        }
+      >
         {errorMessage && (
-          <Alert variant="destructive" className="mt-4">
+          <Alert variant="destructive" className="mb-6 rounded-xl bg-destructive/10 text-destructive-foreground">
             <AlertDescription>{errorMessage}</AlertDescription>
           </Alert>
         )}
-        
-        <form onSubmit={handleLogin} className="mt-8 space-y-6">
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={isSubmitting}
-                required
-                autoComplete="email"
-              />
-            </div>
-            
-            <div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <Link to="/forgot-password" className="text-sm text-stream hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={isSubmitting}
-                required
-                autoComplete="current-password"
-              />
-            </div>
+
+        <form onSubmit={handleLogin} className="space-y-5">
+          <div className="space-y-2">
+            <Label htmlFor="email" className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+              Email
+            </Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="you@broadcast.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={isSubmitting}
+              required
+              autoComplete="email"
+              className={inputClass}
+            />
           </div>
-          
-          <Button type="submit" className="w-full" disabled={isSubmitting}>
-            {isSubmitting ? "Logging in..." : "Log in"}
-          </Button>
-          
-          <div className="text-center">
-            <p className="text-muted-foreground">
-              Don't have an account?{" "}
-              <Link to="/signup" className="text-stream hover:underline">
-                Sign up
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="password" className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                Password
+              </Label>
+              <Link to="/forgot-password" className="text-xs text-muted-foreground hover:text-foreground transition-colors">
+                Forgot?
               </Link>
-            </p>
+            </div>
+            <Input
+              id="password"
+              type="password"
+              placeholder="••••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              disabled={isSubmitting}
+              required
+              autoComplete="current-password"
+              className={inputClass}
+            />
           </div>
+
+          <Button type="submit" variant="glow" size="lg" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? "Signing you in…" : "Log in"}
+            {!isSubmitting && <ArrowRight className="transition-transform duration-300 group-hover/btn:translate-x-1" />}
+          </Button>
         </form>
-      </div>
-    </div>
+      </AuthLayout>
+    </ErrorBoundary>
   );
 }

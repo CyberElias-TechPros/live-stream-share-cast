@@ -1,7 +1,7 @@
-
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { WifiOff, RefreshCw } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
@@ -40,32 +40,38 @@ class ErrorBoundary extends Component<Props, State> {
       }
 
       return (
-        <div className="min-h-screen flex items-center justify-center p-4">
-          <div className="text-center max-w-md">
-            <AlertTriangle className="h-16 w-16 text-destructive mx-auto mb-4" />
-            <h1 className="text-2xl font-bold mb-2">Something went wrong</h1>
-            <p className="text-muted-foreground mb-6">
-              We encountered an unexpected error. Please try refreshing the page.
+        <div className="grid min-h-svh place-items-center p-4 bg-background">
+          <div className="relative w-full max-w-md text-center">
+            <div className="absolute -inset-x-20 -top-20 -bottom-20 -z-10 rounded-[40px] bg-[hsl(349_86%_50%/0.08)] blur-[80px]" aria-hidden />
+            <div className="mx-auto mb-6 grid h-16 w-16 place-items-center rounded-2xl border border-white/10 bg-card shadow-card">
+              <WifiOff className="h-7 w-7 text-[hsl(349_86%_65%)]" />
+            </div>
+            <p className="font-mono text-[11px] tracking-[0.3em] text-muted-foreground uppercase">
+              Transmission interrupted
             </p>
-            <div className="space-y-2">
-              <Button onClick={this.handleRetry} className="w-full">
+            <h1 className="mt-3 font-display text-3xl font-bold tracking-tight">
+              Something went wrong
+            </h1>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              We hit an unexpected error mid-broadcast. Give it another go.
+            </p>
+            <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+              <Button onClick={this.handleRetry} variant="glow">
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Try Again
+                Try again
               </Button>
-              <Button 
-                variant="outline" 
-                onClick={() => window.location.reload()}
-                className="w-full"
-              >
-                Refresh Page
-              </Button>
+              <Link to="/" className="w-full sm:w-auto">
+                <Button variant="glass" className="w-full">
+                  Back home
+                </Button>
+              </Link>
             </div>
             {process.env.NODE_ENV === 'development' && this.state.error && (
-              <details className="mt-4 text-left">
+              <details className="mt-6 text-left">
                 <summary className="cursor-pointer text-sm text-muted-foreground">
-                  Error Details
+                  Error details
                 </summary>
-                <pre className="mt-2 text-xs bg-muted p-2 rounded overflow-auto">
+                <pre className="mt-2 overflow-auto rounded-lg bg-black/40 p-3 text-xs text-red-300">
                   {this.state.error.stack}
                 </pre>
               </details>

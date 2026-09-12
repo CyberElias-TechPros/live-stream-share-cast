@@ -4,10 +4,15 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Video, CheckCircle } from "lucide-react";
+import { CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import AuthLayout from "@/components/AuthLayout";
+import ErrorBoundary from "@/components/ErrorBoundary";
+
+const inputClass =
+  "h-12 w-full rounded-xl border-white/10 bg-white/[0.04] px-4 text-sm outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-[hsl(var(--accent-mid)_/_0.55)] focus:bg-white/[0.06]";
 
 export default function ResetPassword() {
   const [password, setPassword] = useState("");
@@ -29,37 +34,37 @@ export default function ResetPassword() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    
+
     if (!password) {
       setErrorMessage("Please enter a new password");
       return;
     }
-    
+
     if (password !== confirmPassword) {
       setErrorMessage("Passwords do not match");
       return;
     }
-    
+
     if (password.length < 8) {
       setErrorMessage("Password must be at least 8 characters long");
       return;
     }
-    
+
     try {
       setIsSubmitting(true);
-      
+
       const { error } = await supabase.auth.updateUser({
         password,
       });
-      
+
       if (error) throw error;
-      
+
       setIsSuccess(true);
       toast({
         title: "Password reset successful",
         description: "Your password has been updated",
       });
-      
+
       // Redirect to login after successful reset
       setTimeout(() => {
         navigate("/login");
@@ -73,86 +78,80 @@ export default function ResetPassword() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4">
-      <div className="w-full max-w-md space-y-8">
-        <div className="text-center">
-          <Link to="/" className="inline-flex items-center gap-2 text-2xl font-bold">
-            <Video className="h-8 w-8 text-stream" />
-            <span>LiveCast</span>
-          </Link>
-          <h1 className="mt-6 text-3xl font-bold">Create new password</h1>
-          <p className="mt-2 text-muted-foreground">
-            Enter your new password below
-          </p>
-        </div>
-        
+    <ErrorBoundary>
+      <AuthLayout
+        title="Set a new password"
+        subtitle="One strong passphrase, and you're back on air."
+        footer={
+          <>
+            Remember your password?{" "}
+            <Link to="/login" className="font-medium text-[hsl(var(--accent-hi))] hover:underline">
+              Back to login
+            </Link>
+          </>
+        }
+      >
         {errorMessage && (
-          <Alert variant="destructive" className="mt-4">
+          <Alert variant="destructive" className="mb-6 rounded-xl bg-destructive/10 text-destructive-foreground">
             <AlertDescription>{errorMessage}</AlertDescription>
           </Alert>
         )}
-        
+
         {isSuccess ? (
-          <div className="bg-muted p-6 rounded-lg mt-6 text-center">
-            <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
-            <h3 className="font-medium text-lg mb-2">Password reset successful</h3>
-            <p className="text-muted-foreground mb-4">
-              Your password has been updated successfully.
+          <div className="text-center">
+            <div className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-emerald-500/10 text-emerald-400 ring-1 ring-emerald-400/20">
+              <CheckCircle className="h-6 w-6" />
+            </div>
+            <h3 className="font-display text-xl font-bold">Password updated</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+              You&rsquo;ll be taken to the login page in a moment.
             </p>
-            <p className="text-sm text-muted-foreground">
-              You'll be redirected to the login page shortly. If not, 
-              <Link to="/login" className="text-stream hover:underline font-medium ml-1">
-                click here to login
-              </Link>
-            </p>
+            <Link to="/login" className="mt-5 inline-block">
+              <Button variant="glow" size="sm">Go to login</Button>
+            </Link>
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="mt-8 space-y-6">
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="password">New Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  placeholder="Enter your new password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  disabled={isSubmitting}
-                  required
-                  autoComplete="new-password"
-                />
-              </div>
-              
-              <div>
-                <Label htmlFor="confirm-password">Confirm New Password</Label>
-                <Input
-                  id="confirm-password"
-                  type="password"
-                  placeholder="Confirm your new password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  disabled={isSubmitting}
-                  required
-                  autoComplete="new-password"
-                />
-              </div>
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="space-y-2">
+              <Label htmlFor="password" className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                New password
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="At least 8 characters"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={isSubmitting}
+                required
+                autoComplete="new-password"
+                className={inputClass}
+              />
             </div>
-            
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? "Updating..." : "Reset password"}
+
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password" className="font-mono text-[11px] uppercase tracking-[0.22em] text-muted-foreground">
+                Confirm new password
+              </Label>
+              <Input
+                id="confirm-password"
+                type="password"
+                placeholder="Repeat it back"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={isSubmitting}
+                required
+                autoComplete="new-password"
+                className={inputClass}
+              />
+            </div>
+
+            <Button type="submit" variant="glow" size="lg" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? "Updating…" : "Update password"}
             </Button>
-            
-            <div className="text-center">
-              <p className="text-muted-foreground">
-                Remember your password?{" "}
-                <Link to="/login" className="text-stream hover:underline">
-                  Back to login
-                </Link>
-              </p>
-            </div>
           </form>
         )}
-      </div>
-    </div>
+      </AuthLayout>
+    </ErrorBoundary>
   );
 }
