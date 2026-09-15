@@ -1,0 +1,70 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "live-stream-share-cast-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-09",
+
+  // ---------------------------------------------------------------------
+  // NOTE FOR DEPLOYMENT
+  // 1. Create the D1 database:      npm run db:create
+  // 2. Paste the returned database_id into the binding below.
+  // 3. Create the R2 buckets:       npx wrangler r2 bucket create lsc-recordings
+  //                                 npx wrangler r2 bucket create lsc-avatars
+  // 4. Apply migrations:            npm run db:migrate
+  // 5. Set secrets:                 npx wrangler secret put JWT_SECRET
+  //                                 npx wrangler secret put CLEANUP_TOKEN
+  // ---------------------------------------------------------------------
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "live-stream-db",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "r2_buckets": [
+    { "binding": "RECORDINGS", "bucket_name": "lsc-recordings" },
+    { "binding": "AVATARS", "bucket_name": "lsc-avatars" }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHAT_ROOM", "class_name": "ChatRoom" },
+      { "name": "SIGNAL_ROOM", "class_name": "SignalRoom" }
+    ]
+  },
+
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ChatRoom", "SignalRoom"] }
+  ],
+
+  // Hourly: expire recordings, sweep stale live streams and dead sessions.
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+
+  "vars": {
+    "ENVIRONMENT": "development",
+    "ALLOWED_ORIGINS": "*",
+    // Retention for uploaded recordings / avatars, in hours.
+    "RECORDING_RETENTION_HOURS": "6",
+    // A stream with no host heartbeat for this long is forced offline.
+    "STALE_STREAM_MINUTES": "5",
+    // How long R2 playback/upload URLs stay valid (seconds).
+    "SIGNED_URL_TTL": "3600",
+    "MAX_UPLOAD_BYTES": "524288000"
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+
+  // Local development (wrangler dev) — D1/R2/DO state lives in .wrangler/state.
+  "dev": {
+    "ip": "0.0.0.0",
+    "port": 8787
+  }
+}

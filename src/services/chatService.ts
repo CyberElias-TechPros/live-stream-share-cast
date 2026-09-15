@@ -1,6 +1,14 @@
+/**
+ * Stream chat — REST for history, Durable Object WebSocket for live delivery.
+ *
+ * Previously Supabase Realtime (`postgres_changes` on `chat_messages`). The
+ * Cloudflare equivalent is a per-stream `ChatRoom` Durable Object; presence and
+ * moderation events ride the same socket.
+ */
 
-import { supabase } from "@/integrations/supabase/client";
-import { ChatMessage } from "@/types";
+import { api, apiSocket } from '@/integrations/api/client';
+import { toChatMessage, toChatMessages } from '@/integrations/api/mappers';
+import type { ChatMessage } from '@/types';
 
 interface SendChatMessageParams {
   streamId: string;
@@ -9,148 +17,118 @@ interface SendChatMessageParams {
   userAvatar?: string;
   message: string;
   type?: 'text' | 'emote' | 'donation' | 'system';
-  metadata?: any;
+  metadata?: unknown;
+}
+
+export interface StreamChatEvent {
+  /** `chat` = new/relayed message, `presence` = viewer count, `stream` = live status. */
+  type: 'chat' | 'presence' | 'moderation' | 'stream' | 'ready' | 'typing';
+  message?: ChatMessage;
+  viewers?: number;
+  hostConnected?: boolean;
+  live?: boolean;
+  status?: string;
+  messageId?: string;
+  isModerated?: boolean;
+}
+
+export interface ChatSubscription {
+  close(): void;
 }
 
 export const chatService = {
   async getChatMessages(streamId: string): Promise<ChatMessage[]> {
     try {
-      const { data, error } = await supabase
-        .from("chat_messages")
-        .select(`
-          *,
-          profiles:user_id (
-            username,
-            avatar_url
-          )
-        `)
-        .eq("stream_id", streamId)
-        .order("created_at", { ascending: true });
-        
-      if (error) {
-        console.error("Error fetching chat messages:", error);
-        return [];
-      }
-      
-      return (data || []).map(msg => ({
-        id: msg.id,
-        streamId: msg.stream_id,
-        userId: msg.user_id,
-        username: msg.profiles?.username || "Anonymous",
-        userAvatar: msg.profiles?.avatar_url,
-        message: msg.message,
-        timestamp: new Date(msg.created_at),
-        isModerated: msg.is_moderated || false,
-        type: (msg.type as 'text' | 'emote' | 'donation' | 'system') || 'text',
-        metadata: msg.metadata
-      }));
+      const data = await api.get<{ messages: unknown[] }>(`/streams/${streamId}/chat`, { query: { limit: 100 } });
+      return toChatMessages(data.messages);
     } catch (err) {
-      console.error("Error in getChatMessages:", err);
+      console.error('Error fetching chat messages:', err);
       return [];
     }
   },
-  
+
   async sendChatMessage(params: SendChatMessageParams): Promise<ChatMessage | null> {
     try {
-      const { streamId, userId, username, userAvatar, message, type = 'text', metadata } = params;
-      
-      const { data, error } = await supabase
-        .from("chat_messages")
-        .insert({
-          stream_id: streamId,
-          user_id: userId,
-          message,
-          type,
-          metadata,
-          created_at: new Date().toISOString()
-        })
-        .select(`
-          *,
-          profiles:user_id (
-            username,
-            avatar_url
-          )
-        `)
-        .single();
-        
-      if (error || !data) {
-        console.error("Error sending chat message:", error);
-        return null;
-      }
-      
-      return {
-        id: data.id,
-        streamId: data.stream_id,
-        userId: data.user_id,
-        username: data.profiles?.username || username,
-        userAvatar: data.profiles?.avatar_url || userAvatar,
-        message: data.message,
-        timestamp: new Date(data.created_at),
-        isModerated: data.is_moderated || false,
-        type: (data.type as 'text' | 'emote' | 'donation' | 'system'),
-        metadata: data.metadata
-      };
+      const { streamId, message, type = 'text', metadata } = params;
+      const data = await api.post<{ message: unknown }>(`/streams/${streamId}/chat`, { message, type, metadata });
+      return toChatMessage(data.message);
     } catch (err) {
-      console.error("Error in sendChatMessage:", err);
+      console.error('Error sending chat message:', err);
       return null;
     }
   },
-  
+
   async moderateMessage(messageId: string, isModerated: boolean): Promise<boolean> {
     try {
-      const { error } = await supabase
-        .from("chat_messages")
-        .update({ is_moderated: isModerated })
-        .eq("id", messageId);
-        
-      if (error) {
-        console.error("Error moderating message:", error);
-        return false;
-      }
-      
+      await api.patch(`/chat/${messageId}`, { isModerated });
       return true;
     } catch (err) {
-      console.error("Error in moderateMessage:", err);
+      console.error('Error moderating message:', err);
       return false;
     }
   },
-  
-  async getLatestChatMessages(streamId: string, limit: number = 50): Promise<ChatMessage[]> {
+
+  async getLatestChatMessages(streamId: string, limit = 50): Promise<ChatMessage[]> {
     try {
-      const { data, error } = await supabase
-        .from("chat_messages")
-        .select(`
-          *,
-          profiles:user_id (
-            username,
-            avatar_url
-          )
-        `)
-        .eq("stream_id", streamId)
-        .eq("is_moderated", false)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-        
-      if (error) {
-        console.error("Error fetching latest chat messages:", error);
-        return [];
-      }
-      
-      return (data || []).map(msg => ({
-        id: msg.id,
-        streamId: msg.stream_id,
-        userId: msg.user_id,
-        username: msg.profiles?.username || "Anonymous",
-        userAvatar: msg.profiles?.avatar_url,
-        message: msg.message,
-        timestamp: new Date(msg.created_at),
-        isModerated: msg.is_moderated || false,
-        type: (msg.type as 'text' | 'emote' | 'donation' | 'system') || 'text',
-        metadata: msg.metadata
-      })).reverse(); // Reverse to get chronological order
+      const data = await api.get<{ messages: unknown[] }>(`/streams/${streamId}/chat`, { query: { limit } });
+      return toChatMessages(data.messages);
     } catch (err) {
-      console.error("Error in getLatestChatMessages:", err);
+      console.error('Error fetching latest chat messages:', err);
       return [];
     }
-  }
+  },
+
+  /**
+   * Opens the live socket for a stream. Reconnects with backoff; returns a
+   * handle with `close()`. Safe to call for anonymous visitors — they just
+   * will not be able to post.
+   */
+  subscribeToStream(streamId: string, onEvent: (event: StreamChatEvent) => void): ChatSubscription {
+    let socket: WebSocket | null = null;
+    let retry = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+
+    const connect = () => {
+      if (closed) return;
+
+      const ws = apiSocket(`/api/ws/chat/${streamId}`, { params: { role: 'viewer' } });
+      socket = ws;
+
+      ws.onopen = () => {
+        retry = 0;
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data as string) as StreamChatEvent;
+          onEvent(payload);
+        } catch (error) {
+          console.warn('Malformed chat frame', error);
+        }
+      };
+
+      ws.onclose = () => {
+        if (closed) return;
+        retry = Math.min(retry + 1, 6);
+        const delay = Math.min(1000 * 2 ** retry, 30_000);
+        timer = setTimeout(connect, delay);
+      };
+
+      ws.onerror = () => {
+        /* onclose handles reconnection */
+      };
+    };
+
+    connect();
+
+    return {
+      close() {
+        closed = true;
+        if (timer) clearTimeout(timer);
+        if (socket && socket.readyState <= WebSocket.OPEN) socket.close();
+        socket = null;
+      },
+    };
+  },
 };

@@ -29,11 +29,10 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { ChatMessage, Stream, StreamStatus } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { liveStreamService } from "@/services/liveStreamService";
 import { chatService } from "@/services/chatService";
-import { supabase } from "@/integrations/supabase/client";
 import { formatViewers, initials } from "@/utils/design";
 
 interface StreamViewerProps {
@@ -49,6 +48,7 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
   const { user, isAuthenticated } = useAuth();
   const { joinStream, leaveStream, sendChatMessage, status: streamStatus, viewerCount } = useStream();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   // Fetch stream data
   const { data: stream, isLoading: isStreamLoading, error: streamError } = useQuery({
@@ -65,28 +65,20 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
     enabled: !!streamId,
   });
 
-  // Chat subscription
+  // Live chat: the stream's Durable Object pushes new messages over a socket,
+  // which invalidates the query cache to trigger a refetch.
   useEffect(() => {
-    const subscription = supabase
-      .channel(`stream-chat-${streamId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'chat_messages',
-          filter: `stream_id=eq.${streamId}`
-        },
-        () => {
-          // Invalidate the query cache to trigger a refetch
-        }
-      )
-      .subscribe();
+    const subscription = chatService.subscribeToStream(streamId, (event) => {
+      if (event.type === "chat" || event.type === "moderation") {
+        queryClient.invalidateQueries({ queryKey: ["streamChat", streamId] });
+      }
+      if (event.type === "presence" && typeof event.viewers === "number") {
+        queryClient.invalidateQueries({ queryKey: ["stream", streamId] });
+      }
+    });
 
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, [streamId]);
+    return () => subscription.close();
+  }, [streamId, queryClient]);
 
   // Join stream effect
   useEffect(() => {

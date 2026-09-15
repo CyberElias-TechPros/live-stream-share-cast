@@ -1,0 +1,27 @@
+{
+  "name": "live-stream-share-cast-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Workers API for the live-stream-share-cast app (D1 + R2 + Durable Objects)",
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0 --port 8787",
+    "deploy": "wrangler deploy",
+    "db:create": "wrangler d1 create live-stream-db",
+    "db:migrate": "wrangler d1 migrations apply live-stream-db",
+    "db:migrate:local": "wrangler d1 migrations apply live-stream-db --local",
+    "db:reset": "wrangler d1 execute live-stream-db --local --file=./migrations/0001_init.sql",
+    "tail": "wrangler tail",
+    "typecheck": "tsc --noEmit",
+    "seed": "node scripts/seed.mjs",
+    "test:realtime": "node scripts/ws-test.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "typescript": "^5.7.2",
+    "wrangler": "^3.91.0"
+  }
+}

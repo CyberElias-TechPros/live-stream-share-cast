@@ -60,6 +60,33 @@ This project is built with:
 - shadcn-ui
 - Tailwind CSS
 
+**Backend:** [Cloudflare Workers](./worker/README.md) — D1 (database), R2 (recordings & avatars), Durable Objects (live chat, presence, WebRTC signalling) and Cron Triggers (cleanup). Auth is first-party (PBKDF2 + JWT).
+
+## Running the full stack locally
+
+Two processes: the Worker API on `:8787` and Vite on `:8080` (which proxies `/api`).
+
+```bash
+# 1 — API (terminal 1)
+cd worker
+npm install
+cp .dev.vars.example .dev.vars     # set JWT_SECRET
+npm run db:migrate:local           # create the D1 schema locally
+npm run seed                       # optional demo users + streams
+npm run dev
+
+# 2 — App (terminal 2)
+npm install
+cp .env.example .env
+npm run dev                        # http://localhost:8080
+```
+
+Demo accounts created by `npm run seed` (password `demo1234`):
+`aria@demo.live`, `nova@demo.live`, `kai@demo.live`, `viewer@demo.live`.
+
+Full API reference, architecture notes and deploy steps live in
+[`worker/README.md`](./worker/README.md).
+
 ## How can I deploy this project?
 
 Simply open [Lovable](https://lovable.dev/projects/63882c30-05f5-42b6-baf0-ed1039effda3) and click on Share -> Publish.

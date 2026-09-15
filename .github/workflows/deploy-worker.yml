@@ -1,0 +1,55 @@
+name: Deploy Cloudflare Worker API
+
+# Deploys ./worker on every push to main.
+#
+# Required repository secrets:
+#   CLOUDFLARE_API_TOKEN   — "Edit Cloudflare Workers" scoped API token
+#   CLOUDFLARE_ACCOUNT_ID  — your Cloudflare account id
+#
+# One-time manual setup (before the first deploy):
+#   npx wrangler d1 create live-stream-db          → paste database_id into worker/wrangler.jsonc
+#   npx wrangler r2 bucket create lsc-recordings
+#   npx wrangler r2 bucket create lsc-avatars
+#   npx wrangler secret put JWT_SECRET
+#   npx wrangler secret put CLEANUP_TOKEN
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/deploy-worker.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Apply D1 migrations
+        run: npx wrangler d1 migrations apply live-stream-db --remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Worker
+        run: npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

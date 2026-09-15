@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MailCheck, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/integrations/api/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import AuthLayout from "@/components/AuthLayout";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -19,6 +19,7 @@ export default function ForgotPassword() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [devResetUrl, setDevResetUrl] = useState<string | null>(null);
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -33,17 +34,23 @@ export default function ForgotPassword() {
     try {
       setIsSubmitting(true);
 
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-
-      if (error) throw error;
+      const data = await api.post<{ message?: string; devToken?: string; resetUrl?: string }>(
+        "/auth/forgot-password",
+        { email },
+        { auth: false },
+      );
 
       setIsSuccess(true);
       toast({
-        title: "Email sent",
-        description: "Check your inbox for a password reset link",
+        title: "Reset link created",
+        description: data.message || "Check your inbox for a password reset link",
       });
+
+      // Locally the Worker hands the token straight back (no mail server wired up).
+      if (data.resetUrl) {
+        console.info("[auth] password reset link:", data.resetUrl);
+        setDevResetUrl(data.resetUrl);
+      }
     } catch (error: any) {
       console.error("Reset password error:", error);
       setErrorMessage(error.message || "Failed to send password reset email. Please try again.");
@@ -82,6 +89,14 @@ export default function ForgotPassword() {
               We&rsquo;ve sent a reset link to{" "}
               <span className="font-medium text-foreground">{email}</span>.
             </p>
+            {devResetUrl && (
+              <p className="mt-3 text-xs text-muted-foreground/80">
+                Local dev link (no mail server configured):{" "}
+                <a href={devResetUrl} className="text-[hsl(var(--accent-hi))] hover:underline">
+                  open reset page
+                </a>
+              </p>
+            )}
             <p className="mt-4 text-xs text-muted-foreground/70">
               Didn&rsquo;t receive it? Check spam, or{" "}
               <button onClick={handleSubmit} className="text-[hsl(var(--accent-hi))] hover:underline" disabled={isSubmitting}>
