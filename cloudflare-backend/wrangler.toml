@@ -1,0 +1,36 @@
+name = "live-stream-share-cast-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+R2_PUBLIC_BASE = "https://pub-your-r2-public-url.r2.dev"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "livestream-db"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[r2_buckets]]
+binding = "RECORDINGS"
+bucket_name = "livestream-recordings"
+
+[[r2_buckets]]
+binding = "THUMBNAILS"
+bucket_name = "livestream-thumbnails"
+
+[[durable_objects.bindings]]
+name = "CHAT_ROOM"
+class_name = "ChatRoom"
+
+[[durable_objects.bindings]]
+name = "SIGNAL_ROOM"
+class_name = "SignalRoom"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ChatRoom", "SignalRoom"]
+
+[triggers]
+crons = ["0 * * * *"] # hourly cleanup-recordings (replaces Supabase cleanup-recordings fn)

@@ -1,0 +1,4 @@
+# local dev secrets — NEVER commit real values
+JWT_SECRET="dev-only-change-me-32-chars-min"
+ALLOWED_ORIGINS="http://localhost:8080,https://live-stream-share-cast.vercel.app"
+R2_PUBLIC_BASE="https://pub-your-r2-public-url.r2.dev"
