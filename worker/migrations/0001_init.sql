@@ -10,9 +10,9 @@
 -- be compared lexicographically and consumed directly by the JS client.
 -- ---------------------------------------------------------------------------
 
-PRAGMA foreign_keys = ON;
+-- NOTE: no PRAGMA statements — D1 migrations reject them (code 7500).
 
-/* ---------------------------------- users --------------------------------- */
+-- users
 
 CREATE TABLE IF NOT EXISTS users (
   id               TEXT PRIMARY KEY,
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_key    ON users (lower(email));
 CREATE UNIQUE INDEX IF NOT EXISTS users_username_key ON users (lower(username));
 
-/* --------------------------------- sessions -------------------------------- */
+-- sessions
 
 CREATE TABLE IF NOT EXISTS sessions (
   id                 TEXT PRIMARY KEY,         -- access token jti
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS sessions_user_idx    ON sessions (user_id);
 CREATE INDEX IF NOT EXISTS sessions_expiry_idx  ON sessions (refresh_expires_at);
 
-/* ----------------------------- password resets ----------------------------- */
+-- password resets
 
 CREATE TABLE IF NOT EXISTS password_resets (
   token_hash TEXT PRIMARY KEY,
@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS password_resets (
 
 CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets (user_id);
 
-/* --------------------------------- streams --------------------------------- */
+-- streams
 
 CREATE TABLE IF NOT EXISTS streams (
   id               TEXT PRIMARY KEY,
@@ -99,7 +99,7 @@ CREATE INDEX IF NOT EXISTS streams_user_idx             ON streams (user_id, cre
 CREATE INDEX IF NOT EXISTS streams_category_idx         ON streams (category);
 CREATE INDEX IF NOT EXISTS streams_recording_expiry_idx ON streams (recording_expiry);
 
-/* ----------------------------- stream sessions ----------------------------- */
+-- stream sessions
 
 CREATE TABLE IF NOT EXISTS stream_sessions (
   id               TEXT PRIMARY KEY,
@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS stream_sessions (
 CREATE INDEX IF NOT EXISTS stream_sessions_stream_idx ON stream_sessions (stream_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS stream_sessions_user_idx   ON stream_sessions (user_id, created_at DESC);
 
-/* ------------------------------- stream stats ------------------------------ */
+-- stream stats
 
 CREATE TABLE IF NOT EXISTS stream_stats (
   id           TEXT PRIMARY KEY,
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS stream_stats (
 
 CREATE INDEX IF NOT EXISTS stream_stats_stream_idx ON stream_stats (stream_id, timestamp);
 
-/* ------------------------------- chat messages ----------------------------- */
+-- chat messages
 
 CREATE TABLE IF NOT EXISTS chat_messages (
   id           TEXT PRIMARY KEY,
@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 CREATE INDEX IF NOT EXISTS chat_messages_stream_idx ON chat_messages (stream_id, created_at);
 CREATE INDEX IF NOT EXISTS chat_messages_user_idx   ON chat_messages (user_id);
 
-/* --------------------------------- followers ------------------------------- */
+-- followers
 
 CREATE TABLE IF NOT EXISTS followers (
   follower_id  TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,

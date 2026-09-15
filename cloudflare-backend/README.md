@@ -1,5 +1,10 @@
 # Cloudflare backend for live-stream-share-cast ("I'm Live")
 # Replaces Supabase: Auth + Postgres (D1) + Storage (R2) + Realtime (Durable Objects) + Edge Functions (Workers)
+#
+# NOTE (2026-09-15): the repo's canonical backend is now `worker/` (merged PR #3;
+# the frontend in `src/` talks to it via `VITE_API_BASE`). This `cloudflare-backend/`
+# snapshot remains as an alternate JWT/D1/R2/DO implementation and reference — it is
+# NOT what is deployed. See BACKEND-LINK-MAP.md.
 
 ## 1. What it replaces (mapped from your repo)
 

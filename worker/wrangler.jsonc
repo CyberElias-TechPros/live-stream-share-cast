@@ -19,7 +19,7 @@
     {
       "binding": "DB",
       "database_name": "live-stream-db",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "5a70591e-b396-4eed-9944-a88e59ed47d1",
       "migrations_dir": "migrations"
     }
   ],
@@ -46,7 +46,7 @@
   },
 
   "vars": {
-    "ENVIRONMENT": "development",
+    "ENVIRONMENT": "production",
     "ALLOWED_ORIGINS": "*",
     // Retention for uploaded recordings / avatars, in hours.
     "RECORDING_RETENTION_HOURS": "6",

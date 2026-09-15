@@ -3,7 +3,8 @@
 -- nullable. SQLite cannot relax a NOT NULL constraint in place, so the table
 -- is rebuilt (the standard 12-step ALTER procedure, trimmed down).
 
-PRAGMA foreign_keys = OFF;
+-- NOTE: no PRAGMA foreign_keys toggles here — D1 migrations reject PRAGMA
+-- statements (code 7500). Foreign keys are enforced per D1 defaults.
 
 CREATE TABLE chat_messages_new (
   id           TEXT PRIMARY KEY,
@@ -24,5 +25,3 @@ ALTER TABLE chat_messages_new RENAME TO chat_messages;
 
 CREATE INDEX IF NOT EXISTS chat_messages_stream_idx ON chat_messages (stream_id, created_at);
 CREATE INDEX IF NOT EXISTS chat_messages_user_idx   ON chat_messages (user_id);
-
-PRAGMA foreign_keys = ON;

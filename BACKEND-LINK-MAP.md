@@ -9,8 +9,8 @@
 
 | Service | URL | Resources |
 |---|---|---|
-| `t7m-api` | https://t7m-api.autumn-surf-21ec.workers.dev | D1 `t7m` (`5a9046c1-…`, migration `0001_initial.sql` applied), R2 `t7m-attachments`, KV `t7m-RATE-LIMIT` (`e4de66b5…`), secrets set, `CORS_ORIGIN=https://t7m-one.vercel.app`. Health + `/v1/questionnaire` verified 200 |
-| `live-stream-share-cast-api` | https://live-stream-share-cast-api.autumn-surf-21ec.workers.dev | D1 `livestream-db` (`4e3c4b05-…`, 7 tables), R2 `livestream-recordings` + `livestream-thumbnails` (r2.dev public), DO `ChatRoom`/`SignalRoom` (`new_sqlite_classes`), hourly cron, JWT secret set. `/api/health` 200 |
+| `t7m-api` | https://t7m-api.autumn-surf-21ec.workers.dev | D1 `t7m` (`5a9046c1-…`, migration `0001_initial.sql` applied), R2 `t7m-attachments`, KV `t7m-RATE-LIMIT` (`e4de66b5…`), secrets set, `CORS_ORIGIN=https://t7m-one.vercel.app`. Health + `/v1/questionnaire` verified 200. Upstream: commit real IDs into `t7m` repo `wrangler.jsonc`, remove dev-default secrets from `[vars]` |
+| `live-stream-share-cast-api` (canonical `worker/`, merged PR #3) | https://live-stream-share-cast-api.autumn-surf-21ec.workers.dev | D1 `live-stream-db` (`5a70591e-…`, migrations 0001+0002 applied), R2 `lsc-recordings` + `lsc-avatars`, DO `ChatRoom`/`SignalRoom`, hourly cron, JWT + CLEANUP_TOKEN secrets set, `ENVIRONMENT=production`. `/api/health` 200 (d1/r2/DO ok). My earlier `cloudflare-backend/` snapshot (D1 `livestream-db`, R2 `livestream-recordings/thumbnails`) was superseded and its empty resources deleted |
 
 ## New workers for workerless D1s (Cyber account, `e543…`, subdomain `cyber-e54` — must live with their D1s)
 
@@ -26,7 +26,7 @@ Generic token-auth CRUD (`cf-services/d1-rest-api/`): `GET /api/tables`, `GET/PO
 | Vercel project | Var | Value set | Basis |
 |---|---|---|---|
 | `t7m` | `NEXT_PUBLIC_API_BASE_URL` (prod+preview, added) | `https://t7m-api.autumn-surf-21ec.workers.dev` | Var name from `t7m` repo `.env.example`; URL just deployed |
-| `live-stream-share-cast` | `VITE_CF_API_URL` (prod+preview, added) | `https://live-stream-share-cast-api.autumn-surf-21ec.workers.dev` | Name from `cloudflare-backend/README.md`; URL just deployed |
+| `live-stream-share-cast` | `VITE_API_BASE` (prod+preview, added; wrong `VITE_CF_API_URL` removed) | `https://live-stream-share-cast-api.autumn-surf-21ec.workers.dev/api` | Canonical `worker/` contract (`src/integrations/api/client.ts` reads `VITE_API_BASE`; WS derives automatically). **Redeploy required.** CI note: pushing `worker/**` triggers `deploy-worker.yml`, which needs repo secrets `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID` (`c567…`) or the run fails — set them in GitHub repo settings |
 | `ke-town-digital-heritage` | `VITE_API_URL` (prod+preview, added) | `https://ke-town-api.cyber-e54.workers.dev` | House convention (name assumed — confirm in frontend source); URL just deployed |
 | `smart-attendance-hub` | `VITE_API_URL` (prod+preview, added) | `https://slams-api.cyber-e54.workers.dev` | Same assumption note; URL just deployed |
 | `frontend` | `VITE_API_URL`, `API_URL` (prod, updated) | `https://delgra.autumn-surf-21ec.workers.dev` | `/v1/health` 200, DB connected, 23 tables |

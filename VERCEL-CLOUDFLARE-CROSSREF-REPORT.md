@@ -50,7 +50,7 @@
 |---|---|---|
 | caption-grab-unleashed | `VITE_API_URL` only (external) | Points outside CF; no CF resource matches |
 | b1-glam-studio | `JWT_SECRET` etc., no CF match | Backend env exists but is not Cloudflare |
-| live-stream-share-cast | zero Vercel env (Supabase keys hardcoded in `src/integrations/supabase/client.ts`) | External Supabase backend; **no CF equivalent yet — covered by new `cloudflare-backend/` in this repo (not deployed)** |
+| live-stream-share-cast | `VITE_API_BASE` → canonical `worker/` backend (merged PR #3), deployed 2026-09-15 as `live-stream-share-cast-api` + D1 `live-stream-db` + R2 `lsc-*` — see BACKEND-LINK-MAP.md |
 | agreement-trust | `VITE_API_URL` only (external) | No CF match |
 | subscription-tracker | zero env | No backend anywhere |
 | worker | zero env (Hono app) | Generic-name hits (`cea-email-worker`) rejected — no real match |
