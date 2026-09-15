@@ -1,0 +1,11 @@
+# Local secrets for `wrangler dev` (copy to .dev.vars — git-ignored).
+# Generate a strong value: openssl rand -base64 48
+JWT_SECRET=change-me-to-a-long-random-string
+CLEANUP_TOKEN=dev-cleanup-token
+
+# Optional tuning
+ENVIRONMENT=development
+ALLOWED_ORIGINS=*
+RECORDING_RETENTION_HOURS=6
+STALE_STREAM_MINUTES=5
+MAX_UPLOAD_BYTES=524288000

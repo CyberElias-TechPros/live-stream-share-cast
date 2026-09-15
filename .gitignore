@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Cloudflare Worker (see worker/README.md)
+worker/.wrangler
+worker/.dev.vars
+.mf

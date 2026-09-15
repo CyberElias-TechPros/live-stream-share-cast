@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/integrations/api/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import AuthLayout from "@/components/AuthLayout";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -23,13 +23,17 @@ export default function ResetPassword() {
   const { toast } = useToast();
   const navigate = useNavigate();
 
-  // Check if we have the recovery token in the URL
+  // The Worker emails `?token=<reset token>`; the legacy Supabase flow used a
+  // fragment — accept either so old links keep working.
+  const token =
+    new URLSearchParams(window.location.search).get("token") ||
+    new URLSearchParams(window.location.hash.substring(1)).get("access_token");
+
   useEffect(() => {
-    const hashParams = new URLSearchParams(window.location.hash.substring(1));
-    if (!hashParams.has("access_token")) {
+    if (!token) {
       setErrorMessage("Invalid or missing reset token. Please request a new password reset link.");
     }
-  }, []);
+  }, [token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,14 +54,15 @@ export default function ResetPassword() {
       return;
     }
 
+    if (!token) {
+      setErrorMessage("Invalid or missing reset token. Please request a new password reset link.");
+      return;
+    }
+
     try {
       setIsSubmitting(true);
 
-      const { error } = await supabase.auth.updateUser({
-        password,
-      });
-
-      if (error) throw error;
+      await api.post("/auth/reset-password", { token, password }, { auth: false });
 
       setIsSuccess(true);
       toast({

@@ -1,23 +1,26 @@
 /**
- * LAN streaming engine.
+ * Peer-to-peer streaming engine.
  *
- * Media (audio/video) flows **peer-to-peer over your local network** via
- * WebRTC — the hosted app only acts as the signaling bridge through
- * Supabase Realtime broadcast channels. Result: when streamer and viewers
- * are on the same LAN, the stream is delivered locally with minimal
- * latency, even though the app itself is hosted online.
+ * Media (audio/video) flows **directly between browsers** over WebRTC — the
+ * Cloudflare Worker only acts as the signalling bridge, through a per-stream
+ * `SignalRoom` Durable Object. When streamer and viewers share a network the
+ * stream is delivered locally with minimal latency; when they do not, a TURN
+ * server is required (see `docs/DEPLOYMENT.md`).
  *
- * Signaling protocol (JSON payloads on channel "lan-stream-<id>", event
- * "signal"):
+ * Signalling protocol (JSON frames, relayed by the Durable Object):
  *   viewer → streamer : hello-viewer   (presence, re-sent until ready)
  *   streamer → viewer : streamer-ready (re-announced on hello + periodically)
  *   viewer → streamer : offer          (recvonly SDP)
  *   streamer → viewer : answer
  *   both → each other: ice             (candidates; queued until remote desc)
  *   leaving peer      : close
+ *
+ * Frames carrying a `to` field are routed to that single peer; everything else
+ * is broadcast to the room. The Durable Object stamps the authoritative
+ * `from` id, so peers cannot impersonate each other.
  */
 
-import { supabase } from "@/integrations/supabase/client";
+import { apiSocket } from "@/integrations/api/client";
 
 export type LanState = "idle" | "waiting" | "ready" | "connecting" | "connected" | "failed";
 
@@ -41,39 +44,86 @@ function selfId(): string {
   return `peer-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+interface SignalIdentity {
+  /** Client-generated peer id — the Durable Object echoes it back as `from`. */
+  peerId: string;
+  role: "host" | "viewer";
+}
+
 /**
- * Subscribes one long-lived channel used for BOTH receiving and sending
- * signal messages. Returns { send, unsubscribe }.
+ * Opens one long-lived WebSocket used for BOTH sending and receiving signal
+ * frames, with queueing while connecting and exponential-backoff reconnects.
+ * Returns { send, unsubscribe }.
  */
 function openSignalChannel(
   streamId: string,
-  onMessage: (msg: SignalMsg) => void
+  identity: SignalIdentity,
+  onMessage: (msg: SignalMsg) => void,
 ): { send: (msg: SignalMsg) => void; unsubscribe: () => void } {
-  const channel = supabase.channel(channelName(streamId));
-  channel.on("broadcast" as any, { event: "signal" }, (payload: any) => {
-    const msg = payload as SignalMsg;
-    if (msg && typeof msg.type === "string") onMessage(msg);
-  });
-  channel.subscribe();
+  let socket: WebSocket | null = null;
+  let stopped = false;
+  let retry = 0;
+  let timer: number | null = null;
+  const outbox: SignalMsg[] = [];
 
-  const send = (msg: SignalMsg) => {
-    try {
-      void channel.send({ type: "broadcast", event: "signal", payload: msg }).catch((err: any) => {
-        console.warn("LAN signal send failed:", err);
-      });
-    } catch (err) {
-      console.warn("LAN signal send failed:", err);
+  const flush = () => {
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    while (outbox.length) {
+      const next = outbox.shift();
+      if (next) socket.send(JSON.stringify(next));
     }
   };
 
-  return {
-    send,
-    unsubscribe: () => {
+  const connect = () => {
+    if (stopped) return;
+
+    const ws = apiSocket(`/api/ws/signal/${streamId}`, {
+      params: { peerId: identity.peerId, role: identity.role },
+    });
+    socket = ws;
+
+    ws.onopen = () => {
+      retry = 0;
+      flush();
+    };
+
+    ws.onmessage = (event: MessageEvent) => {
+      let msg: SignalMsg;
       try {
-        channel.unsubscribe();
+        msg = JSON.parse(event.data as string) as SignalMsg;
       } catch {
-        /* ignore */
+        return;
       }
+      if (!msg || typeof msg.type !== "string") return;
+      if (msg.from === identity.peerId) return; // our own frame echoing back
+      if (msg.to && msg.to !== identity.peerId) return; // addressed to another peer
+      onMessage(msg);
+    };
+
+    ws.onclose = () => {
+      if (stopped) return;
+      retry = Math.min(retry + 1, 6);
+      timer = window.setTimeout(connect, Math.min(1000 * 2 ** retry, 20_000));
+    };
+
+    ws.onerror = () => {
+      /* onclose handles the reconnect */
+    };
+  };
+
+  connect();
+
+  return {
+    send: (msg: SignalMsg) => {
+      outbox.push(msg);
+      if (outbox.length > 50) outbox.shift(); // never let a dead socket grow unbounded
+      flush();
+    },
+    unsubscribe: () => {
+      stopped = true;
+      if (timer) window.clearTimeout(timer);
+      if (socket && socket.readyState <= WebSocket.OPEN) socket.close();
+      socket = null;
     },
   };
 }
@@ -110,7 +160,7 @@ export class LanStreamer {
   start() {
     if (this.sig) return;
 
-    this.sig = openSignalChannel(this.streamId, (msg) => this.onSignal(msg));
+    this.sig = openSignalChannel(this.streamId, { peerId: this.me, role: "host" }, (msg) => this.onSignal(msg));
 
     // Periodically announce so late-joining viewers can find us.
     this.announce();
@@ -391,7 +441,7 @@ export class LanViewer {
   /** Starts listening for the streamer and keeps knocking until found. */
   start() {
     if (this.sig) return;
-    this.sig = openSignalChannel(this.streamId, (msg) => this.onSignal(msg));
+    this.sig = openSignalChannel(this.streamId, { peerId: this.me, role: "host" }, (msg) => this.onSignal(msg));
     this.knock();
     this.helloTimer = window.setInterval(() => this.knock(), 3000);
     this.emitState(this._ready ? "ready" : "waiting");

@@ -1,16 +1,21 @@
+/**
+ * Auth state for the app — backed by the Cloudflare Worker API.
+ *
+ * Sessions are JWT access tokens (1h) + rotating refresh tokens (30d) issued by
+ * `/api/auth/*`. Tokens live in localStorage; a failed refresh clears them and
+ * drops the user back to a logged-out state.
+ */
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
-import { User as SupabaseUser, Session } from '@supabase/supabase-js';
-import { supabase } from "@/integrations/supabase/client";
-import { User, UserPreferences } from "@/types";
-import { toast } from "@/hooks/use-toast";
-import { profileService } from "@/services/profileService";
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { api, tokenStore, ApiRequestError, SESSION_EXPIRED_EVENT } from '@/integrations/api/client';
+import { toUser } from '@/integrations/api/mappers';
+import type { User, UserPreferences } from '@/types';
+import { toast } from '@/hooks/use-toast';
+import { profileService } from '@/services/profileService';
 
-interface AuthContextType {
+export interface AuthContextType {
   user: User | null;
-  supabaseUser: SupabaseUser | null;
-  session: Session | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
@@ -28,319 +33,246 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+interface AuthResponse {
+  user: unknown;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+}
+
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const navigate = useNavigate();
-  
-  // Initialize auth and listen for auth changes
-  useEffect(() => {
-    // First, set up the auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        setSession(newSession);
-        setSupabaseUser(newSession?.user ?? null);
-        
-        // Use setTimeout to avoid potential deadlocks
-        if (newSession?.user) {
-          setTimeout(() => {
-            fetchUserProfile(newSession.user.id);
-          }, 0);
-        } else {
-          setUser(null);
-        }
-      }
-    );
-    
-    // Then check for existing session
-    const initializeAuth = async () => {
-      try {
-        setIsLoading(true);
-        const { data: { session: currentSession } } = await supabase.auth.getSession();
-        
-        setSession(currentSession);
-        setSupabaseUser(currentSession?.user ?? null);
-        
-        if (currentSession?.user) {
-          await fetchUserProfile(currentSession.user.id);
-        }
-      } catch (error) {
-        console.error("Error initializing auth:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    
-    initializeAuth();
-    
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
-  
-  const fetchUserProfile = async (userId: string) => {
+
+  const refreshUser = useCallback(async () => {
     try {
-      const userProfile = await profileService.getProfile(userId);
-      
-      if (userProfile) {
-        setUser(userProfile);
-      } else {
-        // No profile found, user might need to create one
-        if (supabaseUser) {
-          // This should not happen if the database trigger is set up correctly,
-          // but just in case we handle it here
-          const newUser: User = {
-            id: supabaseUser.id,
-            username: supabaseUser.email?.split('@')[0] || `user_${Date.now().toString(36)}`,
-            email: supabaseUser.email || '',
-            createdAt: new Date(),
-            isStreamer: false
-          };
-          
-          await updateProfile(newUser);
-        }
-      }
+      const data = await api.get<{ user: unknown }>('/auth/me');
+      setUser(toUser(data.user));
     } catch (error) {
-      console.error("Error fetching user profile:", error);
-    } finally {
-      setIsLoading(false);
+      // A 401 here means "no valid session", which is a normal logged-out state.
+      if (!(error instanceof ApiRequestError) || error.status !== 401) {
+        console.error('Error refreshing user:', error);
+      }
+      setUser(null);
     }
-  };
-  
+  }, []);
+
+  // Bootstrap: hydrate from an existing token pair.
+  useEffect(() => {
+    let cancelled = false;
+
+    const initialize = async () => {
+      try {
+        if (!tokenStore.access && !tokenStore.refresh) {
+          setIsLoading(false);
+          return;
+        }
+        await refreshUser();
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    void initialize();
+
+    // The API client fires this when a refresh attempt fails for good.
+    const handleExpired = () => setUser(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleExpired);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpired);
+    };
+  }, [refreshUser]);
+
+  const adoptSession = useCallback(async (data: AuthResponse, redirectTo?: string) => {
+    tokenStore.setTokens(data.accessToken, data.refreshToken);
+    setUser(toUser(data.user));
+    if (redirectTo) navigate(redirectTo);
+  }, [navigate]);
+
   const login = async (email: string, password: string) => {
     try {
       setIsLoading(true);
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      
-      if (error) {
-        throw error;
-      }
-      
-      // User will be set by the auth state change listener
+      const data = await api.post<AuthResponse>('/auth/login', { email, password }, { auth: false });
+      await adoptSession(data);
+
       toast({
-        title: "Login successful",
-        description: "You have successfully logged in",
+        title: 'Login successful',
+        description: 'You have successfully logged in',
       });
-      
-      navigate("/");
-    } catch (error: any) {
-      console.error("Login error:", error);
+
+      navigate('/');
+    } catch (error) {
+      console.error('Login error:', error);
       toast({
-        title: "Login failed",
-        description: error.message || "Failed to log in. Please check your credentials.",
-        variant: "destructive"
+        title: 'Login failed',
+        description: error instanceof Error ? error.message : 'Failed to log in. Please check your credentials.',
+        variant: 'destructive',
       });
+      throw error;
     } finally {
       setIsLoading(false);
     }
   };
-  
+
   const signup = async (username: string, email: string, password: string) => {
     try {
       setIsLoading(true);
-      
-      // First check if username is already taken
-      const { data: existingUsers } = await supabase
-        .from("profiles")
-        .select("username")
-        .eq("username", username)
-        .limit(1);
-      
-      if (existingUsers && existingUsers.length > 0) {
-        throw new Error("Username is already taken");
-      }
-      
-      // Create the user
-      const { error, data } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            username,
-            display_name: username
-          }
-        }
-      });
-      
-      if (error) {
-        throw error;
-      }
-      
+      const data = await api.post<AuthResponse>(
+        '/auth/signup',
+        { username, email, password, displayName: username },
+        { auth: false },
+      );
+      await adoptSession(data);
+
       toast({
-        title: "Success",
-        description: "Your account has been created. Please check your email for verification.",
+        title: 'Account created',
+        description: 'Welcome to I’m Live — you’re signed in.',
       });
-      
-      // Note: The user will be set by the auth state change listener
-      // if email verification is not required
-      
-    } catch (error: any) {
-      console.error("Sign up error:", error);
+
+      navigate('/');
+    } catch (error) {
+      console.error('Sign up error:', error);
+      const message =
+        error instanceof ApiRequestError && error.code === 'username_taken'
+          ? 'That username is already taken'
+          : error instanceof ApiRequestError && error.code === 'email_taken'
+            ? 'An account with this email already exists'
+            : error instanceof Error
+              ? error.message
+              : 'Failed to create account';
+
       toast({
-        title: "Sign up failed",
-        description: error.message || "Failed to create account",
-        variant: "destructive"
+        title: 'Sign up failed',
+        description: message,
+        variant: 'destructive',
       });
+      throw error;
     } finally {
       setIsLoading(false);
     }
   };
-  
+
   const logout = async () => {
     try {
       setIsLoading(true);
-      const { error } = await supabase.auth.signOut();
-      
-      if (error) {
-        throw error;
-      }
-      
-      // Clear user state
-      setUser(null);
-      setSupabaseUser(null);
-      setSession(null);
-      
-      toast({
-        title: "Logged out",
-        description: "You have been successfully logged out",
-      });
-      
-      navigate("/login");
-    } catch (error: any) {
-      console.error("Logout error:", error);
-      toast({
-        title: "Logout failed",
-        description: error.message || "Failed to log out",
-        variant: "destructive"
-      });
+      // Best effort: the server revokes the session, the client drops the tokens.
+      await api.post('/auth/logout').catch(() => undefined);
     } finally {
+      tokenStore.clear();
+      setUser(null);
       setIsLoading(false);
+
+      toast({
+        title: 'Logged out',
+        description: 'You have been successfully logged out',
+      });
+
+      navigate('/login');
     }
   };
-  
+
   const updateProfile = async (updates: Partial<User>) => {
     try {
-      if (!user) {
-        throw new Error("No authenticated user");
-      }
-      
+      if (!user) throw new Error('No authenticated user');
+
       const updatedProfile = await profileService.updateProfile(user.id, updates);
-      
-      if (!updatedProfile) {
-        throw new Error("Failed to update profile");
-      }
-      
+      if (!updatedProfile) throw new Error('Failed to update profile');
+
       setUser(updatedProfile);
-      
+
       toast({
-        title: "Profile updated",
-        description: "Your profile has been successfully updated",
+        title: 'Profile updated',
+        description: 'Your profile has been successfully updated',
       });
-    } catch (error: any) {
-      console.error("Profile update error:", error);
+    } catch (error) {
+      console.error('Profile update error:', error);
       toast({
-        title: "Profile update failed",
-        description: error.message || "Failed to update profile",
-        variant: "destructive"
+        title: 'Profile update failed',
+        description: error instanceof Error ? error.message : 'Failed to update profile',
+        variant: 'destructive',
       });
       throw error;
     }
   };
-  
+
   const updateStreamerStatus = async (isStreamer: boolean) => {
     try {
-      if (!user) {
-        throw new Error("No authenticated user");
-      }
-      
+      if (!user) throw new Error('No authenticated user');
+
       const success = await profileService.updateStreamerStatus(user.id, isStreamer);
-      
-      if (!success) {
-        throw new Error("Failed to update streamer status");
-      }
-      
-      // Update local user state
-      setUser(prev => prev ? { ...prev, isStreamer } : null);
-      
+      if (!success) throw new Error('Failed to update streamer status');
+
+      setUser((prev) => (prev ? { ...prev, isStreamer } : null));
+
       toast({
-        title: isStreamer ? "Streamer status enabled" : "Streamer status disabled",
-        description: isStreamer 
-          ? "You can now create and broadcast streams" 
-          : "Your streamer privileges have been removed",
+        title: isStreamer ? 'Streamer status enabled' : 'Streamer status disabled',
+        description: isStreamer
+          ? 'You can now create and broadcast streams'
+          : 'Your streamer privileges have been removed',
       });
-    } catch (error: any) {
-      console.error("Streamer status update error:", error);
+    } catch (error) {
+      console.error('Streamer status update error:', error);
       toast({
-        title: "Update failed",
-        description: error.message || "Failed to update streamer status",
-        variant: "destructive"
+        title: 'Update failed',
+        description: error instanceof Error ? error.message : 'Failed to update streamer status',
+        variant: 'destructive',
       });
       throw error;
     }
   };
-  
+
   const updateUserPreferences = async (preferences: Partial<UserPreferences>) => {
     try {
-      if (!user) {
-        throw new Error("No authenticated user");
-      }
-      
+      if (!user) throw new Error('No authenticated user');
+
       const success = await profileService.updateUserPreferences(user.id, preferences);
-      
-      if (!success) {
-        throw new Error("Failed to update preferences");
-      }
-      
-      // Update local user state
-      setUser(prev => {
-        if (!prev) return null;
-        
-        return {
-          ...prev,
-          preferences: {
-            ...prev.preferences,
-            ...preferences
-          }
-        };
-      });
-      
+      if (!success) throw new Error('Failed to update preferences');
+
+      setUser((prev) =>
+        prev
+          ? {
+              ...prev,
+              preferences: {
+                ...(prev.preferences ?? {}),
+                ...preferences,
+              } as UserPreferences,
+            }
+          : null,
+      );
+
       toast({
-        title: "Preferences updated",
-        description: "Your preferences have been successfully updated",
+        title: 'Preferences updated',
+        description: 'Your preferences have been saved',
       });
-    } catch (error: any) {
-      console.error("Preferences update error:", error);
+    } catch (error) {
+      console.error('Preferences update error:', error);
       toast({
-        title: "Update failed",
-        description: error.message || "Failed to update preferences",
-        variant: "destructive"
+        title: 'Update failed',
+        description: error instanceof Error ? error.message : 'Failed to update preferences',
+        variant: 'destructive',
       });
       throw error;
     }
   };
-  
-  const refreshUser = async () => {
-    if (!supabaseUser) return;
-    await fetchUserProfile(supabaseUser.id);
-  };
-  
+
   return (
-    <AuthContext.Provider value={{
-      user,
-      supabaseUser,
-      session,
-      isLoading,
-      isAuthenticated: !!user,
-      login,
-      signup,
-      logout,
-      updateProfile,
-      updateStreamerStatus,
-      refreshUser,
-      updateUserPreferences
-    }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        isLoading,
+        isAuthenticated: !!user,
+        login,
+        signup,
+        logout,
+        updateProfile,
+        updateStreamerStatus,
+        refreshUser,
+        updateUserPreferences,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );
@@ -349,7 +281,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
 }
