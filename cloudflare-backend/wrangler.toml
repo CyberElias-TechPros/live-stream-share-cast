@@ -5,12 +5,14 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ENVIRONMENT = "production"
-R2_PUBLIC_BASE = "https://pub-your-r2-public-url.r2.dev"
+ALLOWED_ORIGINS = "http://localhost:8080,https://live-stream-share-cast.vercel.app"
+RECORDINGS_PUBLIC_BASE = "https://pub-7e8f093b620244cbadba1dd433a69fe8.r2.dev"
+THUMBNAILS_PUBLIC_BASE = "https://pub-55b0a6206ea7418782bc5f1adfe90b5d.r2.dev"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "livestream-db"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "4e3c4b05-6ff8-48e1-b7cd-7acacf854014" # Admin account, created 2026-09-15
 
 [[r2_buckets]]
 binding = "RECORDINGS"
@@ -30,7 +32,7 @@ class_name = "SignalRoom"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["ChatRoom", "SignalRoom"]
+new_sqlite_classes = ["ChatRoom", "SignalRoom"]
 
 [triggers]
 crons = ["0 * * * *"] # hourly cleanup-recordings (replaces Supabase cleanup-recordings fn)

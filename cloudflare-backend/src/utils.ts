@@ -6,7 +6,9 @@ export interface Env {
   SIGNAL_ROOM: DurableObjectNamespace;
   JWT_SECRET: string;
   ENVIRONMENT?: string;
-  R2_PUBLIC_BASE?: string;
+  RECORDINGS_PUBLIC_BASE?: string;
+  THUMBNAILS_PUBLIC_BASE?: string;
+  R2_PUBLIC_BASE?: string; // legacy fallback
   ALLOWED_ORIGINS?: string;
 }
 

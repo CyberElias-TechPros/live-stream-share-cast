@@ -1,0 +1,14 @@
+name = "slams-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+# Update with the Vercel frontend origin if it changes (custom domains later).
+ALLOWED_ORIGINS = "https://smart-attendance-hub-six.vercel.app"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "slams"
+database_id = "7ba50733-1f70-48ea-8d30-8c450e963c31"

@@ -1,0 +1,14 @@
+name = "ke-town-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ENVIRONMENT = "production"
+# Update with the Vercel frontend origin if it changes (custom domains later).
+ALLOWED_ORIGINS = "https://ke.freegameplay.site"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "ke-town-db"
+database_id = "f97dd8e6-097b-442a-9912-c3d56844369b"

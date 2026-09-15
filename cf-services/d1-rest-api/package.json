@@ -1,0 +1,15 @@
+{
+  "name": "d1-rest-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy:ke-town": "wrangler deploy -c wrangler.ke-town.toml",
+    "deploy:slams": "wrangler deploy -c wrangler.slams.toml"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241101",
+    "typescript": "^5.5.3",
+    "wrangler": "^3.90.0"
+  }
+}

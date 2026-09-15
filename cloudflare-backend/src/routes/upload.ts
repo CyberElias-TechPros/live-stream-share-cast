@@ -15,7 +15,7 @@ export async function handleUpload(req: Request, env: Env, url: URL): Promise<Re
     await env.RECORDINGS.put(key, await file.arrayBuffer(), {
       httpMetadata: { contentType: file.type || "video/webm" },
     });
-    const base = env.R2_PUBLIC_BASE || "";
+    const base = env.RECORDINGS_PUBLIC_BASE || env.R2_PUBLIC_BASE || "";
     return json({ success: true, url: base ? `${base}/${key}` : `r2://livestream-recordings/${key}`, fileName: file.name, size: file.size, type: file.type, key });
   }
 
@@ -29,7 +29,7 @@ export async function handleUpload(req: Request, env: Env, url: URL): Promise<Re
     await env.THUMBNAILS.put(key, await file.arrayBuffer(), {
       httpMetadata: { contentType: file.type || "image/jpeg" },
     });
-    const base = env.R2_PUBLIC_BASE || "";
+    const base = env.THUMBNAILS_PUBLIC_BASE || env.R2_PUBLIC_BASE || "";
     return json({ success: true, url: base ? `${base}/${key}` : `r2://livestream-thumbnails/${key}`, key });
   }
 
