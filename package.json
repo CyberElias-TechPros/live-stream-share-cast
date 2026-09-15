@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:api": "npm --prefix worker run dev",
+    "db:migrate": "npm --prefix worker run db:migrate:local",
+    "seed": "npm --prefix worker run seed",
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
