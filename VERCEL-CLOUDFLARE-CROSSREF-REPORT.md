@@ -8,12 +8,12 @@
 
 | Status | Count |
 |---|---|
-| ✅ Has Cloudflare backend | 10 |
+| ✅ Has Cloudflare backend | 11 |
 | ⚠️ Partial (storage only, no worker) | 1 |
 | 🖥️ Frontend-only by design (confirmed, no backend needed) | 4 |
-| ❌ No Cloudflare backend | 15 |
+| ❌ No Cloudflare backend | 14 |
 
-## ✅ Vercel projects WITH a Cloudflare backend (10)
+## ✅ Vercel projects WITH a Cloudflare backend (11)
 
 | Vercel project | Vercel URL | Cloudflare backend (account) | Evidence |
 |---|---|---|---|
@@ -27,12 +27,13 @@
 | it-mastery-suite | https://it-mastery-suite.vercel.app | Worker `it-mastery-suite` (Admin) | Exact worker-name match |
 | cloudfront-forge | https://loop.freegameplay.site | Worker `cyberelias-techpros-cloudfront-forge` (Admin) | `cloudfront-forge` substring of worker name; `VITE_API_URL` env |
 | ke-town-digital-heritage | https://ke.freegameplay.site | D1 `ke-town-db` + R2 `ke-town-uploads` (Cyber) | `ke-town` name match (no worker — data layer only, no Vercel env) |
+| smart-attendance-hub | https://smart-attendance-hub-six.vercel.app | D1 `slams` (Cyber) | Owner-confirmed: `slams` belongs to this project (no worker — data layer only, no Vercel env) |
 
 ## ⚠️ Partial (1)
 
 | Vercel project | What exists on Cloudflare | Gap |
 |---|---|---|
-| see-my-business-contact-gain | R2 `see-my-business-images` (Cyber) | No worker, no D1 — frontend-only + images bucket |
+| see-my-business-contact-gain | R2 `see-my-business-images` (Cyber) | Worker `directory-api` (the likely backend) **deleted 2026-09-15** — R2-images-only again |
 
 ## 🖥️ Frontend-only by design (4, confirmed — no backend needed)
 
@@ -52,7 +53,6 @@
 | live-stream-share-cast | zero Vercel env (Supabase keys hardcoded in `src/integrations/supabase/client.ts`) | External Supabase backend; **no CF equivalent yet — covered by new `cloudflare-backend/` in this repo (not deployed)** |
 | agreement-trust | `VITE_API_URL` only (external) | No CF match |
 | subscription-tracker | zero env | No backend anywhere |
-| smart-attendance-hub | zero env | No backend anywhere |
 | worker | zero env (Hono app) | Generic-name hits (`cea-email-worker`) rejected — no real match |
 | vachoma-bole-fusion | Full Supabase + Postgres env | Backend is Supabase, not Cloudflare |
 | clear-prompt-crafter | zero env | No backend anywhere |
@@ -65,11 +65,11 @@
 
 ## Priority: no backend anywhere (neither Vercel env, nor Supabase/Firebase, nor Cloudflare)
 
-`subscription-tracker`, `smart-attendance-hub`, `worker`, `clear-prompt-crafter`, `graceline-answers`, `cloud-gather-front`, `tax-navigator-pro`, `t7m`, `portify-developer-hub` — 9 projects with zero env vars and zero CF footprint. Best candidates for the next Cloudflare backend (same Workers+D1+R2 pattern as `cloudflare-backend/`).
+`subscription-tracker`, `worker`, `clear-prompt-crafter`, `graceline-answers`, `cloud-gather-front`, `tax-navigator-pro`, `t7m`, `portify-developer-hub` — 8 projects with zero env vars and zero CF footprint. Best candidates for the next Cloudflare backend (same Workers+D1+R2 pattern as `cloudflare-backend/`).
 
 ## Orphaned Cloudflare backends (no Vercel project match)
 
-`creatorloop-*` (api, db, assets), `directory-*` (api, prod db, media), `curate` + `curate-raw` + `curate-ingest` queues, `slams`, `ce-foundation-school`, `affiliate-hub` (+db), `business-pulse`, `stellar-launchpad-*`, `ttin-*`, `techtrack`, `unashamed-movement`, `moviesmod`, `whatsapp-lead-hub` (workers + D1 in 3 accounts), `d1-proxy`, `cea-email/notif-workers` (shared infra). These likely back non-Vercel frontends or retired projects — verify before reuse to avoid collisions.
+`creatorloop-*` (api, db, assets), `techtrack`, `unashamed-movement` (= `thetimeisnow.org`, not Vercel), `ttin-*` (belongs to unashamed-movement), `affiliate-hub` (+db), `ce-foundation-school` (D1 only), `slams` (= `smart-attendance-hub`, confirmed), `whatsapp-lead-hub` (full-stack), `d1-proxy`, `cea-email/notif-workers` (shared infra). Deleted 2026-09-15: `directory-*` workers, `curate` (+raw +queues), `business-pulse`, `stellar-launchpad-*`, `moviesmod`. See `CLOUDFLARE-BACKEND-FRONTEND-LINKS-REPORT.md` for per-worker frontend evidence. Verify before reuse to avoid collisions.
 
 ## Reproduce
 

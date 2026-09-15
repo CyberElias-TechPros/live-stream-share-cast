@@ -9,20 +9,22 @@
 
 | Resource | Total |
 |---|---|
-| Workers (scripts) | 27 |
+| Workers (scripts) | 24 (27 before deletions on 2026-09-15) |
 | Pages projects | 0 (none in any account) |
-| D1 databases | 23 |
-| R2 buckets | 17 (4 accounts have R2 not enabled: `Ceang`, `Eliadztech`, `Info`, `Pain`, `Thejrny` return API 10042) |
+| D1 databases | 20 (23 before deletions) |
+| R2 buckets | 15 (17 before deletions; 5 accounts have R2 not enabled: `Ceang`, `Eliadztech`, `Info`, `Pain`, `Thejrny` return API 10042) |
 | KV namespaces | 32 |
-| Queues | 8 |
+| Queues | 6 (8 before deletions) |
 | Vectorize indexes | 0 |
 | Hyperdrive configs | 0 |
 | Zones | 13 |
 
+> **Deletions on 2026-09-15:** workers `directory-api` (Admin + Info) and `moviesmod` (Eliadztech); D1 `business-pulse`, `stellar-launchpad-db`, `curate` (Cyber); R2 `curate-raw`, `stellar-launchpad-uploads` (both empty, Cyber); queues `curate-ingest`, `curate-ingest-dlq` (Cyber). `slams` D1 kept — belongs to `smart-attendance-hub`.
+
 ## Per-account breakdown
 
 ### 1. Admin@naijaearnings.com.ng's Account — `c567f93a5269d713595b68c75f8f33c5`
-- Workers (10): `creatorloop-api`, `creatorloop-api-production`, `cyberelias-techpros-cloudfront-forge`, `cybershop`, `delgra`, `directory-api`, `it-mastery-suite`, `kidmin-harmony`, `sambet`, `whatsapp-lead-hub`
+- Workers (9): `creatorloop-api`, `creatorloop-api-production`, `cyberelias-techpros-cloudfront-forge`, `cybershop`, `delgra`, `it-mastery-suite`, `kidmin-harmony`, `sambet`, `whatsapp-lead-hub` (`directory-api` deleted 2026-09-15)
 - Pages: 0
 - D1 (6): `kidmin-harmony-db`, `sambet-db`, `delgra-db`, `creatorloop-db`, `directory-prod`, `whatsapp-lead-hub`
 - R2 (5): `creatorloop-assets`, `delgra-uploads`, `directory-media`, `kidmin-harmony-media`, `sambet-imports`
@@ -48,21 +50,21 @@
 ### 4. Cyber@techpros.com.ng's Account — `e543b6a0521fc8fd76447ceba097b665`
 - Workers (6): `affiliate-hub`, `cea-api`, `cea-email-worker`, `cea-notif-worker`, `d1-proxy`, `ministry-api`
 - Pages: 0
-- D1 (10): `cea-db`, `curate`, `ministry-db`, `stellar-launchpad-db`, `ke-town-db`, `whatsapp-lead-hub`, `slams`, `ce-foundation-school`, `affiliate-hub-db`, `business-pulse`
-- R2 (9): `cea-avatars`, `cea-course-files`, `cea-documents`, `cea-uploads`, `curate-raw`, `ke-town-uploads`, `ministry-assets`, `see-my-business-images`, `stellar-launchpad-uploads`
+- D1 (7): `cea-db`, `ministry-db`, `ke-town-db`, `whatsapp-lead-hub`, `slams` (belongs to `smart-attendance-hub`), `ce-foundation-school`, `affiliate-hub-db` (`curate`, `business-pulse`, `stellar-launchpad-db` deleted 2026-09-15)
+- R2 (7): `cea-avatars`, `cea-course-files`, `cea-documents`, `cea-uploads`, `ke-town-uploads`, `ministry-assets`, `see-my-business-images` (`curate-raw`, `stellar-launchpad-uploads` deleted 2026-09-15, both were empty)
 - KV (12): `CACHE`, `CACHE_KV`, `cea-assessment-OTP_STORE`, `cea-assessment-SESSIONS`, `cea-rate-limit`, `CIRCUIT_BREAKER_KV`, `FLAGS`, `ministry-cache`, `RATE_LIMIT_KV`, `SESSIONS`, `worker-CACHE_KV`, `worker-SESSION_KV`
-- Queues (4): `cea-email-queue`, `cea-notif-queue`, `curate-ingest`, `curate-ingest-dlq`
+- Queues (2): `cea-email-queue`, `cea-notif-queue` (`curate-ingest`, `curate-ingest-dlq` deleted 2026-09-15)
 - Vectorize: 0 | Hyperdrive: none configured
 - Zones (2): `freegameplay.site`, `slyelevators.com` (active)
 
 ### 5. Eliadztech@gmail.com's Account — `63a08cfca1bff559bf682dcf2a3eafed`
-- Workers (1): `moviesmod`
+- Workers: none (`moviesmod` deleted 2026-09-15)
 - Pages: 0 | D1: 0 | KV: 0 | Queues: 0 | Vectorize: 0 | Hyperdrive: 0
 - R2: not enabled (API 10042)
 - Zones: 0
 
 ### 6. Info@techpros.com.ng's Account — `ccb3266ecc6459c52ea1236c173107e2`
-- Workers (5): `cea-api`, `cea-email-worker`, `cea-notif-worker`, `cybershop-api`, `directory-api`
+- Workers (4): `cea-api`, `cea-email-worker`, `cea-notif-worker`, `cybershop-api` (`directory-api` deleted 2026-09-15)
 - Pages: 0
 - D1 (3): `cybershop`, `cea-db`, `directory-prod`
 - R2: not enabled (API 10042)

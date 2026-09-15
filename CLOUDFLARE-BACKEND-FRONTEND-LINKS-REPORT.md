@@ -21,16 +21,19 @@ No zone routes exist anywhere — all traffic reaches workers via `workers.dev` 
 | Worker (account) | Frontend target link(s) found | Verdict |
 |---|---|---|
 | `creatorloop-api`, `creatorloop-api-production` (Admin) | `frontendUrl` = **https://loop.freegameplay.site** (+ `/gamification`, `/settings`); Google/YouTube OAuth inside | **NOT orphaned** — API backend for the LoopSquad frontend at `loop.freegameplay.site` (= Vercel `cloudfront-forge` project). Pairs with worker `cyberelias-techpros-cloudfront-forge`, which is the LoopSquad full-stack bundle itself |
-| `directory-api` (Admin + Info) | `SITE_URL` default **https://seemybusiness.com** (`/business/{slug}`); Info copy also allows **https://wacrm-main-kappa.vercel.app** (a Vercel app outside the audited scope) | **NOT orphaned** — backend of the see-my-business directory; Vercel mate is almost certainly `see-my-business-contact-gain` (upgrades it from "partial" to worker-backed) |
+| `directory-api` (Admin + Info) | `SITE_URL` default **https://seemybusiness.com** (`/business/{slug}`); Info copy also allows **https://wacrm-main-kappa.vercel.app** (a Vercel app outside the audited scope) | **DELETED 2026-09-15 (both copies)** — was the likely backend of `see-my-business-contact-gain`, which is now back to R2-images-only. Redeploy from source if that frontend breaks |
 | `cybershop-api` (Info) | `APP_URL`/`PUBLIC_URL`-based links, `/business/{slug}` routes (same directory family) | Same business-directory family as `directory-api` — likely backend for `cybershop-web` or the see-my-business frontend (confirm via its `APP_URL` var) |
 | `whatsapp-lead-hub` (Admin + Cyberelias, identical 2.2 MB bundle) | Self-served React SPA ("WhatsApp Lead Hub" dashboard + sign-in) + **https://smb.techpros.com.ng** + `/webhooks/whatsapp` | **NOT orphaned** — full-stack worker; its own frontend. `smb.` suggests a see-my-business tie — verify against `see-my-business-contact-gain` before treating as standalone |
 | `unashamed-movement` (Cyberelias) | `site_url` default **https://thetimeisnow.org**, `FROM_EMAIL noreply@thetimeisnow.org`, **https://ttin.techpros.com.ng** | **NOT orphaned** — backend of `thetimeisnow.org` (external, non-Vercel). This also explains `ttin-db` + `ttin-uploads`: **TTIN = The Time Is Now** |
 | `techtrack` (Cyberelias, 19 KB) | Only `http://localhost:8787/` in bundle | Minimal API, no discoverable frontend — effectively orphaned/unwired |
-| `moviesmod` (Eliadztech, 1.8 KB) | None — Telegram Bot API proxy template (`api.telegram.org`) | Bot webhook, no web frontend by design |
+| `moviesmod` (Eliadztech, 1.8 KB) | None — Telegram Bot API proxy template (`api.telegram.org`) | **DELETED 2026-09-15** — bot webhook, no web frontend |
 | `d1-proxy` (Cyber, 22 KB) | None in bundle | Infra worker — check its bindings/vars for which frontend(s) use it |
 | `cea-email-worker` (Cyber + Info) | None in bundle | Background queue consumer (`cea-email-queue`) — no frontend by design |
-| `curate` D1 + `curate-raw` R2 + `curate-ingest` queues (Cyber) | — | **No worker exists at all** — orphaned storage without compute |
-| `slams`, `ce-foundation-school`, `business-pulse` D1; `stellar-launchpad-db` + `stellar-launchpad-uploads` | — | **No worker exists at all** — orphaned storage |
+| `curate` D1 + `curate-raw` R2 + `curate-ingest` queues (Cyber) | — | **DELETED 2026-09-15** (R2 buckets were empty; D1 ~72 MB dropped) |
+| `slams` D1 (Cyber) | — | **KEPT — belongs to `smart-attendance-hub`** (confirmed by owner) |
+| `ce-foundation-school` D1 (Cyber) | — | No worker exists — orphaned storage |
+| `business-pulse` D1 (Cyber) | — | **DELETED 2026-09-15** |
+| `stellar-launchpad-db` + `stellar-launchpad-uploads` (Cyber) | — | **DELETED 2026-09-15** (R2 bucket was empty) |
 | `cybershop`, `it-mastery-suite`, `sambet` (Admin, ~1 KB each) | None — stub-sized, no URLs/markers | Placeholder workers. Note: crossref matched Vercel `it-mastery-suite` and `web` (sambet) to these — the real serving logic may live elsewhere; verify they respond before relying on them |
 
 ## Already-matched workers — frontend confirmation
