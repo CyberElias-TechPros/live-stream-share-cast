@@ -10,7 +10,8 @@
 |---|---|
 | ✅ Has Cloudflare backend | 10 |
 | ⚠️ Partial (storage only, no worker) | 1 |
-| ❌ No Cloudflare backend | 19 |
+| 🖥️ Frontend-only by design (confirmed, no backend needed) | 4 |
+| ❌ No Cloudflare backend | 15 |
 
 ## ✅ Vercel projects WITH a Cloudflare backend (10)
 
@@ -33,13 +34,21 @@
 |---|---|---|
 | see-my-business-contact-gain | R2 `see-my-business-images` (Cyber) | No worker, no D1 — frontend-only + images bucket |
 
-## ❌ No Cloudflare backend (19)
+## 🖥️ Frontend-only by design (4, confirmed — no backend needed)
+
+| Vercel project | Vercel URL | Why no backend |
+|---|---|---|
+| sound-shifter-local | https://sound-shifter-local.vercel.app | Pure client-side audio tool; zero env, all logic in browser |
+| toolbox | https://toolbox-gamma-lovat.vercel.app | Client-side utilities collection; zero env |
+| web-tools | https://web-tools-eight-sigma.vercel.app | Client-side web tools; zero env |
+| gif-wizard-pro | https://gif-wizard-pro.vercel.app | Client-side GIF maker; zero env |
+
+## ❌ No Cloudflare backend (15)
 
 | Vercel project | Vercel backend state | Note |
 |---|---|---|
 | caption-grab-unleashed | `VITE_API_URL` only (external) | Points outside CF; no CF resource matches |
 | b1-glam-studio | `JWT_SECRET` etc., no CF match | Backend env exists but is not Cloudflare |
-| sound-shifter-local | zero env | No backend anywhere |
 | live-stream-share-cast | zero Vercel env (Supabase keys hardcoded in `src/integrations/supabase/client.ts`) | External Supabase backend; **no CF equivalent yet — covered by new `cloudflare-backend/` in this repo (not deployed)** |
 | agreement-trust | `VITE_API_URL` only (external) | No CF match |
 | subscription-tracker | zero env | No backend anywhere |
@@ -50,16 +59,13 @@
 | graceline-answers | zero env | No backend anywhere |
 | cloud-gather-front | zero env | No backend anywhere |
 | tax-navigator-pro | zero env | No backend anywhere |
-| toolbox | zero env | No backend anywhere |
 | speed-buddy-check-up | Supabase env | Backend is Supabase, not Cloudflare |
-| web-tools | zero env | No backend anywhere |
-| gif-wizard-pro | zero env | No backend anywhere |
 | t7m | zero env | `ttin-db`/`ttin-uploads` noted but `ttin` ≠ `t7m` — no confident match |
 | portify-developer-hub | zero env | No backend anywhere |
 
 ## Priority: no backend anywhere (neither Vercel env, nor Supabase/Firebase, nor Cloudflare)
 
-`sound-shifter-local`, `subscription-tracker`, `smart-attendance-hub`, `worker`, `clear-prompt-crafter`, `graceline-answers`, `cloud-gather-front`, `tax-navigator-pro`, `toolbox`, `web-tools`, `gif-wizard-pro`, `t7m`, `portify-developer-hub` — 13 projects with zero env vars and zero CF footprint. Best candidates for the next Cloudflare backend (same Workers+D1+R2 pattern as `cloudflare-backend/`).
+`subscription-tracker`, `smart-attendance-hub`, `worker`, `clear-prompt-crafter`, `graceline-answers`, `cloud-gather-front`, `tax-navigator-pro`, `t7m`, `portify-developer-hub` — 9 projects with zero env vars and zero CF footprint. Best candidates for the next Cloudflare backend (same Workers+D1+R2 pattern as `cloudflare-backend/`).
 
 ## Orphaned Cloudflare backends (no Vercel project match)
 
