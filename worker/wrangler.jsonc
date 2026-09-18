@@ -19,7 +19,7 @@
     {
       "binding": "DB",
       "database_name": "live-stream-db",
-      "database_id": "5a70591e-b396-4eed-9944-a88e59ed47d1",
+      "database_id": "101e2cfe-f5aa-497b-a614-fd654d36d3e3",
       "migrations_dir": "migrations"
     }
   ],
