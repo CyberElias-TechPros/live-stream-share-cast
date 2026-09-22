@@ -6,7 +6,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 # Update with the Vercel frontend origin if it changes (custom domains later).
-ALLOWED_ORIGINS = "https://smart-attendance-hub-six.vercel.app"
+ALLOWED_ORIGINS = "https://slams.freegameplay.site,https://smart-attendance-hub-six.vercel.app"
 
 [[d1_databases]]
 binding = "DB"
