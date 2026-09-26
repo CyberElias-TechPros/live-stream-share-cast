@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
-import { Clock, Film, Play, Search, ShieldAlert, Trash2, Pencil, Scissors, Eye, Lock, Globe, Link2 } from 'lucide-react';
+import { Clock, Film, ImagePlus, Play, Search, ShieldAlert, Trash2, Pencil, Scissors, Eye, Lock, Globe, Link2 } from 'lucide-react';
 import Navigation from '@/components/Navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -42,6 +42,7 @@ export default function Library() {
   const [active, setActive] = useState<Recording | null>(null);
   const [editing, setEditing] = useState<Recording | null>(null);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -84,6 +85,31 @@ export default function Library() {
       variant: ok ? undefined : 'destructive',
     });
     if (ok) setRecordings((current) => current.filter((item) => item.id !== recording.id));
+  };
+
+  const thumbInputRef = useRef<HTMLInputElement>(null);
+  const [thumbTarget, setThumbTarget] = useState<Recording | null>(null);
+
+  const handleThumbnailPick = async (file: File | undefined) => {
+    const target = thumbTarget;
+    setThumbTarget(null);
+    if (!file || !target) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast({ title: 'Pick an image file', variant: 'destructive' });
+      return;
+    }
+
+    setUploading(true);
+    const url = await recordingService.uploadThumbnail(target.id, file);
+    setUploading(false);
+
+    if (!url) {
+      toast({ title: 'Could not upload the thumbnail', variant: 'destructive' });
+      return;
+    }
+    setRecordings((current) => current.map((item) => (item.id === target.id ? { ...item, thumbnail: url } : item)));
+    toast({ title: 'Thumbnail updated' });
   };
 
   const handleSave = async () => {
@@ -265,6 +291,17 @@ export default function Library() {
                           <Button
                             variant="glass"
                             size="sm"
+                            title="Upload a thumbnail"
+                            onClick={() => {
+                              setThumbTarget(recording);
+                              thumbInputRef.current?.click();
+                            }}
+                          >
+                            <ImagePlus className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="glass"
+                            size="sm"
                             onClick={() => void handleDelete(recording)}
                             className="text-destructive hover:text-destructive"
                             title="Delete recording"
@@ -280,6 +317,18 @@ export default function Library() {
             </div>
           )}
         </main>
+
+        <input
+          ref={thumbInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(event) => {
+            void handleThumbnailPick(event.target.files?.[0]);
+            event.target.value = '';
+          }}
+        />
+        {uploading && <span className="sr-only">Uploading thumbnail</span>}
       </div>
 
       {/* Player */}

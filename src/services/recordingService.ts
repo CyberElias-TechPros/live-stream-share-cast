@@ -75,6 +75,27 @@ export const recordingService = {
     }
   },
 
+  /**
+   * Uploads a custom thumbnail image and attaches it to a recording.
+   * `POST /api/media/thumbnails` stores it in object storage and returns the
+   * public URL; the recording row is then patched with that URL.
+   */
+  async uploadThumbnail(id: string, file: File): Promise<string | null> {
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const uploaded = await api.upload<{ url: string }>('/media/thumbnails', form);
+      const url = uploaded?.url;
+      if (!url) return null;
+
+      const updated = await api.patch<{ recording: unknown }>(`/recordings/${id}`, { thumbnailUrl: url });
+      return updated ? url : null;
+    } catch (error) {
+      console.error('Error uploading thumbnail:', error);
+      return null;
+    }
+  },
+
   async createClip(id: string, clip: { title: string; startSeconds: number; endSeconds: number; visibility?: string }): Promise<Recording | null> {
     try {
       const data = await api.post<{ recording: unknown }>(`/recordings/${id}/clip`, clip);

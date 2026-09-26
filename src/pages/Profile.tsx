@@ -38,6 +38,7 @@ import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
 import { Skeleton } from "@/components/ui/skeleton";
 import { profileService } from "@/services/profileService";
+import { analyticsService } from "@/services/analyticsService";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -65,6 +66,15 @@ export default function Profile() {
     enabled: !!username,
   });
   
+  // Public streamer stats (sessions, peak viewers, hours streamed), so the
+  // numbers are not inferred from the streams that happen to be loaded.
+  const { data: stats } = useQuery({
+    queryKey: ["profileStats", profile?.id],
+    queryFn: () => analyticsService.userStats(profile!.id),
+    enabled: !!profile?.id,
+    staleTime: 60_000,
+  });
+
   // Fetch user streams
   const { 
     data: streams = [], 
@@ -512,14 +522,14 @@ export default function Profile() {
                       <Card className="bg-muted/50">
                         <CardContent className="p-4">
                           <div className="text-xs text-muted-foreground mb-1">FOLLOWERS</div>
-                          <div className="text-2xl font-bold">{profile.followers ?? 0}</div>
+                          <div className="text-2xl font-bold">{stats?.followers ?? profile.followers ?? 0}</div>
                         </CardContent>
                       </Card>
                       
                       <Card className="bg-muted/50">
                         <CardContent className="p-4">
                           <div className="text-xs text-muted-foreground mb-1">STREAMS</div>
-                          <div className="text-2xl font-bold">{streams.length}</div>
+                          <div className="text-2xl font-bold">{stats?.sessions ?? streams.length}</div>
                         </CardContent>
                       </Card>
                       
@@ -534,9 +544,11 @@ export default function Profile() {
                       
                       <Card className="bg-muted/50">
                         <CardContent className="p-4">
-                          <div className="text-xs text-muted-foreground mb-1">TOTAL VIEWS</div>
+                          <div className="text-xs text-muted-foreground mb-1">
+                            {stats ? "HOURS STREAMED" : "TOTAL VIEWS"}
+                          </div>
                           <div className="text-2xl font-bold">
-                            {streams.reduce((sum, stream) => sum + (stream.viewerCount || 0), 0)}
+                            {stats ? stats.hoursStreamed : streams.reduce((sum, stream) => sum + (stream.viewerCount || 0), 0)}
                           </div>
                         </CardContent>
                       </Card>

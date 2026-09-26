@@ -30,6 +30,7 @@ import {
   Film,
   TrendingUp,
   Trash2,
+  Download,
   ExternalLink,
 } from "lucide-react";
 import Navigation from "@/components/Navigation";
@@ -138,6 +139,35 @@ export default function Dashboard() {
     newFollowers: point.newFollowers,
     chatMessages: point.chatMessages,
   }));
+
+  /** CSV of the persisted daily rollups — same numbers as the chart, for spreadsheets. */
+  const exportDailyRollup = async () => {
+    const days = await analyticsService.daily(90);
+    if (days.length === 0) {
+      toast({ title: 'Nothing to export yet', description: 'Daily stats appear after your next broadcast.' });
+      return;
+    }
+
+    const columns: Array<keyof (typeof days)[number]> = [
+      'day',
+      'watchMinutes',
+      'uniqueViewers',
+      'peakViewers',
+      'newFollowers',
+      'chatMessages',
+      'tipsCents',
+    ];
+    const csv = [columns.join(','), ...days.map((row) => columns.map((column) => row[column] ?? 0).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `im-live-analytics-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
 
   const saveDonationLink = async () => {
     const ok = await tipService.setDonationLink(donationLink.trim() || null);
@@ -583,11 +613,18 @@ export default function Dashboard() {
 
                 <Card className="rounded-2xl border-white/8 bg-card/70">
                   <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <TrendingUp className="h-4 w-4 text-[hsl(var(--accent-mid))]" />
-                      Watch minutes &amp; audience
-                    </CardTitle>
-                    <CardDescription>Rolled up nightly from viewer watch sessions</CardDescription>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4 text-[hsl(var(--accent-mid))]" />
+                          Watch minutes &amp; audience
+                        </CardTitle>
+                        <CardDescription>Rolled up nightly from viewer watch sessions</CardDescription>
+                      </div>
+                      <Button size="sm" variant="glass" onClick={() => void exportDailyRollup()}>
+                        <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent>
                     {insightSeries.length > 0 ? (

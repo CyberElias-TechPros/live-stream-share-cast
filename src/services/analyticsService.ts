@@ -48,6 +48,25 @@ export interface StreamAnalytics {
   series: Array<{ at: string; viewers: number; bandwidth: number }>;
 }
 
+export interface PublicStreamerStats {
+  sessions: number;
+  peakViewers: number;
+  hoursStreamed: number;
+  followers: number;
+}
+
+export interface DailyRollup {
+  day: string;
+  streams: number;
+  minutesStreamed: number;
+  peakViewers: number;
+  uniqueViewers: number;
+  watchMinutes: number;
+  newFollowers: number;
+  chatMessages: number;
+  tipsCents: number;
+}
+
 export const analyticsService = {
   async overview(days = 30): Promise<AnalyticsOverview | null> {
     try {
@@ -55,6 +74,27 @@ export const analyticsService = {
     } catch (error) {
       console.error('Error fetching analytics overview:', error);
       return null;
+    }
+  },
+
+  /** Public stats for a profile card (`GET /analytics/users/:id`, no auth). */
+  async userStats(userId: string): Promise<PublicStreamerStats | null> {
+    if (!userId) return null;
+    try {
+      const data = await api.get<{ stats: PublicStreamerStats }>(`/analytics/users/${userId}`, { auth: false });
+      return data.stats ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  /** Persisted day-level rollups for the signed-in creator (`GET /analytics/daily`). */
+  async daily(days = 30): Promise<DailyRollup[]> {
+    try {
+      const data = await api.get<{ days: DailyRollup[] }>('/analytics/daily', { query: { days } });
+      return data.days ?? [];
+    } catch {
+      return [];
     }
   },
 
