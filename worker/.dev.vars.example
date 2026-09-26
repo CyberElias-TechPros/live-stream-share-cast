@@ -97,7 +97,9 @@ MAX_UPLOAD_BYTES=524288000
 # TURN_URLS=turn:turn.example.com:3478
 
 # ---------------------------- captcha --------------------------------------
-# CAPTCHA_PROVIDER=turnstile | hcaptcha | none
+# Signup + password reset are checked against the provider only when BOTH keys
+# for that provider are present. The SPA picks the widget up from /api/config.
+# CAPTCHA_PROVIDER=turnstile | hcaptcha | none   (inferred from the keys below)
 # TURNSTILE_SITE_KEY=
 # TURNSTILE_SECRET_KEY=
 # HCAPTCHA_SITE_KEY=

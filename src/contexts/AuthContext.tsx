@@ -19,7 +19,12 @@ export interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (username: string, email: string, password: string) => Promise<{ verificationSent: boolean; email: string }>;
+  signup: (
+    username: string,
+    email: string,
+    password: string,
+    captchaToken?: string,
+  ) => Promise<{ verificationSent: boolean; email: string }>;
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<User>) => Promise<void>;
   updateStreamerStatus: (isStreamer: boolean) => Promise<void>;
@@ -119,12 +124,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  const signup = async (username: string, email: string, password: string) => {
+  const signup = async (username: string, email: string, password: string, captchaToken?: string) => {
     try {
       setIsLoading(true);
       const data = await api.post<AuthResponse>(
         '/auth/signup',
-        { username, email, password, displayName: username },
+        { username, email, password, displayName: username, captchaToken },
         { auth: false },
       );
       await adoptSession(data);

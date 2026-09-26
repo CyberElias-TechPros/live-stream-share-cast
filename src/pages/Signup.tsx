@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import AuthLayout from "@/components/AuthLayout";
+import CaptchaWidget from "@/components/CaptchaWidget";
 import {
   isValidEmail,
   isValidUsername,
@@ -31,6 +32,8 @@ export default function Signup() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaRequired, setCaptchaRequired] = useState(false);
 
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -100,9 +103,18 @@ export default function Signup() {
         return;
       }
 
+      if (captchaRequired && !captchaToken) {
+        toast({
+          title: "Complete the human check",
+          description: "Finish the verification below so we know you are not a bot.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       setIsSubmitting(true);
       submittingRef.current = true;
-      await signup(sanitizedUsername, sanitizedEmail, password);
+      await signup(sanitizedUsername, sanitizedEmail, password, captchaToken ?? undefined);
       // The auth context will handle navigation and toast on success
     } catch (error: any) {
       console.error("Signup error:", error);
@@ -253,12 +265,22 @@ export default function Signup() {
             )}
           </div>
 
+          <CaptchaWidget
+            className="flex justify-center"
+            onToken={(token) => {
+              setCaptchaToken(token);
+              // The widget only reports a token once the provider is live on
+              // this deployment, so any callback means the check is required.
+              setCaptchaRequired(token !== null || captchaRequired);
+            }}
+          />
+
           <Button
             type="submit"
             variant="glow"
             size="lg"
             className="w-full"
-            disabled={isSubmitting || Object.keys(fieldErrors).length > 0}
+            disabled={isSubmitting || Object.keys(fieldErrors).length > 0 || (captchaRequired && !captchaToken)}
           >
             {isSubmitting ? "Creating your channel…" : "Create account"}
             {!isSubmitting && <ArrowRight className="transition-transform duration-300 group-hover/btn:translate-x-1" />}

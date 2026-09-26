@@ -10,6 +10,7 @@ import { api } from "@/integrations/api/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import AuthLayout from "@/components/AuthLayout";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import CaptchaWidget from "@/components/CaptchaWidget";
 
 const inputClass =
   "h-12 w-full rounded-xl border-white/10 bg-white/[0.04] px-4 text-sm outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-[hsl(var(--accent-mid)_/_0.55)] focus:bg-white/[0.06]";
@@ -20,6 +21,8 @@ export default function ForgotPassword() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [devResetUrl, setDevResetUrl] = useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaRequired, setCaptchaRequired] = useState(false);
   const { toast } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -31,12 +34,17 @@ export default function ForgotPassword() {
       return;
     }
 
+    if (captchaRequired && !captchaToken) {
+      setErrorMessage("Please finish the human check below.");
+      return;
+    }
+
     try {
       setIsSubmitting(true);
 
       const data = await api.post<{ message?: string; devToken?: string; resetUrl?: string }>(
         "/auth/forgot-password",
-        { email },
+        { email, captchaToken },
         { auth: false },
       );
 
@@ -123,7 +131,21 @@ export default function ForgotPassword() {
               />
             </div>
 
-            <Button type="submit" variant="glow" size="lg" className="w-full" disabled={isSubmitting}>
+            <CaptchaWidget
+              className="flex justify-center"
+              onToken={(token) => {
+                setCaptchaToken(token);
+                setCaptchaRequired(token !== null || captchaRequired);
+              }}
+            />
+
+            <Button
+              type="submit"
+              variant="glow"
+              size="lg"
+              className="w-full"
+              disabled={isSubmitting || (captchaRequired && !captchaToken)}
+            >
               {isSubmitting ? "Sending link…" : "Send reset link"}
             </Button>
           </form>
