@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
   Play,
@@ -20,6 +21,7 @@ import Reveal from "@/components/Reveal";
 import Marquee from "@/components/Marquee";
 import HeroPlayer from "@/components/HeroPlayer";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { searchService } from "@/services/searchService";
 
 const TICKER = [
   "Ultra-low latency",
@@ -73,6 +75,39 @@ function CopyChip() {
   );
 }
 
+/**
+ * Live-now pill for the hero — the real count of broadcasts and viewers, not a
+ * marketing number. Refreshes every minute and links straight into the list.
+ */
+function LiveNowBadge() {
+  const { data } = useQuery({
+    queryKey: ["search", "live-now"],
+    queryFn: () => searchService.liveNow(),
+    refetchInterval: 60_000,
+    staleTime: 45_000,
+  });
+
+  const live = data?.live ?? 0;
+  const viewers = data?.viewers ?? 0;
+
+  return (
+    <Link
+      to="/stream"
+      className="mb-7 inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 backdrop-blur-md transition-colors hover:border-white/25"
+    >
+      <span className="relative flex h-2 w-2">
+        {live > 0 && <span className="absolute inline-flex h-full w-full rounded-full bg-live opacity-75 animate-ping" />}
+        <span className={`relative inline-flex h-2 w-2 rounded-full ${live > 0 ? "bg-live" : "bg-muted-foreground"}`} />
+      </span>
+      <span className="font-mono text-[11px] tracking-[0.22em] text-muted-foreground uppercase">
+        {live > 0
+          ? `${new Intl.NumberFormat().format(live)} live now · ${new Intl.NumberFormat().format(viewers)} watching`
+          : "No one is live right now — be the first"}
+      </span>
+    </Link>
+  );
+}
+
 const Index = () => {
   return (
     <ErrorBoundary>
@@ -88,15 +123,7 @@ const Index = () => {
             <section className="relative px-5 pt-32 pb-16 sm:pt-36 md:pb-24">
               <div className="mx-auto max-w-4xl text-center">
                 <Reveal>
-                  <div className="mb-7 inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 backdrop-blur-md">
-                    <span className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full rounded-full bg-live opacity-75 animate-ping" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-live" />
-                    </span>
-                    <span className="font-mono text-[11px] tracking-[0.22em] text-muted-foreground uppercase">
-                      2,847 creators broadcasting now
-                    </span>
-                  </div>
+                  <LiveNowBadge />
                 </Reveal>
 
                 <Reveal delay={90}>

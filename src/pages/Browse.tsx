@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { formatDistanceToNow } from "date-fns";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Search, ArrowUpRight, Play, Radio } from "lucide-react";
@@ -37,6 +38,94 @@ function StreamScene({ seed, title, letter }: { seed: string; title: string; let
       <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
       <span className="sr-only">{title}</span>
     </>
+  );
+}
+
+/**
+ * Trending rails — scheduled broadcasts about to start and creators gaining
+ * followers fastest this week. Hidden when the platform is quiet.
+ */
+function TrendingRails() {
+  const { data } = useQuery({
+    queryKey: ["trending"],
+    queryFn: () => searchService.trending(12),
+    staleTime: 120_000,
+  });
+
+  if (!data) return null;
+  const { upcoming, rising } = data;
+  if (upcoming.length === 0 && rising.length === 0) return null;
+
+  return (
+    <section className="container pb-12">
+      <div className="grid gap-8 lg:grid-cols-2">
+        {upcoming.length > 0 && (
+          <Reveal>
+            <div className="mb-3 flex items-end justify-between gap-4">
+              <div>
+                <p className="overline mb-2">Set a reminder</p>
+                <h2 className="font-display text-xl font-bold tracking-tight">Starting soon</h2>
+              </div>
+              <Link to="/schedule" className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+                Full schedule
+              </Link>
+            </div>
+            <div className="space-y-2">
+              {upcoming.slice(0, 4).map((slot) => (
+                <Link
+                  key={slot.id}
+                  to={`/profile/${slot.username}`}
+                  className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-card/60 p-3 transition-colors hover:border-white/25"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{slot.title}</span>
+                    <span className="block truncate font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      {slot.displayName || `@${slot.username}`}
+                      {slot.category ? ` · ${slot.category}` : ""}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-right font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                    {formatDistanceToNow(slot.scheduledFor, { addSuffix: true })}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </Reveal>
+        )}
+
+        {rising.length > 0 && (
+          <Reveal delay={80}>
+            <div className="mb-3">
+              <p className="overline mb-2">On the way up</p>
+              <h2 className="font-display text-xl font-bold tracking-tight">Rising this week</h2>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {rising.slice(0, 4).map((creator) => (
+                <Link
+                  key={creator.id}
+                  to={`/profile/${creator.username}`}
+                  className="flex items-center gap-3 rounded-2xl border border-white/8 bg-card/60 p-3 transition-colors hover:border-white/25"
+                >
+                  <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-full bg-signature-soft ring-1 ring-white/10">
+                    {creator.avatar ? (
+                      <img src={creator.avatar} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="font-mono text-[11px] font-semibold">{initials(creator.displayName || creator.username)}</span>
+                    )}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">{creator.displayName || creator.username}</span>
+                    <span className="block truncate font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                      +{creator.newFollowers} this week
+                    </span>
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </Reveal>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -330,6 +419,8 @@ const Browse = () => {
             </section>
 
             {!searching && <ContinueWatching />}
+
+            {!searching && <TrendingRails />}
 
             {/* Server-side search results: channels, replays and categories */}
             {searching && hasNonStreamResults && (
