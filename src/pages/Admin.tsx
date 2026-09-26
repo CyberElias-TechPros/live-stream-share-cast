@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { AlertTriangle, Bug, CheckCircle2, Gauge, Plug, ScrollText, ShieldBan, ShieldOff, Users } from 'lucide-react';
+import { AlertTriangle, BadgeCheck, Bug, CheckCircle2, Gauge, Plug, ScrollText, Shield, ShieldBan, ShieldOff, Users } from 'lucide-react';
 import Navigation from '@/components/Navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -330,6 +330,41 @@ export default function Admin() {
                                 Ban
                               </Button>
                             )}
+
+                            {person.emailVerified === false && (
+                              <Button
+                                size="sm"
+                                variant="glass"
+                                title="Mark this address as verified on the member's behalf"
+                                onClick={async () => {
+                                  const ok = await adminService.verifyUser(person.id);
+                                  if (ok) setPeople((current) => current.map((item) => (item.id === person.id ? { ...item, emailVerified: true } : item)));
+                                  toast({ title: ok ? 'Email marked as verified' : 'Could not verify the address', variant: ok ? undefined : 'destructive' });
+                                }}
+                              >
+                                <BadgeCheck className="mr-1.5 h-3.5 w-3.5" /> Verify
+                              </Button>
+                            )}
+
+                            <Button
+                              size="sm"
+                              variant="glass"
+                              title={person.isAdmin ? 'Revoke operator access' : 'Grant operator access'}
+                              onClick={async () => {
+                                const next = !person.isAdmin;
+                                if (next && !window.confirm(`Give @${person.username} full operator access?`)) return;
+                                const ok = await adminService.setUserRole(person.id, { isAdmin: next });
+                                if (ok) {
+                                  setPeople((current) => current.map((item) => (item.id === person.id ? { ...item, isAdmin: next } : item)));
+                                }
+                                toast({
+                                  title: ok ? (next ? 'Operator access granted' : 'Operator access revoked') : 'Could not change the role',
+                                  variant: ok ? undefined : 'destructive',
+                                });
+                              }}
+                            >
+                              <Shield className="mr-1.5 h-3.5 w-3.5" /> {person.isAdmin ? 'Revoke admin' : 'Make admin'}
+                            </Button>
                           </div>
                         </CardContent>
                       </Card>

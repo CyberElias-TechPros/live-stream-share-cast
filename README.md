@@ -84,7 +84,7 @@ curl -X POST http://127.0.0.1:8787/api/admin/cleanup \
 | `npm run db:migrate`   | root   | apply migrations locally                         |
 | `npm run seed`         | root   | seed demo data                                   |
 | `npm run typecheck`    | root   | type-check the SPA                               |
-| `npm run test:api`     | root   | end-to-end REST contract suite (needs a running API) |
+| `npm run test:api`     | root   | end-to-end REST contract suite (needs a running API; `LSC_TEST_ADMIN_TOKEN` adds the operator checks) |
 | `npm run test:realtime`| root   | chat + WebRTC signalling suite                   |
 | `npm run dev`          | worker | `wrangler dev` (D1/R2/DO simulated locally)      |
 | `npm run typecheck`    | worker | `tsc --noEmit`                                   |

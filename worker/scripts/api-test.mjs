@@ -467,6 +467,41 @@ async function main() {
   const cleanupNoToken = await call('POST', '/admin/cleanup', { body: {} });
   check('POST /admin/cleanup requires the cleanup token', cleanupNoToken.status === 401 || cleanupNoToken.status === 403, String(cleanupNoToken.status));
 
+  // Deeper console coverage runs when an operator token is supplied:
+  //   LSC_TEST_ADMIN_TOKEN=<jwt> node scripts/api-test.mjs
+  const adminToken = process.env.LSC_TEST_ADMIN_TOKEN;
+  if (adminToken) {
+    const keys = ['overview', 'users', 'streams', 'reports', 'bans', 'audit', 'email', 'errors', 'flags', 'categories', 'payments'];
+    for (const key of keys) {
+      const response = await call('GET', `/admin/${key}`, { token: adminToken });
+      check(`GET /admin/${key} answers for an operator`, response.status === 200, String(response.status));
+    }
+
+    const role = await call('POST', `/admin/users/${viewerId}/role`, { token: adminToken, body: { emailVerified: true } });
+    check('POST /admin/users/:id/role changes account flags', role.status === 200, JSON.stringify(role.body).slice(0, 80));
+
+    const errors = await call('GET', '/admin/errors?limit=1', { token: adminToken });
+    const firstError = errors.body?.errors?.[0] ?? errors.body?.items?.[0];
+    if (firstError?.id) {
+      const dismissed = await call('DELETE', `/admin/errors/${firstError.id}`, { token: adminToken });
+      check('DELETE /admin/errors/:id clears a client error', dismissed.status === 200 || dismissed.status === 204, String(dismissed.status));
+    }
+
+    const flag = await call('GET', '/admin/flags', { token: adminToken });
+    const firstFlag = flag.body?.flags?.[0];
+    if (firstFlag?.key) {
+      const toggled = await call('PUT', `/admin/flags/${firstFlag.key}`, { token: adminToken, body: { enabled: !!firstFlag.enabled } });
+      check('PUT /admin/flags/:key round-trips', toggled.status === 200, JSON.stringify(toggled.body).slice(0, 80));
+    }
+
+    const cleanup = await call('POST', '/admin/cleanup', { headers: { 'x-cleanup-token': process.env.LSC_TEST_CLEANUP_TOKEN ?? '' }, body: { limit: 5 } });
+    if (process.env.LSC_TEST_CLEANUP_TOKEN) {
+      check('POST /admin/cleanup runs with the cleanup token', cleanup.status === 200 && !!cleanup.body?.report, String(cleanup.status));
+    }
+  } else {
+    console.log('   (set LSC_TEST_ADMIN_TOKEN to exercise the operator surface)');
+  }
+
   /* -------------------------------- teardown ------------------------------- */
 
   section('teardown');

@@ -39,6 +39,7 @@ export interface AdminUser {
   isStreamer: boolean;
   isAdmin: boolean;
   isBanned: boolean;
+  emailVerified?: boolean;
   followers: number;
   createdAt: string;
 }
@@ -161,6 +162,26 @@ export const adminService = {
       return data.users ?? [];
     } catch {
       return [];
+    }
+  },
+
+  /** Grants/revokes admin or streamer rights, or marks the address verified. */
+  async setUserRole(userId: string, changes: { isAdmin?: boolean; isStreamer?: boolean; emailVerified?: boolean }): Promise<boolean> {
+    try {
+      await api.post(`/admin/users/${userId}/role`, changes);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  /** Marks a user's email as verified on their behalf (support flow). */
+  async verifyUser(userId: string): Promise<boolean> {
+    try {
+      await api.post(`/admin/users/${userId}/verify`);
+      return true;
+    } catch {
+      return false;
     }
   },
 
