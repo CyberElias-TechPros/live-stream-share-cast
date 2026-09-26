@@ -7,6 +7,12 @@ import {
   Flag,
   Heart,
   ArrowLeft,
+  Ban,
+  EyeOff,
+  MoreHorizontal,
+  RotateCcw,
+  Timer,
+  UserRound,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
@@ -29,10 +35,18 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { ChatMessage, Stream, StreamStatus } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { liveStreamService } from "@/services/liveStreamService";
 import { chatService } from "@/services/chatService";
+import { moderationService } from "@/services/moderationService";
 import { analyticsService, watchTracker } from "@/services/analyticsService";
 import FollowButton from "@/components/FollowButton";
 import ReportDialog from "@/components/ReportDialog";
@@ -68,20 +82,28 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
     enabled: !!streamId,
   });
 
+  // The broadcaster gets the host role on the socket: host-only moderation
+  // frames are accepted and the room is marked as owned by this connection.
+  const isHost = !!user?.id && !!stream?.userId && user.id === stream.userId;
+
   // Live chat: the stream's Durable Object pushes new messages over a socket,
   // which invalidates the query cache to trigger a refetch.
   useEffect(() => {
-    const subscription = chatService.subscribeToStream(streamId, (event) => {
-      if (event.type === "chat" || event.type === "moderation") {
-        queryClient.invalidateQueries({ queryKey: ["streamChat", streamId] });
-      }
-      if (event.type === "presence" && typeof event.viewers === "number") {
-        queryClient.invalidateQueries({ queryKey: ["stream", streamId] });
-      }
-    });
+    const subscription = chatService.subscribeToStream(
+      streamId,
+      (event) => {
+        if (event.type === "chat" || event.type === "moderation") {
+          queryClient.invalidateQueries({ queryKey: ["streamChat", streamId] });
+        }
+        if (event.type === "presence" && typeof event.viewers === "number") {
+          queryClient.invalidateQueries({ queryKey: ["stream", streamId] });
+        }
+      },
+      { role: isHost ? "host" : "viewer" },
+    );
 
     return () => subscription.close();
-  }, [streamId, queryClient]);
+  }, [streamId, queryClient, isHost]);
 
   // Watch-time tracking: one session per visit, closed on unmount.
   useEffect(() => {
@@ -114,6 +136,56 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
       leaveStream();
     };
   }, [streamId, joinStream, leaveStream]);
+
+  const [moderatingId, setModeratingId] = useState<string | null>(null);
+
+  /** Hide or restore a message for everyone in the room. */
+  const handleToggleMessage = async (message: ChatMessage) => {
+    setModeratingId(message.id);
+    const ok = await chatService.moderateMessage(message.id, !message.isModerated);
+    setModeratingId(null);
+
+    if (!ok) {
+      toast({ title: 'Could not update that message', variant: 'destructive' });
+      return;
+    }
+    queryClient.invalidateQueries({ queryKey: ['streamChat', streamId] });
+    toast({ title: message.isModerated ? 'Message restored' : 'Message hidden' });
+  };
+
+  /** Timeout (mute) or ban the author of a message in this room. */
+  const handleRestrict = async (message: ChatMessage, kind: 'timeout' | 'ban') => {
+    if (!message.userId) {
+      toast({ title: 'That message has no author to restrict', variant: 'destructive' });
+      return;
+    }
+
+    const reason = window.prompt(
+      kind === 'timeout' ? `Mute @${message.username} for 10 minutes — reason?` : `Ban @${message.username} from this chat — reason?`,
+      kind === 'timeout' ? 'Chat rules' : 'Chat rules',
+    );
+    if (reason === null) return;
+
+    setModeratingId(message.id);
+    const ok = await moderationService.restrict(streamId, {
+      userId: message.userId,
+      kind,
+      durationMinutes: kind === 'timeout' ? 10 : undefined,
+      reason: reason || undefined,
+    });
+    setModeratingId(null);
+
+    if (!ok) {
+      toast({ title: kind === 'timeout' ? 'Could not mute that viewer' : 'Could not ban that viewer', variant: 'destructive' });
+      return;
+    }
+    // The room hides their messages until the restriction ends.
+    queryClient.invalidateQueries({ queryKey: ['streamChat', streamId] });
+    toast({
+      title: kind === 'timeout' ? `@${message.username} muted for 10 minutes` : `@${message.username} banned from chat`,
+      description: 'Manage the list from Moderation → Chat rules.',
+    });
+  };
 
   // Auto-scroll chat to bottom when new messages arrive
   useEffect(() => {
@@ -389,7 +461,7 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
               ))
             ) : chatMessages.length > 0 ? (
               chatMessages.map((message: ChatMessage) => (
-                <div key={message.id} className="flex gap-3 group">
+                <div key={message.id} className="group flex gap-3">
                   <Avatar className="h-8 w-8 shrink-0 rounded-full">
                     <AvatarImage src={message.userAvatar} />
                     <AvatarFallback className="bg-signature-soft text-[10px] font-semibold text-[hsl(var(--accent-hi))]">
@@ -399,12 +471,73 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2">
                       <p className="truncate text-[13px] font-semibold">{message.username}</p>
+                      {isHost && message.userId === stream?.userId && (
+                        <span className="shrink-0 rounded-full bg-signature-soft px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-[hsl(var(--accent-hi))]">
+                          host
+                        </span>
+                      )}
                       <p className="shrink-0 font-mono text-[10px] text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100">
                         {formatDistanceToNow(message.timestamp, { addSuffix: true })}
                       </p>
                     </div>
-                    <p className="break-words text-[13px] leading-relaxed text-foreground/85">{message.message}</p>
+
+                    {message.isModerated ? (
+                      <p className="text-[13px] italic leading-relaxed text-muted-foreground/70">
+                        Message hidden by a moderator
+                        {isHost && (
+                          <button
+                            type="button"
+                            onClick={() => void handleToggleMessage(message)}
+                            className="ml-2 not-italic text-[hsl(var(--accent-hi))] underline-offset-2 hover:underline"
+                          >
+                            restore
+                          </button>
+                        )}
+                      </p>
+                    ) : (
+                      <p className="break-words text-[13px] leading-relaxed text-foreground/85">{message.message}</p>
+                    )}
                   </div>
+
+                  {isHost && message.userId !== stream?.userId && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={`Moderate message from ${message.username}`}
+                          disabled={moderatingId === message.id}
+                          className="h-6 shrink-0 rounded-md px-1 text-muted-foreground opacity-0 transition-opacity hover:bg-white/10 hover:text-foreground focus:opacity-100 group-hover:opacity-100 disabled:opacity-40"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52">
+                        <DropdownMenuItem onClick={() => void handleToggleMessage(message)}>
+                          {message.isModerated ? (
+                            <>
+                              <RotateCcw className="mr-2 h-3.5 w-3.5" /> Restore message
+                            </>
+                          ) : (
+                            <>
+                              <EyeOff className="mr-2 h-3.5 w-3.5" /> Hide message
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => void handleRestrict(message, "timeout")}>
+                          <Timer className="mr-2 h-3.5 w-3.5" /> Mute 10 minutes
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive" onClick={() => void handleRestrict(message, "ban")}>
+                          <Ban className="mr-2 h-3.5 w-3.5" /> Ban from chat
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem asChild>
+                          <Link to={`/profile/${message.username}`} className="cursor-pointer">
+                            <UserRound className="mr-2 h-3.5 w-3.5" /> View profile
+                          </Link>
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                 </div>
               ))
             ) : (

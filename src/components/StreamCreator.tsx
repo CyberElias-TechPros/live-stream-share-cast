@@ -45,7 +45,12 @@ const streamFormSchema = z.object({
 
 type StreamFormValues = z.infer<typeof streamFormSchema>;
 
-const StreamCreator = () => {
+interface StreamCreatorProps {
+  /** Stream created elsewhere (e.g. from a scheduled slot) to configure instead of creating a new one. */
+  resumeStreamId?: string | null;
+}
+
+const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [streamKey, setStreamKey] = useState<string | null>(null);
@@ -197,6 +202,34 @@ const StreamCreator = () => {
         .catch(() => {});
     }
   };
+
+  // Picking up a stream that already exists (scheduled slot → "Go live"): skip
+  // creation, prefill the form with the slot's details and land on the
+  // configure step so the very next action is "Go live".
+  const resumedRef = useRef(false);
+  useEffect(() => {
+    if (!resumeStreamId || resumedRef.current || !user) return;
+    resumedRef.current = true;
+
+    void liveStreamService.getStreamById(resumeStreamId).then((existing) => {
+      if (!existing) {
+        toast({ title: 'That broadcast no longer exists', variant: 'destructive' });
+        return;
+      }
+
+      setCurrentStream(existing);
+      setStreamKey(existing.streamKey || null);
+      form.reset({
+        title: existing.title,
+        description: existing.description ?? '',
+        category: existing.category ?? 'Other',
+        tags: (existing.tags ?? []).join(', '),
+        streamType: existing.streamType,
+      });
+      setStep(2);
+      toast({ title: 'Broadcast ready', description: 'Your scheduled session is set up — go live when you are.' });
+    });
+  }, [resumeStreamId, user, form, toast]);
 
   // Create stream mutation
   const createStreamMutation = useMutation({
