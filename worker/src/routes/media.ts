@@ -1,22 +1,23 @@
 import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
+import { trimOrNull } from '../lib/http';
 import type { AppVariables, Env } from '../env';
 import { requireAuth } from '../lib/auth';
-import { badRequest, forbidden, int, notFound } from '../lib/http';
+import { background, badRequest, forbidden, int, notFound, readJson } from '../lib/http';
 import { uuid } from '../lib/ids';
 import { isoHoursFromNow, nowIso } from '../lib/time';
 import { rateLimit } from '../lib/ratelimit';
+import { limitsConfig } from '../lib/config';
+import { dispatchWebhook } from '../lib/webhook';
+
+/** Shared with the VOD library so uploads show up in `recordings` immediately. */
 
 export const mediaRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 const authGuard: MiddlewareHandler<{ Bindings: Env; Variables: AppVariables }> = (c, next) => requireAuth(c, next);
 
-const DEFAULT_RETENTION_HOURS = 6;
-const MAX_RECORDING_BYTES = 512 * 1024 * 1024;
-
 function retentionHours(env: Env): number {
-  const configured = Number(env.RECORDING_RETENTION_HOURS);
-  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_RETENTION_HOURS;
+  return limitsConfig(env).recordingRetentionHours;
 }
 
 /* --------------------------------- uploads ----------------------------------- */
@@ -27,7 +28,8 @@ function retentionHours(env: Env): number {
  */
 mediaRoutes.post('/recordings', authGuard, rateLimit({ limit: 20, windowMs: 60_000, name: 'uploads', perUser: true }), async (c) => {
   const auth = c.get('authUser')!;
-  const maxBytes = Number(c.env.MAX_UPLOAD_BYTES) || MAX_RECORDING_BYTES;
+  const limits = limitsConfig(c.env);
+  const maxBytes = limits.maxUploadBytes;
 
   const form = await c.req.parseBody();
   const file = form.file ?? form.recording;
@@ -52,13 +54,47 @@ mediaRoutes.post('/recordings', authGuard, rateLimit({ limit: 20, windowMs: 60_0
   const url = `/api/media/recordings/${key}`;
   const expiresAt = isoHoursFromNow(hours);
 
+  // VOD library record — the stream columns stay in sync for backwards
+  // compatibility, but `recordings` is the source of truth for the library UI.
+  const recordingId = uuid();
+  const streamTitle = streamId
+    ? (await c.env.DB.prepare(`SELECT title, category, tags FROM streams WHERE id = ?`).bind(streamId).first<{ title: string; category: string | null; tags: string | null }>())
+    : null;
+
+  await c.env.DB.prepare(
+    `INSERT INTO recordings (id, user_id, stream_id, title, description, r2_key, url, thumbnail_url, size_bytes,
+                             mime_type, visibility, status, source, category, tags, is_mature,
+                             retention_expires_at, published_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'public', 'ready', ?, ?, ?, 0, ?, ?, ?)`,
+  )
+    .bind(
+      recordingId,
+      auth.id,
+      streamId,
+      trimOrNull(form.title, limits.maxTitleLength) ?? (streamTitle?.title ? `${streamTitle.title} — replay` : 'Untitled recording'),
+      trimOrNull(form.description, 2000),
+      key,
+      url,
+      trimOrNull(form.thumbnailUrl, 2000),
+      file.size,
+      file.type || 'video/webm',
+      String(form.source ?? 'browser').slice(0, 20),
+      streamTitle?.category ?? null,
+      streamTitle?.tags ?? null,
+      expiresAt,
+      nowIso(),
+      nowIso(),
+    )
+    .run();
+
   if (streamId) {
     await c.env.DB.prepare(
       `UPDATE streams
-          SET recording_url = ?, recording_key = ?, recording_expiry = ?, is_recording = 1, updated_at = ?
+          SET recording_url = ?, recording_key = ?, recording_expiry = ?, is_recording = 1,
+              recording_id = ?, updated_at = ?
         WHERE id = ?`,
     )
-      .bind(url, key, expiresAt, nowIso(), streamId)
+      .bind(url, key, expiresAt, recordingId, nowIso(), streamId)
       .run();
 
     await c.env.DB.prepare(
@@ -69,7 +105,18 @@ mediaRoutes.post('/recordings', authGuard, rateLimit({ limit: 20, windowMs: 60_0
       .run();
   }
 
-  return c.json({ success: true, url, key, expiresAt, size: file.size, type: file.type }, 201);
+  background(
+    c,
+    dispatchWebhook(c.env, auth.id, 'recording.ready', {
+      recordingId,
+      streamId,
+      title: streamTitle?.title ?? null,
+      url,
+      expiresAt,
+    }),
+  );
+
+  return c.json({ success: true, id: recordingId, url, key, expiresAt, size: file.size, type: file.type }, 201);
 });
 
 /** Delete a recording (owner only — ownership is resolved through the streams table). */
@@ -92,6 +139,43 @@ mediaRoutes.delete('/recordings/*', authGuard, async (c) => {
 
   await c.env.RECORDINGS.delete(key);
   return c.json({ success: true });
+});
+
+/**
+ * Thumbnail upload (stream card / VOD poster). Images land in the AVATARS
+ * bucket under a `thumbnails/<userId>/…` prefix so no extra R2 binding is
+ * needed, and are served with immutable cache headers.
+ */
+mediaRoutes.post('/thumbnails', authGuard, rateLimit({ limit: 30, windowMs: 60_000, name: 'thumbnails', perUser: true }), async (c) => {
+  const auth = c.get('authUser')!;
+  const limits = limitsConfig(c.env);
+
+  const form = await c.req.parseBody();
+  const file = form.file ?? form.thumbnail;
+  if (!file || typeof file === 'string') throw badRequest('No file provided');
+  if (!file.type?.startsWith('image/')) throw badRequest('Thumbnails must be an image');
+  if (file.size > limits.maxAvatarBytes) throw badRequest('Thumbnail must be smaller than 5 MB');
+
+  const streamId = typeof form.streamId === 'string' && form.streamId ? form.streamId : null;
+  if (streamId) {
+    const owner = await c.env.DB.prepare(`SELECT user_id FROM streams WHERE id = ?`).bind(streamId).first<{ user_id: string }>();
+    if (!owner) throw notFound('Stream not found');
+    if (owner.user_id !== auth.id) throw forbidden('You do not own this stream');
+  }
+
+  const key = `thumbnails/${auth.id}/${uuid()}.${extensionFor(file.type, file.name)}`;
+  await c.env.AVATARS.put(key, file, {
+    httpMetadata: { contentType: file.type, cacheControl: 'public, max-age=31536000, immutable' },
+    customMetadata: { userId: auth.id, streamId: streamId ?? '' },
+  });
+
+  const url = `/api/media/avatars/${key}`;
+
+  if (streamId) {
+    await c.env.DB.prepare(`UPDATE streams SET thumbnail_url = ?, updated_at = ? WHERE id = ?`).bind(url, nowIso(), streamId).run();
+  }
+
+  return c.json({ success: true, url, key }, 201);
 });
 
 /* --------------------------------- downloads --------------------------------- */

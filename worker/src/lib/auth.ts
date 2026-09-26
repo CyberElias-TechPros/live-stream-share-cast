@@ -153,6 +153,144 @@ interface SessionRow {
   revoked_at: string | null;
 }
 
+/* -------------------------------- account state ------------------------------- */
+
+interface AccountState {
+  id: string;
+  email: string;
+  username: string;
+  is_streamer: number | null;
+  is_admin: number | null;
+  is_banned: number | null;
+  suspended_until: string | null;
+  deleted_at: string | null;
+}
+
+function isSuspended(row: Pick<AccountState, 'is_banned' | 'suspended_until'>): boolean {
+  if (row.is_banned) return true;
+  return !!row.suspended_until && new Date(row.suspended_until).getTime() > Date.now();
+}
+
+async function accountState(env: Env, userId: string): Promise<AccountState | null> {
+  return env.DB.prepare(
+    `SELECT id, email, username, is_streamer, is_admin, is_banned, suspended_until, deleted_at FROM users WHERE id = ?`,
+  )
+    .bind(userId)
+    .first<AccountState>();
+}
+
+function toAuthUser(row: AccountState, scopes?: string[]): AuthUser {
+  return {
+    id: row.id,
+    email: row.email,
+    username: row.username,
+    isStreamer: !!row.is_streamer,
+    isAdmin: !!row.is_admin,
+    banned: isSuspended(row),
+    scopes,
+  };
+}
+
+/* ------------------------------- API tokens ----------------------------------- */
+
+const API_TOKEN_PREFIX = 'lsc_';
+
+/**
+ * Personal API tokens (`lsc_…`) let OBS overlays, bots and the CLI talk to the
+ * API without a user session. Only the SHA-256 hash is stored.
+ */
+export async function resolveApiToken(env: Env, token: string): Promise<AuthUser | null> {
+  if (!token.startsWith(API_TOKEN_PREFIX)) return null;
+
+  const hash = await sha256Hex(token);
+  const row = await env.DB.prepare(
+    `SELECT t.id, t.user_id, t.scopes, t.expires_at, t.revoked_at,
+            u.id AS uid, u.email, u.username, u.is_streamer, u.is_admin, u.is_banned, u.suspended_until, u.deleted_at
+       FROM api_tokens t JOIN users u ON u.id = t.user_id
+      WHERE t.token_hash = ?`,
+  )
+    .bind(hash)
+    .first<AccountState & { id: string; user_id: string; uid: string; scopes: string | null; expires_at: string | null; revoked_at: string | null }>();
+
+  if (!row || row.revoked_at) return null;
+  if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return null;
+
+  await env.DB.prepare(`UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`).bind(nowIso(), hash).run();
+
+  const scopes = row.scopes ? (JSON.parse(row.scopes) as string[]) : [];
+  return {
+    id: row.uid,
+    email: row.email,
+    username: row.username,
+    isStreamer: !!row.is_streamer,
+    isAdmin: !!row.is_admin,
+    banned: isSuspended(row),
+    scopes,
+  };
+}
+
+/** Creates a token, returning the plaintext exactly once. */
+export async function createApiToken(
+  env: Env,
+  userId: string,
+  input: { name: string; scopes: string[]; expiresInDays?: number | null },
+): Promise<{ token: string; id: string; prefix: string; expiresAt: string | null }> {
+  const token = `${API_TOKEN_PREFIX}${randomToken(32)}`;
+  const id = randomToken(8);
+  const prefix = `${token.slice(0, 12)}…`;
+  const expiresAt = input.expiresInDays ? new Date(Date.now() + input.expiresInDays * 86_400_000).toISOString() : null;
+
+  await env.DB.prepare(
+    `INSERT INTO api_tokens (id, user_id, name, token_hash, prefix, scopes, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  )
+    .bind(id, userId, input.name.slice(0, 60), await sha256Hex(token), prefix, JSON.stringify(input.scopes), expiresAt, nowIso())
+    .run();
+
+  return { token, id, prefix, expiresAt };
+}
+
+/* ------------------------------- login attempts -------------------------------- */
+
+/** Records a login attempt and returns whether the account is currently locked. */
+export async function loginLockState(
+  env: Env,
+  email: string,
+  ip: string | null,
+): Promise<{ locked: boolean; attempts: number; retryAfterSeconds: number }> {
+  const windowStart = new Date(Date.now() - 15 * 60_000).toISOString();
+
+  const byEmail = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM login_attempts WHERE lower(email) = ? AND success = 0 AND created_at >= ?`,
+  )
+    .bind(email.toLowerCase(), windowStart)
+    .first<{ count: number }>();
+
+  const byIp = ip
+    ? await env.DB.prepare(`SELECT COUNT(*) AS count FROM login_attempts WHERE ip = ? AND success = 0 AND created_at >= ?`)
+        .bind(ip, windowStart)
+        .first<{ count: number }>()
+    : null;
+
+  const attempts = Math.max(byEmail?.count ?? 0, byIp?.count ?? 0);
+  const limit = 10;
+  return { locked: attempts >= limit, attempts, retryAfterSeconds: 15 * 60 };
+}
+
+export async function recordLoginAttempt(
+  env: Env,
+  input: { email: string; userId?: string | null; ip?: string | null; userAgent?: string | null; success: boolean },
+): Promise<void> {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO login_attempts (id, email, user_id, ip, user_agent, success, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    )
+      .bind(randomToken(9), input.email.toLowerCase(), input.userId ?? null, input.ip ?? null, input.userAgent?.slice(0, 200) ?? null, input.success ? 1 : 0, nowIso())
+      .run();
+  } catch {
+    /* login must not fail because telemetry failed */
+  }
+}
+
 export async function issueSession(
   env: Env,
   userId: string,
@@ -274,33 +412,71 @@ async function resolveUser(env: Env, jti: string, claims: JwtPayload): Promise<A
   const session = await env.DB.prepare(`SELECT revoked_at FROM sessions WHERE id = ?`).bind(jti).first<{ revoked_at: string | null }>();
   if (!session || session.revoked_at) return null;
 
-  const user = await env.DB.prepare(`SELECT id, email, username, is_streamer, is_admin FROM users WHERE id = ?`)
-    .bind(claims.sub)
-    .first<{ id: string; email: string; username: string; is_streamer: number | null; is_admin: number | null }>();
-
-  if (!user) return null;
-  return {
-    id: user.id,
-    email: user.email,
-    username: user.username,
-    isStreamer: !!user.is_streamer,
-    isAdmin: !!user.is_admin,
-  };
+  const user = await accountState(env, claims.sub);
+  if (!user || user.deleted_at) return null;
+  return toAuthUser(user);
 }
 
-/** Rejects the request with 401 unless a valid access token is presented. */
+/** Resolves either a JWT session or a personal API token. */
+async function authenticate(env: Env, token: string): Promise<{ user: AuthUser; jti?: string } | null> {
+  if (token.startsWith(API_TOKEN_PREFIX)) {
+    const user = await resolveApiToken(env, token);
+    return user ? { user } : null;
+  }
+
+  const claims = await verifyJwt(env, token, 'access');
+  if (!claims) return null;
+
+  const user = await resolveUser(env, claims.jti, claims);
+  return user ? { user, jti: claims.jti } : null;
+}
+
+/**
+ * Rejects the request with 401 unless a valid access token is presented.
+ * Banned accounts are rejected with 403 `account_banned`; use
+ * `requireAuthAllowBanned` for the handful of routes a suspended user still
+ * needs (viewing their own ban notice, logging out, exporting data).
+ */
 export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVariables }>, next: Next) {
+  return requireAuthWith(c, next, { allowBanned: false });
+}
+
+/** Same as `requireAuth` but lets suspended accounts through. */
+export async function requireAuthAllowBanned(c: Context<{ Bindings: Env; Variables: AppVariables }>, next: Next) {
+  return requireAuthWith(c, next, { allowBanned: true });
+}
+
+async function requireAuthWith(
+  c: Context<{ Bindings: Env; Variables: AppVariables }>,
+  next: Next,
+  options: { allowBanned: boolean },
+) {
   const token = readBearer(c);
   if (!token) return unauthorized(c, 'Missing authorization token');
 
-  const claims = await verifyJwt(c.env, token, 'access');
-  if (!claims) return unauthorized(c, 'Invalid or expired token');
+  const resolved = await authenticate(c.env, token);
+  if (!resolved) return unauthorized(c, 'Invalid or expired token');
 
-  const user = await resolveUser(c.env, claims.jti, claims);
-  if (!user) return unauthorized(c, 'Session is no longer valid');
+  if (resolved.user.banned && !options.allowBanned) {
+    return c.json({ error: 'Your account is suspended or banned', code: 'account_banned' }, 403);
+  }
 
-  c.set('authUser', user);
-  c.set('authJti', claims.jti);
+  c.set('authUser', resolved.user);
+  if (resolved.jti) c.set('authJti', resolved.jti);
+  await next();
+}
+
+/** Requires an authenticated administrator (or an admin-scoped API token). */
+export async function requireAdmin(c: Context<{ Bindings: Env; Variables: AppVariables }>, next: Next) {
+  const token = readBearer(c);
+  if (!token) return unauthorized(c, 'Missing authorization token');
+
+  const resolved = await authenticate(c.env, token);
+  if (!resolved) return unauthorized(c, 'Invalid or expired token');
+  if (!resolved.user.isAdmin) return c.json({ error: 'Administrator access required', code: 'forbidden' }, 403);
+
+  c.set('authUser', resolved.user);
+  if (resolved.jti) c.set('authJti', resolved.jti);
   await next();
 }
 
@@ -308,16 +484,21 @@ export async function requireAuth(c: Context<{ Bindings: Env; Variables: AppVari
 export async function optionalAuth(c: Context<{ Bindings: Env; Variables: AppVariables }>, next: Next) {
   const token = readBearer(c);
   if (token) {
-    const claims = await verifyJwt(c.env, token, 'access');
-    if (claims) {
-      const user = await resolveUser(c.env, claims.jti, claims);
-      if (user) {
-        c.set('authUser', user);
-        c.set('authJti', claims.jti);
-      }
+    const resolved = await authenticate(c.env, token);
+    if (resolved && !resolved.user.banned) {
+      c.set('authUser', resolved.user);
+      if (resolved.jti) c.set('authJti', resolved.jti);
     }
   }
   await next();
+}
+
+/** True when the caller holds the given scope (API tokens) or is an admin. */
+export function hasScope(user: AuthUser | undefined, scope: string): boolean {
+  if (!user) return false;
+  if (user.isAdmin) return true;
+  if (!user.scopes?.length) return true; // session tokens are unscoped
+  return user.scopes.includes(scope);
 }
 
 function unauthorized(c: Context, message: string): Response {

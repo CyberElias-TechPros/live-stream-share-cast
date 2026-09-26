@@ -62,6 +62,12 @@ export interface ChatMessageRow {
   created_at: string;
   username?: string | null;
   avatar_url?: string | null;
+  // Reply context (joined in `GET /api/streams/:id/chat`).
+  reply_to_id?: string | null;
+  reply_message?: string | null;
+  reply_username?: string | null;
+  is_deleted?: number | null;
+  edited_at?: string | null;
 }
 
 export interface StreamSessionRow {
@@ -138,6 +144,10 @@ export function privateUser(row: UserRow) {
   return {
     ...publicUser(row),
     email: row.email,
+    // Role flags are only ever exposed on the caller's own record — the UI uses
+    // `isAdmin` to reveal the console, and the API enforces it server-side.
+    isAdmin: !!row.is_admin,
+    emailVerified: !!row.email_verified,
     updatedAt: row.updated_at,
     preferences: parseJson<Record<string, unknown> | null>(row.preferences, null) ?? defaultPreferences(),
     socialLinks: parseJson<unknown[]>(row.social_links, []),

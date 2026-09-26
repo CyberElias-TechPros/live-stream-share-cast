@@ -133,6 +133,41 @@ export function clampText(value: unknown, max: number): string | null {
   return text.slice(0, max);
 }
 
+/**
+ * Runs `task` after the response has been sent when the runtime supports
+ * `waitUntil` (Workers, tests with an execution context). Falls back to
+ * fire-and-forget so the call site never has to care.
+ */
+export function background(c: Context, task: Promise<unknown>): void {
+  const safe = task.catch((error) => {
+    console.warn(JSON.stringify({ level: 'warn', message: 'background task failed', error: String(error) }));
+  });
+  try {
+    c.executionCtx.waitUntil(safe);
+  } catch {
+    /* no execution context (unit tests) — the promise already runs */
+  }
+}
+
+/**
+ * `fetch` with an AbortController timeout — used for every outbound call
+ * (webhooks, payments, email, TURN) so a slow third party cannot pin a Worker
+ * request open until the wall-clock limit.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 10_000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Converts an incoming value into a JSON string for storage, or `null`. */
 export function jsonField(value: unknown): string | null {
   if (value === undefined || value === null) return null;
