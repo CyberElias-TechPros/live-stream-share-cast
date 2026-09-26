@@ -13,6 +13,7 @@
  *   viewer → streamer : offer          (recvonly SDP)
  *   streamer → viewer : answer
  *   both → each other: ice             (candidates; queued until remote desc)
+ *   viewer → streamer : quality        (optional per-viewer bitrate cap)
  *   leaving peer      : close
  *
  * Frames carrying a `to` field are routed to that single peer; everything else
@@ -28,9 +29,11 @@ export type LanState = "idle" | "waiting" | "ready" | "connecting" | "connected"
 interface SignalMsg {
   from: string;
   to?: string;
-  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close";
+  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close" | "quality";
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
+  /** Requested ceiling for this viewer, in kbps. `null` restores automatic. */
+  kbps?: number | null;
 }
 
 /**
@@ -177,10 +180,37 @@ export class LanStreamer {
 
   onViewerCount: ((count: number) => void) | null = null;
   onStateChange: ((active: boolean) => void) | null = null;
+  /** Fires when a viewer asks for a different quality (kbps null = automatic). */
+  onQualityHint: ((viewer: string, kbps: number | null) => void) | null = null;
 
   constructor(streamId: string, media: MediaStream) {
     this.streamId = streamId;
     this.media = media;
+  }
+
+  /**
+   * Applies a viewer's quality choice to the encodings we send them. Browsers
+   * that do not support `setParameters` simply keep the original encoding, so
+   * the request is best-effort and never breaks the call.
+   */
+  private async applyQuality(viewer: string, kbps: number | null) {
+    const pc = this.pcs.get(viewer);
+    if (!pc) return;
+
+    for (const sender of pc.getSenders()) {
+      if (!sender.track) continue;
+      try {
+        const params = sender.getParameters();
+        params.encodings = params.encodings?.length ? params.encodings : [{}];
+        for (const encoding of params.encodings) {
+          if (kbps === null) delete encoding.maxBitrate;
+          else encoding.maxBitrate = kbps * 1000;
+        }
+        await sender.setParameters(params);
+      } catch (err) {
+        console.warn("[LAN] could not apply quality hint:", err);
+      }
+    }
   }
 
   get activeViewers(): number {
@@ -223,6 +253,11 @@ export class LanStreamer {
 
       case "offer":
         if (msg.sdp) void this.handleOffer(msg.from, msg.sdp);
+        break;
+
+      case "quality":
+        this.onQualityHint?.(msg.from, msg.kbps ?? null);
+        void this.applyQuality(msg.from, msg.kbps ?? null);
         break;
 
       case "ice": {
@@ -343,6 +378,9 @@ export class LanViewer {
   private stopped = false;
   private _ready = false;
 
+  /** Set from the host's `streamer-ready` frame, used to address quality hints. */
+  private streamerId: string | null = null;
+
   onStream: ((media: MediaStream | null) => void) | null = null;
   onState: ((state: LanState) => void) | null = null;
 
@@ -352,6 +390,21 @@ export class LanViewer {
 
   get streamerReady(): boolean {
     return this._ready;
+  }
+
+  /** The live peer connection, for measuring real playback statistics. */
+  get peerConnection(): RTCPeerConnection | null {
+    return this.pc;
+  }
+
+  /**
+   * Asks the host to cap the video bitrate sent to this viewer. `null` restores
+   * the host's automatic encoding. Works because the host owns the encoder —
+   * the request travels over the same signalling channel as the SDP.
+   */
+  requestQuality(kbps: number | null): void {
+    if (!this.pc) return;
+    this.send({ from: this.me, to: this.streamerId ?? undefined, type: "quality", kbps });
   }
 
   /** Opens the peer connection (ICE servers resolved on demand). */
@@ -422,6 +475,7 @@ export class LanViewer {
 
     switch (msg.type) {
       case "streamer-ready":
+        this.streamerId = msg.from;
         if (!this._ready) {
           this._ready = true;
           if (this.helloTimer) window.clearInterval(this.helloTimer);

@@ -149,14 +149,14 @@ curl -s https://<worker-host>/api/health | jq
   media peer-to-peer (check `chrome://webrtc-internals` if the connection
   fails, and add TURN if it does)
 
-Both suites run against a live API — local or deployed — and exit non-zero on
-the first failed assertion, so they can gate a release:
+Both suites run against a live API — local or deployed — and exit non-zero as
+soon as any assertion fails, so they can gate a release:
 
 ```bash
 npm --prefix worker run dev             # or point the suites at the deployed worker
 npm run test:api                        # 91 REST checks across every journey
 LSC_TEST_ADMIN_TOKEN=<operator jwt> npm run test:api   # + the operator console (104)
-npm run test:realtime                   # chat + signalling over WebSockets
+npm run test:realtime                   # 13 realtime checks: chat + signalling
 npm run test:api -- https://<worker-host>      # same suite against production
 npm run typecheck                       # SPA
 npm --prefix worker run typecheck       # worker

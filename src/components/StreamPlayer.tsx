@@ -136,28 +136,61 @@ export default function StreamPlayer({
   }, [autoPlay, status, toast]);
   
   useEffect(() => {
-    if (showStats && videoRef.current && status === 'live') {
-      // In a real app, we would get these from WebRTC stats API
-      const statsInterval = setInterval(() => {
-        // Simulate bandwidth fluctuation
-        setBandwidth(Math.floor(Math.random() * 3000) + 1500); // 1.5-4.5 Mbps
-        setResolution(stream?.qualityOptions?.[0]?.resolution.width + 'x' + 
-                     stream?.qualityOptions?.[0]?.resolution.height || '1280x720');
-        setFrameRate(30);
-        
-        if (videoRef.current) {
-          const buffered = videoRef.current.buffered;
-          if (buffered.length > 0) {
-            const bufferEnd = buffered.end(buffered.length - 1);
-            const bufferSize = bufferEnd - videoRef.current.currentTime;
-            setBufferHealth(bufferSize);
-          }
+    if (!showStats || status !== 'live') return;
+
+    let previousBytes = 0;
+    let previousFrames = 0;
+    let previousStamp = 0;
+
+    const sample = async () => {
+      const el = videoRef.current;
+      const pc = lanViewerRef.current?.peerConnection;
+      const stamp = performance.now();
+
+      // Peer-to-peer: the browser reports what is actually arriving.
+      if (pc && pc.connectionState === 'connected') {
+        try {
+          const report = await pc.getStats();
+          report.forEach((entry: RTCStats & { kind?: string; bytesReceived?: number; framesPerSecond?: number; frameWidth?: number; frameHeight?: number }) => {
+            if (entry.type !== 'inbound-rtp' || entry.kind === 'audio') return;
+            if (entry.bytesReceived !== undefined) {
+              if (previousBytes && stamp > previousStamp) {
+                setBandwidth(Math.round(((entry.bytesReceived - previousBytes) * 8) / (stamp - previousStamp)));
+              }
+              previousBytes = entry.bytesReceived;
+            }
+            if (entry.frameWidth && entry.frameHeight) setResolution(`${entry.frameWidth}x${entry.frameHeight}`);
+            if (entry.framesPerSecond) setFrameRate(Math.round(entry.framesPerSecond));
+          });
+          previousStamp = stamp;
+        } catch {
+          /* stats unavailable — fall through to element measurements */
         }
-      }, 2000);
-      
-      return () => clearInterval(statsInterval);
-    }
-  }, [showStats, status, stream]);
+      }
+
+      if (!el) return;
+
+      // Whatever the transport, the element knows its own dimensions.
+      if (el.videoWidth && el.videoHeight) setResolution(`${el.videoWidth}x${el.videoHeight}`);
+
+      // Frame cadence from the playback quality counters.
+      const quality = el.getVideoPlaybackQuality?.();
+      if (quality) {
+        if (previousFrames && stamp > previousStamp) {
+          setFrameRate(Math.round(((quality.totalVideoFrames - previousFrames) * 1000) / (stamp - previousStamp)));
+        }
+        previousFrames = quality.totalVideoFrames;
+      }
+
+      if (el.buffered.length > 0) {
+        setBufferHealth(Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime));
+      }
+    };
+
+    void sample();
+    const statsInterval = window.setInterval(() => void sample(), 2000);
+    return () => window.clearInterval(statsInterval);
+  }, [showStats, status]);
   
   const togglePlay = () => {
     if (videoRef.current) {
@@ -192,15 +225,40 @@ export default function StreamPlayer({
     }
   };
   
+  /**
+   * Quality choices are expressed as a bitrate ceiling for the host's encoder.
+   * Only peer-to-peer streams can honour them: there is one encoder (the
+   * host's) and we can ask it to cap what it sends us.
+   */
+  const QUALITY_BITRATES: Record<string, number | null> = {
+    auto: null,
+    '1080p': 6000,
+    '720p': 2500,
+    '480p': 1200,
+    '360p': 600,
+  };
+
   const changeQuality = (quality: string) => {
     setQualityOption(quality);
+
+    if (!isLan) {
+      toast({
+        title: "Quality is set by the source",
+        description: "This stream is delivered as a single rendition, so the quality menu only applies to peer-to-peer streams.",
+        variant: "default",
+      });
+      return;
+    }
+
+    const kbps = QUALITY_BITRATES[quality] ?? null;
+    lanViewerRef.current?.requestQuality(kbps);
     toast({
-      title: "Quality changed",
-      description: `Stream quality set to ${quality}`,
-      variant: "default"
+      title: kbps ? `Requested ${quality}` : "Requested automatic quality",
+      description: kbps
+        ? `The host will cap this stream at ${(kbps / 1000).toFixed(1)} Mbps when your connection allows.`
+        : "The host will choose the bitrate for your connection.",
+      variant: "default",
     });
-    
-    // In a real app, we would switch video sources or call adaptive bitrate APIs
   };
   
   const toggleFullscreen = () => {
@@ -469,23 +527,18 @@ export default function StreamPlayer({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Stream Quality</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => changeQuality('auto')}>
-                    Auto {qualityOption === 'auto' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('1080p')}>
-                    1080p {qualityOption === '1080p' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('720p')}>
-                    720p {qualityOption === '720p' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('480p')}>
-                    480p {qualityOption === '480p' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('360p')}>
-                    360p {qualityOption === '360p' && '✓'}
-                  </DropdownMenuItem>
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                    Quality {isLan ? '(asked of the host)' : '(peer-to-peer only)'}
+                  </DropdownMenuLabel>
+                  {['auto', '1080p', '720p', '480p', '360p'].map((option) => (
+                    <DropdownMenuItem
+                      key={option}
+                      disabled={!isLan}
+                      onClick={() => changeQuality(option)}
+                    >
+                      {option === 'auto' ? 'Auto' : option} {qualityOption === option && '✓'}
+                    </DropdownMenuItem>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenu>
               
@@ -510,9 +563,13 @@ export default function StreamPlayer({
             <span>{bandwidth ? `${(bandwidth / 1000).toFixed(1)} Mbps` : '-- Mbps'}</span>
           </div>
           <div className="flex gap-2 text-white/70">
-            <span>{resolution || '1280x720'}</span>
-            <span>{frameRate || 30}fps</span>
+            <span>{resolution ?? '—'}</span>
+            <span>{frameRate ? `${frameRate}fps` : '— fps'}</span>
+            {bufferHealth !== null && <span>{bufferHealth.toFixed(1)}s buffer</span>}
           </div>
+          {isLan && (
+            <div className="mt-1 text-white/50">{lanState === 'connected' ? `p2p · ${qualityOption}` : lanState}</div>
+          )}
         </div>
       )}
     </div>

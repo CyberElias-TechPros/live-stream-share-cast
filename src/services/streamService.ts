@@ -161,20 +161,40 @@ class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
     this.emit('activeStreamChanged', stream);
   }
   
+  /**
+   * Picks the best container/codec the browser supports for the codec chosen
+   * in the streamer's settings (H264 or VP9), so the Settings panel actually
+   * decides what the file looks like.
+   */
+  private recordingMimeType(): string {
+    const preference =
+      this.settings.streaming.codec === 'H264'
+        ? ['video/webm;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+        : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm;codecs=h264', 'video/webm'];
+    return preference.find((type) => MediaRecorder.isTypeSupported(type)) ?? 'video/webm';
+  }
+
   startRecording(saveLocally: boolean): void {
     try {
       if (!this.currentMediaStream) {
         throw new Error('No active media stream to record');
       }
-      
-      if (!MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+
+      const mimeType = this.recordingMimeType();
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
         throw new Error('Recording not supported in this browser');
       }
-      
+
+      // Bitrate and key-frame cadence come straight from the stream settings.
+      const options: MediaRecorderOptions & { videoKeyFrameIntervalDuration?: number } = {
+        mimeType,
+        videoBitsPerSecond: this.settings.streaming.bitrate,
+        audioBitsPerSecond: 128_000,
+        videoKeyFrameIntervalDuration: this.settings.streaming.keyFrameInterval * 1000,
+      };
+
       this.recordedChunks = [];
-      this.mediaRecorder = new MediaRecorder(this.currentMediaStream, {
-        mimeType: 'video/webm;codecs=vp9'
-      });
+      this.mediaRecorder = new MediaRecorder(this.currentMediaStream, options);
       
       this.mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {

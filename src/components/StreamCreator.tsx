@@ -182,9 +182,18 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
         liveStreamService.updateStreamViewCount(currentStream.id, n).catch(() => {});
       }
     };
+    // Viewers can ask for a lower bitrate; tell the host what changed and why.
+    streamer.onQualityHint = (_viewer, kbps) => {
+      toast({
+        title: kbps ? `A viewer asked for ${(kbps / 1000).toFixed(1)} Mbps` : "A viewer switched to automatic quality",
+        description: kbps
+          ? "Their video is now capped at that bitrate — your own preview is unaffected."
+          : "Their video is back to whatever their connection supports.",
+      });
+    };
     streamer.start();
     lanStreamerRef.current = streamer;
-  }, [currentStream]);
+  }, [currentStream, toast]);
 
   const stopLan = useCallback(() => {
     lanStreamerRef.current?.stop();

@@ -54,6 +54,28 @@ async function call(method, path, { token, body, headers = {}, raw = false } = {
   return { status: response.status, body: json, headers: response.headers };
 }
 
+async function postForm(path, form, token) {
+  const response = await fetch(`${API}${path}`, {
+    method: 'POST',
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = { _raw: text.slice(0, 200) };
+  }
+  return { status: response.status, body: json };
+}
+
+/** 1x1 transparent PNG — enough for the image-type and ownership checks. */
+const PNG_BYTES = Uint8Array.from(
+  atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='),
+  (char) => char.charCodeAt(0),
+);
+
 async function main() {
   /* ------------------------------- platform -------------------------------- */
 
@@ -208,6 +230,23 @@ async function main() {
       dressed.body?.user?.donationUrl === 'https://buymeacoffee.com/example' &&
       (dressed.body?.user?.socialLinks ?? []).length > 0,
   );
+
+  const avatarForm = new FormData();
+  avatarForm.append('file', new Blob([PNG_BYTES], { type: 'image/png' }), 'avatar.png');
+  const avatar = await postForm('/users/me/avatar', avatarForm, streamerToken);
+  check(
+    'POST /users/me/avatar stores the picture and returns its URL',
+    avatar.status === 200 && typeof avatar.body?.url === 'string' && avatar.body.url.includes('/media/avatars/'),
+    JSON.stringify(avatar.body).slice(0, 100),
+  );
+
+  const avatarServed = await fetch(`${BASE}${avatar.body?.url ?? '/api/definitely-missing'}`);
+  check('the uploaded avatar is served back', avatarServed.status === 200 && avatarServed.headers.get('content-type')?.startsWith('image/'));
+
+  const badAvatar = new FormData();
+  badAvatar.append('file', new Blob(['not an image'], { type: 'text/plain' }), 'notes.txt');
+  const rejectedAvatar = await postForm('/users/me/avatar', badAvatar, streamerToken);
+  check('non-image avatars are rejected', rejectedAvatar.status === 400, String(rejectedAvatar.status));
 
   const insecureDonation = await call('PATCH', '/users/me', {
     token: streamerToken,

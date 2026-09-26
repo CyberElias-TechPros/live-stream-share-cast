@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { AvatarUploadButton } from "@/components/AvatarUploadButton";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -74,7 +75,7 @@ const streamingSettingsSchema = z.object({
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("profile");
-  const { user, isAuthenticated, updateProfile, updateStreamerStatus, updateUserPreferences } = useAuth();
+  const { user, isAuthenticated, updateProfile, updateStreamerStatus, updateUserPreferences, refreshUser } = useAuth();
   const navigate = useNavigate();
   
   useEffect(() => {
@@ -323,10 +324,12 @@ export default function Settings() {
                           </Avatar>
                           
                           <div>
-                            <Button variant="outline">
-                              <UploadCloud className="mr-2 h-4 w-4" />
-                              Change Avatar
-                            </Button>
+                            <AvatarUploadButton
+                              onUploaded={async (url) => {
+                                await updateProfile({ avatar: url });
+                                await refreshUser();
+                              }}
+                            />
                           </div>
                         </div>
                         

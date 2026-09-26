@@ -39,6 +39,7 @@ import { Stream, SocialLink, User } from "@/types";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
+import { AvatarUploadButton } from "@/components/AvatarUploadButton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { profileService } from "@/services/profileService";
 import { analyticsService } from "@/services/analyticsService";
@@ -50,7 +51,7 @@ export default function Profile() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedProfile, setEditedProfile] = useState<Partial<User>>({});
   
-  const { user, isAuthenticated, updateProfile } = useAuth();
+  const { user, isAuthenticated, updateProfile, refreshUser } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -301,9 +302,14 @@ export default function Profile() {
                     <AvatarImage src={profile.avatar} alt={profile.displayName || profile.username} />
                     <AvatarFallback className="bg-signature text-white text-2xl font-bold">{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
                   </Avatar>
-                  <Button variant="link" className="text-xs mt-2">
-                    Change Avatar
-                  </Button>
+                  <AvatarUploadButton
+                    variant="link"
+                    className="mt-2 h-auto p-0 text-xs"
+                    onUploaded={async () => {
+                      await refreshUser();
+                      await queryClient.invalidateQueries({ queryKey: ["profile", username] });
+                    }}
+                  />
                 </div>
               ) : (
                 <Avatar className="w-24 h-24 ring-2 ring-[hsl(var(--accent-mid)_/_0.5)] ring-offset-4 ring-offset-background">

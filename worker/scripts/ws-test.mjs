@@ -15,6 +15,20 @@ const username = `wstest${suffix}`;
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Waits for a condition instead of guessing a fixed delay — the first run after
+ * a worker start is noticeably slower, which used to fail the suite.
+ */
+async function waitFor(predicate, { timeout = 4000, interval = 150 } = {}) {
+  const deadline = Date.now() + timeout;
+  let result = await predicate();
+  while (!result && Date.now() < deadline) {
+    await wait(interval);
+    result = await predicate();
+  }
+  return Boolean(result);
+}
+
 function socket(path, label) {
   const ws = new WebSocket(`${WS}${path}`);
   const inbox = [];
@@ -69,11 +83,11 @@ async function main() {
   console.log('3) anonymous viewer connects');
   const viewer = socket(`/api/ws/chat/${streamId}`, 'viewer');
   await viewer.open();
-  await wait(300);
+  await waitFor(() => host.has('presence', (m) => m.viewers >= 1));
 
   console.log('4) host sends a chat message over the socket');
   host.send({ type: 'chat', message: 'welcome to the stream' });
-  await wait(400);
+  await waitFor(() => viewer.has('chat', (m) => m.message?.message === 'welcome to the stream'));
 
   console.log('5) viewer (anonymous) tries to chat — must be rejected');
   viewer.send({ type: 'chat', message: 'hi' });
@@ -105,9 +119,17 @@ async function main() {
   hostSignal.send({ type: 'answer', to: 'viewer-1', sdp: { type: 'answer', sdp: 'FAKE_SDP' } });
   await wait(300);
 
+  // The player's quality menu asks the host to cap the bitrate it sends that
+  // viewer; the request must survive the signalling relay intact.
+  viewerSignal.send({ type: 'quality', to: 'host-1', kbps: 1200 });
+  await wait(300);
+
   console.log('8) host disconnects — stream should go offline');
   host.close();
-  await wait(800);
+  await waitFor(async () => {
+    const state = await fetch(`${API}/streams/${streamId}`).then((r) => r.json());
+    return state?.stream?.isLive === false;
+  }, { timeout: 5000 });
   const after = await fetch(`${API}/streams/${streamId}`).then((r) => r.json());
   console.log(`   stream isLive=${after.stream.isLive} hostConnected=${after.stream.hostConnected}`);
 
@@ -128,6 +150,8 @@ async function main() {
     ['signalling welcome delivered', hostSignal.has('welcome') && viewerSignal.has('welcome')],
     ['offer relayed to host', hostSignal.has('offer', (m) => m.to === 'host-1')],
     ['answer relayed to viewer', viewerSignal.has('answer', (m) => m.to === 'viewer-1')],
+    ['quality hint relayed to the host', hostSignal.has('quality', (m) => m.kbps === 1200)],
+    ['the relay stamps the real sender id', hostSignal.inbox.some((m) => m.type === 'quality' && m.from === 'viewer-1')],
     ['stream offline after host left', after.stream.isLive === false],
   ];
 
