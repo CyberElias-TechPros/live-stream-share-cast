@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,9 +36,14 @@ export default function Signup() {
   const navigate = useNavigate();
   const { isAuthenticated, signup, isLoading } = useAuth();
 
+  // Set the moment the form is submitted: the auth context routes new accounts
+  // (to /verify-email when a confirmation mail goes out), so the
+  // "already signed in" redirect must not fight it.
+  const submittingRef = useRef(false);
+
   // Redirect if already authenticated
   useEffect(() => {
-    if (isAuthenticated && !isLoading) {
+    if (isAuthenticated && !isLoading && !submittingRef.current) {
       navigate("/stream", { replace: true });
     }
   }, [isAuthenticated, isLoading, navigate]);
@@ -96,10 +101,12 @@ export default function Signup() {
       }
 
       setIsSubmitting(true);
+      submittingRef.current = true;
       await signup(sanitizedUsername, sanitizedEmail, password);
       // The auth context will handle navigation and toast on success
     } catch (error: any) {
       console.error("Signup error:", error);
+      submittingRef.current = false;
     } finally {
       setIsSubmitting(false);
     }

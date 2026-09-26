@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { formatDistanceToNow } from 'date-fns';
-import { AlertTriangle, Copy, Download, KeyRound, Laptop, LogOut, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, BadgeCheck, Copy, Download, KeyRound, Laptop, LogOut, MailWarning, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -47,6 +48,7 @@ export default function SecurityPanel() {
   const [apiTokensEnabled, setApiTokensEnabled] = useState(true);
   const [deletionEnabled, setDeletionEnabled] = useState(true);
   const [exportEnabled, setExportEnabled] = useState(true);
+  const [resending, setResending] = useState(false);
 
   useEffect(() => {
     void accountService.sessions().then(setSessions);
@@ -109,6 +111,17 @@ export default function SecurityPanel() {
     void accountService.sessions().then(setSessions);
   };
 
+  const resendVerification = async () => {
+    setResending(true);
+    const ok = await accountService.resendVerification();
+    setResending(false);
+    toast(
+      ok
+        ? { title: 'Verification email sent', description: 'Check your inbox — the link lasts 24 hours.' }
+        : { title: 'Could not send the email', description: 'Try again in a few minutes.', variant: 'destructive' },
+    );
+  };
+
   const deleteAccount = async () => {
     setBusy(true);
     const ok = await accountService.deleteAccount(deletePassword);
@@ -125,6 +138,28 @@ export default function SecurityPanel() {
 
   return (
     <div className="space-y-6">
+      {user && user.emailVerified === false && (
+        <Alert>
+          <MailWarning className="h-4 w-4" />
+          <AlertTitle>Verify your email address</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>
+              We sent a confirmation link to{' '}
+              <span className="font-medium text-foreground">{user.email}</span>. Verifying keeps your account recoverable and
+              unlocks notification emails.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="glass" onClick={() => void resendVerification()} disabled={resending}>
+                {resending ? 'Sending…' : 'Resend link'}
+              </Button>
+              <Button size="sm" variant="ghost" asChild>
+                <Link to={`/verify-email?email=${encodeURIComponent(user.email ?? '')}`}>Open the verification screen</Link>
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

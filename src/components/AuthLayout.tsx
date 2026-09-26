@@ -5,8 +5,8 @@ import Atmosphere from "./Atmosphere";
 import Reveal from "./Reveal";
 
 interface AuthLayoutProps {
-  title: string;
-  subtitle: string;
+  title: ReactNode;
+  subtitle: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
 }

@@ -19,7 +19,7 @@ import type { AppVariables, Env } from '../env';
 import { requireAuth } from '../lib/auth';
 import { badRequest, notFound, readJson, forbidden, tooManyRequests } from '../lib/http';
 import { validateExternalUrl } from '../lib/security';
-import { WEBHOOK_EVENTS, dispatchWebhook, webhookSecret, type WebhookEvent } from '../lib/webhook';
+import { WEBHOOK_EVENTS, dispatchWebhook, testWebhookEndpoint, webhookSecret, type WebhookEvent } from '../lib/webhook';
 import { featureConfig } from '../lib/config';
 import { recordAudit } from '../lib/audit';
 import { uuid } from '../lib/ids';
@@ -147,12 +147,10 @@ integrationRoutes.post('/webhooks/:id/test', authGuard, rateLimitGuard('webhook-
     .first<{ id: string }>();
   if (!endpoint) throw notFound('Webhook not found');
 
-  // Dispatch bypasses the subscription filter by going through the normal path
-  // for a synthetic event the endpoint is guaranteed to receive.
-  await c.env.DB.prepare(`UPDATE webhook_endpoints SET events = ? WHERE id = ?`).bind(JSON.stringify([]), endpoint.id).run();
-  await dispatchWebhook(c.env, auth.id, 'moderation.report', { test: true, message: 'Test delivery from your dashboard' });
-
-  return c.json({ success: true });
+  // Delivers a single synthetic event to this endpoint only — the subscription
+  // list is left untouched and the receiver's status code comes back to the UI.
+  const result = await testWebhookEndpoint(c.env, endpoint.id);
+  return c.json({ success: result.delivered, ...result });
 });
 
 integrationRoutes.delete('/webhooks/:id', authGuard, async (c) => {

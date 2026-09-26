@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +37,7 @@ import ErrorBoundary from "./ErrorBoundary";
 import SoundToggle from "./SoundToggle";
 import AccentSwitcher from "./AccentSwitcher";
 import { sanitizeInput } from "@/utils/validationUtils";
+import { searchService, type Suggestion } from "@/services/searchService";
 import { initials } from "@/utils/design";
 import { useUnreadNotifications } from "@/hooks/useNotifications";
 
@@ -56,9 +57,123 @@ function Logo({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/**
+ * Nav search with server-side typeahead (`/api/search/suggest`). Submitting
+ * runs the full search on the browse page; picking a suggestion jumps straight
+ * to the channel or stream.
+ */
+function SearchBox({ className, inputClassName, onNavigate }: { className?: string; inputClassName?: string; onNavigate?: () => void }) {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void searchService.suggest(term).then((items) => {
+        if (!cancelled) setSuggestions(items);
+      });
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  // Close the dropdown when the pointer lands anywhere else.
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, []);
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const term = sanitizeInput(query).trim();
+    if (!term) return;
+    setOpen(false);
+    setQuery("");
+    onNavigate?.();
+    navigate(`/stream?q=${encodeURIComponent(term)}`);
+  };
+
+  const pick = (suggestion: Suggestion) => {
+    setOpen(false);
+    setQuery("");
+    setSuggestions([]);
+    onNavigate?.();
+    navigate(suggestion.type === 'channel' ? `/profile/${suggestion.id}` : `/watch/${suggestion.id}`);
+  };
+
+  const visible = open && suggestions.length > 0;
+
+  return (
+    <form onSubmit={submit} className={className} role="search">
+      <div className="relative w-full" ref={containerRef}>
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <Input
+          type="search"
+          placeholder="Search live streams…"
+          className={inputClassName}
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          maxLength={100}
+          aria-autocomplete="list"
+        />
+
+        {visible && (
+          <ul className="absolute left-0 right-0 top-[calc(100%+0.4rem)] z-50 overflow-hidden rounded-2xl border border-white/10 bg-popover/95 shadow-xl backdrop-blur-xl">
+            {suggestions.map((suggestion, index) => (
+              <li key={`${suggestion.type}-${suggestion.id}-${index}`}>
+                <button
+                  type="button"
+                  onClick={() => pick(suggestion)}
+                  className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-white/[0.06]"
+                >
+                  <span className="grid h-7 w-7 shrink-0 place-items-center overflow-hidden rounded-full bg-signature-soft ring-1 ring-white/10">
+                    {suggestion.avatar ? (
+                      <img src={suggestion.avatar} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="font-mono text-[9px]">{suggestion.type === 'stream' ? '▶' : initials(suggestion.label)}</span>
+                    )}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium">{suggestion.label}</span>
+                    {suggestion.sublabel && (
+                      <span className="block truncate font-mono text-[10px] text-muted-foreground">{suggestion.sublabel}</span>
+                    )}
+                  </span>
+                  {suggestion.isLive && (
+                    <span className="shrink-0 rounded-full bg-[hsl(349_86%_58%)] px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider text-white">
+                      live
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </form>
+  );
+}
+
 export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
   const { isAuthenticated, user, logout } = useAuth();
   const { unreadCount } = useUnreadNotifications();
   const location = useLocation();
@@ -67,20 +182,6 @@ export default function Navigation() {
   const isActive = (path: string) => {
     if (path === "/") return location.pathname === "/";
     return location.pathname.startsWith(path);
-  };
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const sanitizedQuery = sanitizeInput(searchQuery);
-      if (sanitizedQuery.trim()) {
-        navigate(`/stream?q=${encodeURIComponent(sanitizedQuery.trim())}`);
-        setSearchQuery("");
-        setMobileMenuOpen(false);
-      }
-    } catch (error) {
-      console.error('Search error:', error);
-    }
   };
 
   const handleLogout = async () => {
@@ -160,19 +261,10 @@ export default function Navigation() {
             <div className="hidden lg:flex items-center gap-1">{navLinks}</div>
 
             {/* Search (desktop) */}
-            <form onSubmit={handleSearch} className="hidden xl:block flex-1 max-w-xs mx-2">
-              <div className="relative w-full">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input
-                  type="search"
-                  placeholder="Search live streams…"
-                  className="h-9 rounded-full bg-white/[0.05] border-white/10 pl-9 text-[13px] placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  maxLength={100}
-                />
-              </div>
-            </form>
+            <SearchBox
+              className="hidden xl:block flex-1 max-w-xs mx-2"
+              inputClassName="h-9 rounded-full bg-white/[0.05] border-white/10 pl-9 text-[13px] placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
+            />
 
             {/* Sound + hue */}
             <div className="hidden lg:flex items-center gap-1.5">
@@ -284,19 +376,11 @@ export default function Navigation() {
                     </Button>
                   </div>
 
-                  <form onSubmit={handleSearch} className="mb-6">
-                    <div className="relative w-full">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                      <Input
-                        type="search"
-                        placeholder="Search live streams…"
-                        className="h-11 rounded-full bg-white/[0.05] border-white/10 pl-9 text-sm"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        maxLength={100}
-                      />
-                    </div>
-                  </form>
+                  <SearchBox
+                    className="mb-6"
+                    inputClassName="h-11 rounded-full bg-white/[0.05] border-white/10 pl-9 text-sm"
+                    onNavigate={() => setMobileMenuOpen(false)}
+                  />
 
                   <div className="mb-6 flex items-center justify-between gap-3 rounded-2xl bg-white/[0.04] border border-white/8 p-3">
                     <span className="flex items-center gap-2.5">

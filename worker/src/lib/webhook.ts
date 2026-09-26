@@ -119,6 +119,56 @@ export async function dispatchWebhook(
   }
 }
 
+export interface TestDeliveryResult {
+  delivered: boolean;
+  status: number;
+  error?: string;
+}
+
+/**
+ * Sends one synthetic event to a single endpoint — used by the "Test" button
+ * in the creator dashboard. Unlike `dispatchWebhook` this one never mutates the
+ * endpoint's subscription list and reports the outcome to the caller.
+ */
+export async function testWebhookEndpoint(env: Env, endpointId: string): Promise<TestDeliveryResult> {
+  const endpoint = await env.DB.prepare(`SELECT id, url, secret, events, failure_count FROM webhook_endpoints WHERE id = ?`)
+    .bind(endpointId)
+    .first<EndpointRow>();
+  if (!endpoint) return { delivered: false, status: 0, error: 'Endpoint not found' };
+
+  const event: WebhookEvent = 'moderation.report';
+  const body = JSON.stringify({
+    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    event,
+    occurredAt: nowIso(),
+    test: true,
+    data: { message: 'Test delivery from your dashboard' },
+  });
+
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'user-agent': 'live-stream-share-cast-webhooks/1.0',
+    'x-lsc-event': event,
+    'x-lsc-timestamp': timestamp,
+    'x-lsc-test': 'true',
+  };
+  if (endpoint.secret) headers['x-lsc-signature'] = await sign(endpoint.secret, timestamp, body);
+
+  try {
+    const response = await fetchWithTimeout(endpoint.url, { method: 'POST', headers, body }, 8_000);
+    await env.DB.prepare(`UPDATE webhook_endpoints SET last_status = ?, last_delivery_at = ?, failure_count = ? WHERE id = ?`)
+      .bind(response.status, nowIso(), response.ok ? 0 : (endpoint.failure_count ?? 0) + 1, endpoint.id)
+      .run();
+    return { delivered: response.ok, status: response.status };
+  } catch (error) {
+    await env.DB.prepare(`UPDATE webhook_endpoints SET last_status = 0, last_delivery_at = ?, failure_count = COALESCE(failure_count, 0) + 1 WHERE id = ?`)
+      .bind(nowIso(), endpoint.id)
+      .run();
+    return { delivered: false, status: 0, error: String(error) };
+  }
+}
+
 function parseEvents(value: string | null): string[] {
   if (!value) return [];
   try {

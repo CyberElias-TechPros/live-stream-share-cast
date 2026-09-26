@@ -9,6 +9,10 @@ import LiveBadge, { ViewerPill } from "@/components/LiveBadge";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { Stream } from "@/types";
 import { liveStreamService } from "@/services/liveStreamService";
+import { platformService } from "@/services/platformService";
+import { searchService } from "@/services/searchService";
+import { useAuth } from "@/contexts/AuthContext";
+import type { WatchHistoryEntry, User } from "@/types";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sceneBackground, SCENE_VIGNETTE, initials } from "@/utils/design";
@@ -33,6 +37,80 @@ function StreamScene({ seed, title, letter }: { seed: string; title: string; let
       <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/80 via-black/25 to-transparent" />
       <span className="sr-only">{title}</span>
     </>
+  );
+}
+
+function formatWatched(seconds: number) {
+  if (!seconds || seconds < 60) return "just started";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min watched`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hr watched`;
+}
+
+/**
+ * "Continue watching" — built from the viewer's own watch sessions, so it is
+ * only rendered for signed-in users who actually watched something.
+ */
+function ContinueWatching() {
+  const { isAuthenticated } = useAuth();
+  const { data: history = [] } = useQuery({
+    queryKey: ["watch-history"],
+    queryFn: () => platformService.watchHistory(12),
+    enabled: isAuthenticated,
+    staleTime: 60_000,
+  });
+
+  if (!isAuthenticated || history.length === 0) return null;
+
+  return (
+    <section className="container pb-12">
+      <Reveal>
+        <div className="mb-4 flex items-end justify-between gap-4">
+          <div>
+            <p className="overline mb-2">Pick up where you left off</p>
+            <h2 className="font-display text-2xl font-bold tracking-tight">Continue watching</h2>
+          </div>
+          <Link to="/library" className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+            Library
+          </Link>
+        </div>
+
+        <div className="-mx-1 flex snap-x gap-4 overflow-x-auto px-1 pb-2">
+          {history.map((entry: WatchHistoryEntry) => {
+            const to = entry.recordingId ? `/library/${entry.recordingId}` : entry.streamId ? `/watch/${entry.streamId}` : null;
+            if (!to) return null;
+            return (
+              <Link
+                key={entry.sessionId}
+                to={to}
+                className="group w-56 shrink-0 snap-start overflow-hidden rounded-2xl border border-white/10 bg-card/60 transition-colors hover:border-white/25"
+              >
+                <div className="relative aspect-video overflow-hidden">
+                  {entry.thumbnail ? (
+                    <img src={entry.thumbnail} alt="" className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                  ) : (
+                    <div
+                      className="h-full w-full"
+                      style={{ background: sceneBackground(entry.streamId ?? entry.recordingId ?? entry.title) }}
+                    />
+                  )}
+                  <span className="absolute inset-0 grid place-items-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
+                    <Play className="h-6 w-6 text-white" />
+                  </span>
+                </div>
+                <div className="p-3">
+                  <p className="truncate text-sm font-medium">{entry.title}</p>
+                  <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                    {formatWatched(entry.watchedSeconds)}
+                  </p>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </Reveal>
+    </section>
   );
 }
 
@@ -174,15 +252,32 @@ const Browse = () => {
     refetchInterval: 30000,
   });
 
+  // A `?q=` from the navigation bar runs the server-side search (it matches
+  // usernames, bios, tags, recordings and categories — not just live titles).
+  const query = (searchParams.get("q") || "").trim();
+  const serverSearch = useQuery({
+    queryKey: ["search", query],
+    queryFn: () => searchService.search(query),
+    enabled: query.length >= 2,
+    staleTime: 30_000,
+  });
+
+  const searching = query.length >= 2;
+  const results = serverSearch.data;
+
   const liveStreams = streams.filter((s) => s.isLive);
-  const filteredStreams = liveStreams.filter(
-    (stream) =>
-      stream.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (stream.description && stream.description.toLowerCase().includes(searchQuery.toLowerCase()))
-  );
+  const filteredStreams = searching
+    ? results?.streams ?? []
+    : liveStreams.filter(
+        (stream) =>
+          stream.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (stream.description && stream.description.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
 
   const featured = filteredStreams[0];
   const rest = filteredStreams.slice(1);
+  const hasNonStreamResults =
+    searching && ((results?.channels.length ?? 0) > 0 || (results?.recordings.length ?? 0) > 0 || (results?.categories.length ?? 0) > 0);
 
   return (
     <ErrorBoundary>
@@ -234,6 +329,101 @@ const Browse = () => {
               </Reveal>
             </section>
 
+            {!searching && <ContinueWatching />}
+
+            {/* Server-side search results: channels, replays and categories */}
+            {searching && hasNonStreamResults && (
+              <section className="container pb-12">
+                <Reveal>
+                  <p className="overline mb-4">
+                    Results for &ldquo;{query}&rdquo;
+                    {results && <span className="ml-2 text-muted-foreground/70">{results.total} match{results.total === 1 ? "" : "es"}</span>}
+                  </p>
+
+                  {(results?.categories.length ?? 0) > 0 && (
+                    <div className="mb-6 flex flex-wrap gap-2">
+                      {results!.categories.map((category) => (
+                        <Link
+                          key={category.slug}
+                          to={`/stream?q=${encodeURIComponent(category.name)}`}
+                          className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs transition-colors hover:border-white/25"
+                        >
+                          {category.emoji ? `${category.emoji} ` : ""}
+                          {category.name}
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+
+                  {(results?.channels.length ?? 0) > 0 && (
+                    <div className="mb-8">
+                      <h2 className="mb-3 font-display text-lg font-bold tracking-tight">Channels</h2>
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                        {results!.channels.map((channel: User) => (
+                          <Link
+                            key={channel.id}
+                            to={`/profile/${channel.username}`}
+                            className="flex items-center gap-3 rounded-2xl border border-white/8 bg-card/60 p-3 transition-colors hover:border-white/25"
+                          >
+                            <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-signature-soft ring-1 ring-white/10">
+                              {channel.avatar ? (
+                                <img src={channel.avatar} alt="" className="h-full w-full object-cover" />
+                              ) : (
+                                <span className="font-mono text-[11px] font-semibold">{initials(channel.displayName || channel.username)}</span>
+                              )}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium">{channel.displayName || channel.username}</span>
+                              <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                                @{channel.username}
+                                {typeof channel.followers === "number" ? ` · ${channel.followers} followers` : ""}
+                              </span>
+                            </span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(results?.recordings.length ?? 0) > 0 && (
+                    <div>
+                      <h2 className="mb-3 font-display text-lg font-bold tracking-tight">Replays</h2>
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                        {results!.recordings.map((recording) => (
+                          <Link
+                            key={recording.id}
+                            to={`/library/${recording.id}`}
+                            className="group overflow-hidden rounded-2xl border border-white/10 bg-card/60 transition-colors hover:border-white/25"
+                          >
+                            <div className="relative aspect-video overflow-hidden">
+                              {recording.thumbnail ? (
+                                <img
+                                  src={recording.thumbnail}
+                                  alt=""
+                                  className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                />
+                              ) : (
+                                <div className="h-full w-full" style={{ background: sceneBackground(recording.id) }} />
+                              )}
+                              <span className="absolute inset-0 grid place-items-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
+                                <Play className="h-6 w-6 text-white" />
+                              </span>
+                            </div>
+                            <div className="p-3">
+                              <p className="truncate text-sm font-medium">{recording.title}</p>
+                              <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                                {recording.displayName || `@${recording.username}`} · {recording.views} views
+                              </p>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </Reveal>
+              </section>
+            )}
+
             {/* Grid */}
             <section className="container pb-24">
               {isLoading ? (
@@ -269,11 +459,11 @@ const Browse = () => {
                         <Radio className="h-7 w-7 text-muted-foreground" />
                       </div>
                       <h2 className="font-display text-3xl font-bold tracking-tight">
-                        {searchQuery ? "Nothing on that channel." : "No one is live yet."}
+                        {searching ? "No live channel matches." : searchQuery ? "Nothing on that channel." : "No one is live yet."}
                       </h2>
                       <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-                        {searchQuery
-                          ? `No streams match “${searchQuery}”. Try another search, or be the first to broadcast it.`
+                        {searching || searchQuery
+                          ? `Nothing live matches “${searchQuery}”.${searching && results && results.total > 0 ? " The matches above are offline right now." : " Try another search, or be the first to broadcast it."}`
                           : "The airwaves are quiet. Change that — the first stream of the night gets all the attention."}
                       </p>
                       <Link to="/stream/create" className="mt-8 inline-block">

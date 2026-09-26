@@ -136,9 +136,19 @@ creator's donation link when card payments are off), `GET /tips/mine`,
 
 ## Integrations & search
 
-`GET /integrations/events`, `GET|POST /integrations/webhooks`,
-`PATCH|DELETE /integrations/webhooks/:id`, `POST /integrations/webhooks/:id/rotate`,
-`POST /integrations/webhooks/:id/test`, `GET /search?q=…`.
+`GET /integrations/events` (catalogue: `{ events: [{ event, description,
+signatureHeader }] }`), `GET /integrations/webhooks` (max 10 per account),
+`POST /integrations/webhooks` → `{ success, id, secret, url, events }` — the
+`secret` is returned **once**; `PATCH /integrations/webhooks/:id`
+(`url`→HTTPS only, `events`, `enabled`), `DELETE /integrations/webhooks/:id`,
+`POST /integrations/webhooks/:id/rotate` → `{ success, secret }`,
+`POST /integrations/webhooks/:id/test` → `{ success, delivered, status, error? }`
+(delivers one synthetic `moderation.report` event without touching the
+subscription list), `GET /search?q=…`.
+
+Deliveries are `POST`ed with `X-LSC-Event`, `X-LSC-Timestamp` and
+`X-LSC-Signature: sha256=<hex HMAC-SHA256 of `${timestamp}.${rawBody}`>`.
+Endpoints that fail 20 times in a row pause until they are re-enabled.
 
 ## Admin — `/api/admin`
 

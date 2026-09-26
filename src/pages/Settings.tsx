@@ -22,10 +22,12 @@ import {
   Moon,
   Sun,
   Laptop,
-  Lock
+  Lock,
+  Plug
 } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import SecurityPanel from "@/components/settings/SecurityPanel";
+import IntegrationsPanel from "@/components/settings/IntegrationsPanel";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { UserPreferences } from "@/types";
@@ -279,6 +281,15 @@ export default function Settings() {
               >
                 <Video className="mr-2 h-4 w-4" />
                 Streaming
+              </Button>
+
+              <Button
+                variant={activeTab === "integrations" ? "default" : "ghost"}
+                className="w-full justify-start"
+                onClick={() => setActiveTab("integrations")}
+              >
+                <Plug className="mr-2 h-4 w-4" />
+                Integrations
               </Button>
 
               <Button
@@ -774,6 +785,8 @@ export default function Settings() {
                   </form>
                 </Form>
               )}
+
+              {activeTab === "integrations" && <IntegrationsPanel />}
 
               {activeTab === "security" && <SecurityPanel />}
             </div>
