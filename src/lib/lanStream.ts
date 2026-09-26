@@ -21,6 +21,7 @@
  */
 
 import { apiSocket } from "@/integrations/api/client";
+import { platformService } from "@/services/platformService";
 
 export type LanState = "idle" | "waiting" | "ready" | "connecting" | "connected" | "failed";
 
@@ -32,11 +33,44 @@ interface SignalMsg {
   candidate?: RTCIceCandidateInit;
 }
 
-const ICE_CONFIG: RTCConfiguration = {
-  // LAN: host candidates connect directly. A public STUN is included as a
-  // harmless fallback for odd network topologies — no TURN, no relay.
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
+/**
+ * Fallback used only when `/api/config/rtc/ice` cannot be reached: host
+ * candidates still connect peers on the same network.
+ */
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+
+let cachedIceServers: RTCIceServer[] | null = null;
+let icePromise: Promise<RTCIceServer[]> | null = null;
+
+/**
+ * STUN/TURN servers for this session.
+ *
+ * TURN credentials are minted per request by the Worker (they expire), so they
+ * are cached in memory only — never persisted to storage.
+ */
+async function iceServers(): Promise<RTCIceServer[]> {
+  if (cachedIceServers) return cachedIceServers;
+  icePromise ??= platformService
+    .iceServers()
+    .then((servers) => {
+      cachedIceServers = servers.length ? servers : FALLBACK_ICE_SERVERS;
+      return cachedIceServers;
+    })
+    .catch(() => FALLBACK_ICE_SERVERS)
+    .finally(() => {
+      icePromise = null;
+    });
+  return icePromise;
+}
+
+async function iceConfiguration(): Promise<RTCConfiguration> {
+  return {
+    iceServers: await iceServers(),
+    // A relay-only fallback is used by the browser when no direct path exists.
+    iceTransportPolicy: "all",
+    bundlePolicy: "max-bundle",
+  };
+}
 
 const channelName = (streamId: string) => `lan-stream-${streamId}`;
 
@@ -215,7 +249,7 @@ export class LanStreamer {
       this.pcs.delete(from);
     }
 
-    const pc = new RTCPeerConnection(ICE_CONFIG);
+    const pc = new RTCPeerConnection(await iceConfiguration());
     this.pcs.set(from, pc);
 
     // Send all current tracks on this connection.
@@ -320,10 +354,11 @@ export class LanViewer {
     return this._ready;
   }
 
-  connect() {
+  /** Opens the peer connection (ICE servers resolved on demand). */
+  async connect(): Promise<void> {
     if (this.pc) return;
 
-    this.pc = new RTCPeerConnection(ICE_CONFIG);
+    this.pc = new RTCPeerConnection(await iceConfiguration());
 
     this.pc.addTransceiver("video", { direction: "recvonly" });
     this.pc.addTransceiver("audio", { direction: "recvonly" });
