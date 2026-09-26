@@ -213,9 +213,9 @@ userRoutes.get('/:id', optionalAuth, async (c) => {
   return c.json({
     user: publicUser(row),
     extras: {
-      websiteUrl: (row as unknown as Record<string, unknown>).website_url ?? null,
-      donationUrl: (row as unknown as Record<string, unknown>).donation_url ?? null,
-      pronouns: (row as unknown as Record<string, unknown>).pronouns ?? null,
+      websiteUrl: row.website_url ?? null,
+      donationUrl: row.donation_url ?? null,
+      pronouns: row.pronouns ?? null,
       socialLinks: parseJson<unknown[]>(row.social_links, []),
     },
     recentStreams: (links ?? []).map((item) => ({
@@ -408,11 +408,30 @@ userRoutes.delete('/:id/follow', authGuard, async (c) => {
  */
 export const profileRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-profileRoutes.get('/:username', async (c) => {
+profileRoutes.get('/:username', optionalAuth, async (c) => {
+  const viewer = c.get('authUser');
   const row = await c.env.DB.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE lower(username) = lower(?)`)
     .bind(c.req.param('username'))
     .first<UserRow>();
   if (!row) throw notFound('Profile not found');
+
+  // Same visibility rules as `GET /users/:id`: honour the owner's privacy
+  // preference and either side of a block.
+  const preferences = safeParse(row.preferences);
+  const privacy = (preferences?.privacy ?? {}) as Record<string, boolean>;
+  if (!viewer && privacy.showProfileToUnregistered === false) {
+    throw forbidden('This profile is only visible to signed-in members');
+  }
+
+  if (viewer && viewer.id !== row.id) {
+    const blocked = await c.env.DB.prepare(
+      `SELECT 1 AS ok FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`,
+    )
+      .bind(viewer.id, row.id, row.id, viewer.id)
+      .first<{ ok: number }>();
+    if (blocked) throw forbidden('This profile is not available');
+  }
+
   return c.json({ user: publicUser(row) });
 });
 

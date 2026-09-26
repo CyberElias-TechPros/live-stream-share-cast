@@ -187,6 +187,47 @@ async function main() {
     publicProfile.status === 200 && publicProfile.body?.user?.email === undefined && publicProfile.body?.user?.isAdmin === undefined,
   );
 
+  // Channel dressing: pronouns, website, donation link and social links show up
+  // on the public profile, and unsafe schemes are refused.
+  const dressing = await call('PATCH', '/users/me', {
+    token: streamerToken,
+    body: {
+      pronouns: 'they/them',
+      websiteUrl: 'https://example.com',
+      donationUrl: 'https://buymeacoffee.com/example',
+      socialLinks: [{ platform: 'twitter', url: 'https://x.com/example' }],
+    },
+  });
+  check('PATCH /users/me stores the public channel details', dressing.status === 200, String(dressing.status));
+
+  const dressed = await call('GET', `/profiles/${streamer.username}`);
+  check(
+    'the public profile exposes the channel details',
+    dressed.status === 200 &&
+      dressed.body?.user?.pronouns === 'they/them' &&
+      dressed.body?.user?.donationUrl === 'https://buymeacoffee.com/example' &&
+      (dressed.body?.user?.socialLinks ?? []).length > 0,
+  );
+
+  const insecureDonation = await call('PATCH', '/users/me', {
+    token: streamerToken,
+    body: { donationUrl: 'http://insecure.example' },
+  });
+  check('donation links must use https', insecureDonation.status === 400, String(insecureDonation.status));
+
+  const hideProfile = await call('PATCH', '/users/me/preferences', {
+    token: streamerToken,
+    body: { privacy: { showProfileToUnregistered: false } },
+  });
+  const hiddenProfile = await call('GET', `/profiles/${streamer.username}`);
+  const hiddenForMember = await call('GET', `/profiles/${streamer.username}`, { token: viewerToken });
+  check(
+    'a private profile is hidden from visitors and visible to members',
+    hideProfile.status === 200 && hiddenProfile.status === 403 && hiddenForMember.status === 200,
+    `${hiddenProfile.status}/${hiddenForMember.status}`,
+  );
+  await call('PATCH', '/users/me/preferences', { token: streamerToken, body: { privacy: { showProfileToUnregistered: true } } });
+
   /* --------------------------------- streams ------------------------------- */
 
   section('streams');

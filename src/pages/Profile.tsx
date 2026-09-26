@@ -29,10 +29,13 @@ import {
   Youtube,
   Link as LinkIcon,
   Heart,
+  Globe,
   Eye,
-  Save
+  Save,
+  Plus,
+  Trash2
 } from "lucide-react";
-import { Stream, User } from "@/types";
+import { Stream, SocialLink, User } from "@/types";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
@@ -155,6 +158,26 @@ export default function Profile() {
     const { name, value } = e.target;
     setEditedProfile(prev => ({ ...prev, [name]: value }));
   };
+
+  const socialLinks = editedProfile.socialLinks ?? [];
+
+  const updateSocialLink = (index: number, patch: Partial<SocialLink>) => {
+    setEditedProfile(prev => ({
+      ...prev,
+      socialLinks: (prev.socialLinks ?? []).map((link, position) => (position === index ? { ...link, ...patch } : link)),
+    }));
+  };
+
+  const addSocialLink = () => {
+    setEditedProfile(prev => ({ ...prev, socialLinks: [...(prev.socialLinks ?? []), { platform: "twitter", url: "" }] }));
+  };
+
+  const removeSocialLink = (index: number) => {
+    setEditedProfile(prev => ({
+      ...prev,
+      socialLinks: (prev.socialLinks ?? []).filter((_, position) => position !== index),
+    }));
+  };
   
   const handleSaveProfile = async () => {
     try {
@@ -162,7 +185,14 @@ export default function Profile() {
         throw new Error("You can only edit your own profile");
       }
       
-      await updateProfile(editedProfile);
+      const cleaned: Partial<User> = {
+        ...editedProfile,
+        ...(editedProfile.socialLinks
+          ? { socialLinks: editedProfile.socialLinks.filter((link: SocialLink) => link.url.trim().length > 0) }
+          : {}),
+      };
+
+      await updateProfile(cleaned);
       setIsEditing(false);
       
       // Refresh profile data
@@ -312,6 +342,88 @@ export default function Profile() {
                       />
                     </div>
                     
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="pronouns">
+                          Pronouns
+                        </label>
+                        <Input
+                          id="pronouns"
+                          name="pronouns"
+                          value={editedProfile.pronouns || ""}
+                          onChange={handleInputChange}
+                          placeholder="they/them"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="websiteUrl">
+                          Website
+                        </label>
+                        <Input
+                          id="websiteUrl"
+                          name="websiteUrl"
+                          value={editedProfile.websiteUrl || ""}
+                          onChange={handleInputChange}
+                          placeholder="https://yoursite.com"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium mb-1" htmlFor="donationUrl">
+                          Donation link
+                        </label>
+                        <Input
+                          id="donationUrl"
+                          name="donationUrl"
+                          value={editedProfile.donationUrl || ""}
+                          onChange={handleInputChange}
+                          placeholder="https://… (https only)"
+                        />
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Shown on your channel so viewers can support you directly.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Social Links</label>
+                      <div className="space-y-2">
+                        {socialLinks.map((link, index) => (
+                          <div key={index} className="flex flex-col gap-2 sm:flex-row">
+                            <select
+                              className="h-10 rounded-md border border-input bg-background px-3 text-sm sm:w-40"
+                              value={link.platform}
+                              aria-label="Platform"
+                              onChange={(event) => updateSocialLink(index, { platform: event.target.value })}
+                            >
+                              {["twitter", "instagram", "youtube", "tiktok", "website"].map((platform) => (
+                                <option key={platform} value={platform}>
+                                  {platform[0].toUpperCase() + platform.slice(1)}
+                                </option>
+                              ))}
+                            </select>
+                            <Input
+                              value={link.url}
+                              aria-label={`${link.platform} URL`}
+                              placeholder="https://…"
+                              onChange={(event) => updateSocialLink(index, { url: event.target.value })}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              aria-label="Remove link"
+                              onClick={() => removeSocialLink(index)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                      <Button type="button" variant="glass" size="sm" className="mt-2" onClick={addSocialLink}>
+                        <Plus className="mr-1.5 h-3.5 w-3.5" /> Add link
+                      </Button>
+                    </div>
+
                     <div className="flex gap-3 mt-4">
                       <Button onClick={handleSaveProfile}>
                         <Save className="mr-2 h-4 w-4" />
@@ -332,6 +444,7 @@ export default function Profile() {
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <UserRound className="h-4 w-4" />
                           <span>@{profile.username}</span>
+                          {profile.pronouns && <span className="text-xs">({profile.pronouns})</span>}
                         </div>
                       </div>
                       
@@ -556,6 +669,33 @@ export default function Profile() {
                   </div>
                 </CardContent>
                 <CardFooter className="border-t pt-6">
+                  {(profile.websiteUrl || profile.donationUrl) && (
+                    <div className="mb-4 flex flex-wrap gap-4">
+                      {profile.websiteUrl && (
+                        <a
+                          href={profile.websiteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <Globe className="h-4 w-4" />
+                          <span>Website</span>
+                        </a>
+                      )}
+                      {profile.donationUrl && (
+                        <a
+                          href={profile.donationUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <Heart className="h-4 w-4" />
+                          <span>Support this channel</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
+
                   {profile.socialLinks && profile.socialLinks.length > 0 ? (
                     <div className="w-full">
                       <h3 className="text-sm font-medium mb-3">Social Links</h3>

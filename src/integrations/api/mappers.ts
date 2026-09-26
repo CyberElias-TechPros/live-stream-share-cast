@@ -98,6 +98,9 @@ export function toUser(dto: any): User {
     updatedAt: toDate(dto.updatedAt),
     lastSeen: toDate(dto.lastSeen),
     socialLinks: (dto.socialLinks ?? undefined) as SocialLink[] | undefined,
+    websiteUrl: dto.websiteUrl ?? null,
+    donationUrl: dto.donationUrl ?? null,
+    pronouns: dto.pronouns ?? null,
     preferences: (dto.preferences ?? defaultPreferences()) as UserPreferences,
   };
 }

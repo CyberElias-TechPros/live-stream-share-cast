@@ -54,6 +54,10 @@ export interface User {
   updatedAt?: Date;
   lastSeen?: Date;
   socialLinks?: SocialLink[];
+  /** Public profile details the owner can fill in. */
+  websiteUrl?: string | null;
+  donationUrl?: string | null;
+  pronouns?: string | null;
   preferences?: UserPreferences;
 }
 
