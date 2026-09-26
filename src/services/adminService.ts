@@ -65,6 +65,67 @@ export interface AdminBan {
   createdAt: string;
 }
 
+export interface AdminStream {
+  id: string;
+  title: string;
+  isLive: boolean;
+  viewerCount: number;
+  category?: string | null;
+  createdAt: string;
+  startedAt?: string | null;
+  userId: string;
+  username: string;
+  userBanned: boolean;
+}
+
+export interface AdminCategory {
+  slug: string;
+  name: string;
+  description?: string | null;
+  emoji?: string | null;
+  color?: string | null;
+  sortOrder?: number | null;
+  isActive: boolean;
+}
+
+export interface AdminTip {
+  id: string;
+  streamerUsername?: string | null;
+  tipperUsername?: string | null;
+  amountCents: number;
+  currency: string;
+  message?: string | null;
+  status: string;
+  provider?: string | null;
+  createdAt: string;
+  paidAt?: string | null;
+}
+
+export interface AdminPayments {
+  tips: AdminTip[];
+  totals: { paidCents: number; paidCount: number; pendingCount: number };
+}
+
+export interface AdminEmailRow {
+  id: string;
+  to: string;
+  template: string;
+  subject: string;
+  status: string;
+  attempts: number;
+  lastError?: string | null;
+  provider?: string | null;
+  scheduledAt?: string | null;
+  sentAt?: string | null;
+  createdAt: string;
+}
+
+export interface AdminOutbox {
+  emails: AdminEmailRow[];
+  counts: Record<string, number>;
+  provider: string;
+}
+
 export const adminService = {
   async overview(): Promise<AdminOverview | null> {
     try {
@@ -183,6 +244,104 @@ export const adminService = {
       return data.entries ?? [];
     } catch {
       return [];
+    }
+  },
+
+  /* ------------------------------- streams ------------------------------- */
+
+  async streams(options: { live?: boolean; limit?: number } = {}): Promise<AdminStream[]> {
+    try {
+      const data = await api.get<{ streams: any[] }>('/admin/streams', {
+        query: { live: options.live === undefined ? undefined : String(options.live), limit: options.limit ?? 50 },
+      });
+      return data.streams ?? [];
+    } catch {
+      return [];
+    }
+  },
+
+  async endStream(id: string, reason?: string): Promise<boolean> {
+    try {
+      await api.post(`/admin/streams/${id}/end`, { reason });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async deleteStream(id: string): Promise<boolean> {
+    try {
+      await api.delete(`/admin/streams/${id}`);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  /* ------------------------------ categories ------------------------------ */
+
+  async categories(): Promise<AdminCategory[]> {
+    try {
+      const data = await api.get<{ categories: any[] }>('/admin/categories');
+      return (data.categories ?? []).map((row) => ({
+        slug: row.slug,
+        name: row.name,
+        description: row.description ?? null,
+        emoji: row.emoji ?? null,
+        color: row.color ?? null,
+        sortOrder: row.sort_order ?? row.sortOrder ?? null,
+        isActive: row.is_active === undefined ? !!row.isActive : !!row.is_active,
+      }));
+    } catch {
+      return [];
+    }
+  },
+
+  async createCategory(input: { slug: string; name: string; description?: string; emoji?: string; sortOrder?: number }): Promise<boolean> {
+    try {
+      await api.post('/admin/categories', input);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  async updateCategory(slug: string, updates: { name?: string; description?: string | null; emoji?: string | null; sortOrder?: number; isActive?: boolean }): Promise<boolean> {
+    try {
+      await api.patch(`/admin/categories/${slug}`, updates);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
+  /* -------------------------------- payments ------------------------------ */
+
+  async payments(limit = 50): Promise<AdminPayments | null> {
+    try {
+      return await api.get<AdminPayments>('/admin/payments', { query: { limit } });
+    } catch {
+      return null;
+    }
+  },
+
+  /* ---------------------------------- email ------------------------------- */
+
+  async outbox(status = 'all', limit = 50): Promise<AdminOutbox | null> {
+    try {
+      return await api.get<AdminOutbox>('/admin/email', { query: { status, limit } });
+    } catch {
+      return null;
+    }
+  },
+
+  /** Queues a test message and reports whether the provider accepted it. */
+  async testEmail(to?: string): Promise<{ ok: boolean; provider?: string; error?: string }> {
+    try {
+      const data = await api.post<{ success: boolean; provider?: string }>('/admin/email/test', { to });
+      return { ok: !!data.success, provider: data.provider };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : 'Request failed' };
     }
   },
 

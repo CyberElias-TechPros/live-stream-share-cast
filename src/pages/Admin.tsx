@@ -18,7 +18,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { adminService, type AdminBan, type AdminError, type AdminOverview, type AdminReport, type AdminUser } from '@/services/adminService';
+import { adminService, type AdminBan, type AdminError, type AdminOutbox, type AdminOverview, type AdminReport, type AdminUser } from '@/services/adminService';
+import StreamsPanel from '@/components/admin/StreamsPanel';
+import CatalogPanel from '@/components/admin/CatalogPanel';
 
 export default function Admin() {
   const { user, isAuthenticated } = useAuth();
@@ -32,17 +34,21 @@ export default function Admin() {
   const [audit, setAudit] = useState<Array<{ id: string; action: string; targetType?: string | null; createdAt: string }>>([]);
   const [userSearch, setUserSearch] = useState('');
   const [people, setPeople] = useState<AdminUser[]>([]);
+  const [outbox, setOutbox] = useState<AdminOutbox | null>(null);
+  const [testEmailTo, setTestEmailTo] = useState('');
+  const [sendingTest, setSendingTest] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [overviewData, reportList, banList, errorList, flagList, auditList] = await Promise.all([
+    const [overviewData, reportList, banList, errorList, flagList, auditList, outboxData] = await Promise.all([
       adminService.overview(),
       adminService.reports('open'),
       adminService.bans(),
       adminService.errors(25),
       adminService.flags(),
       adminService.audit(25),
+      adminService.outbox('all', 25),
     ]);
     setOverview(overviewData);
     setReports(reportList);
@@ -50,6 +56,7 @@ export default function Admin() {
     setErrors(errorList);
     setFlags(flagList);
     setAudit(auditList);
+    setOutbox(outboxData);
     setLoading(false);
   }, []);
 
@@ -121,13 +128,23 @@ export default function Admin() {
               </div>
 
               <Tabs defaultValue="moderation" className="space-y-6">
-                <TabsList className="grid w-full grid-cols-3 sm:w-[640px] sm:grid-cols-5">
+                <TabsList className="grid w-full grid-cols-4 sm:w-[820px] sm:grid-cols-7">
                   <TabsTrigger value="moderation">Moderation</TabsTrigger>
+                  <TabsTrigger value="streams">Streams</TabsTrigger>
                   <TabsTrigger value="people">People</TabsTrigger>
+                  <TabsTrigger value="catalog">Catalog</TabsTrigger>
                   <TabsTrigger value="health">Integrations</TabsTrigger>
                   <TabsTrigger value="flags">Flags</TabsTrigger>
                   <TabsTrigger value="audit">Audit</TabsTrigger>
                 </TabsList>
+
+                <TabsContent value="streams" className="space-y-6">
+                  <StreamsPanel />
+                </TabsContent>
+
+                <TabsContent value="catalog" className="space-y-6">
+                  <CatalogPanel />
+                </TabsContent>
 
                 <TabsContent value="moderation" className="space-y-6">
                   <Card className="rounded-2xl border-white/8 bg-card/70">
@@ -347,21 +364,80 @@ export default function Admin() {
                         </div>
                       ))}
 
-                      <div className="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/8 bg-white/[0.02] p-3">
                         <p className="text-sm">
                           Email outbox provider: <span className="font-mono text-xs">{overview?.email.provider}</span>
+                          {outbox && Object.keys(outbox.counts).length > 0 && (
+                            <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+                              {Object.entries(outbox.counts)
+                                .map(([status, count]) => `${status} ${count}`)
+                                .join(' · ')}
+                            </span>
+                          )}
                         </p>
-                        <Button
-                          size="sm"
-                          variant="glass"
-                          onClick={async () => {
-                            const ok = await adminService.flushEmail();
-                            toast({ title: ok ? 'Outbox flush queued' : 'Could not flush the outbox', variant: ok ? undefined : 'destructive' });
-                          }}
-                        >
-                          Flush outbox
-                        </Button>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={testEmailTo}
+                            onChange={(event) => setTestEmailTo(event.target.value)}
+                            placeholder="you@example.com"
+                            className="h-9 w-48"
+                            aria-label="Test email recipient"
+                          />
+                          <Button
+                            size="sm"
+                            variant="glass"
+                            disabled={sendingTest}
+                            onClick={async () => {
+                              setSendingTest(true);
+                              const result = await adminService.testEmail(testEmailTo.trim() || undefined);
+                              setSendingTest(false);
+                              toast({
+                                title: result.ok ? 'Test email sent' : 'Test email failed',
+                                description: result.ok
+                                  ? `The provider (${result.provider}) accepted the message.`
+                                  : result.error ?? 'No provider is configured yet.',
+                                variant: result.ok ? undefined : 'destructive',
+                              });
+                              setOutbox(await adminService.outbox('all', 25));
+                            }}
+                          >
+                            {sendingTest ? 'Sending…' : 'Send test'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="glass"
+                            onClick={async () => {
+                              const ok = await adminService.flushEmail();
+                              toast({ title: ok ? 'Outbox flush queued' : 'Could not flush the outbox', variant: ok ? undefined : 'destructive' });
+                              setOutbox(await adminService.outbox('all', 25));
+                            }}
+                          >
+                            Flush outbox
+                          </Button>
+                        </div>
                       </div>
+
+                      {(outbox?.emails.length ?? 0) > 0 && (
+                        <div className="space-y-2">
+                          {outbox!.emails.slice(0, 8).map((mail) => (
+                            <div key={mail.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm">
+                                  <span className="font-mono text-xs">{mail.template}</span> → {mail.to}
+                                </p>
+                                <p className="mt-0.5 truncate font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+                                  {formatDistanceToNow(new Date(mail.createdAt), { addSuffix: true })}
+                                  {mail.attempts ? ` · ${mail.attempts} attempt${mail.attempts === 1 ? '' : 's'}` : ''}
+                                  {mail.lastError ? ` · ${mail.lastError}` : ''}
+                                </p>
+                              </div>
+                              <Badge variant={mail.status === 'sent' ? 'secondary' : mail.status === 'failed' ? 'destructive' : 'outline'}>
+                                {mail.status}
+                              </Badge>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 </TabsContent>
