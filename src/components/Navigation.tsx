@@ -26,6 +26,11 @@ import {
   LayoutDashboard,
   Search,
   Home,
+  Bell,
+  Film,
+  CalendarClock,
+  Shield,
+  Gauge,
 } from "lucide-react";
 import { Input } from "./ui/input";
 import ErrorBoundary from "./ErrorBoundary";
@@ -33,6 +38,7 @@ import SoundToggle from "./SoundToggle";
 import AccentSwitcher from "./AccentSwitcher";
 import { sanitizeInput } from "@/utils/validationUtils";
 import { initials } from "@/utils/design";
+import { useUnreadNotifications } from "@/hooks/useNotifications";
 
 function Logo({ compact = false }: { compact?: boolean }) {
   return (
@@ -54,6 +60,7 @@ export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const { isAuthenticated, user, logout } = useAuth();
+  const { unreadCount } = useUnreadNotifications();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -101,6 +108,14 @@ export default function Navigation() {
           Stream
         </Link>
       )}
+      <Link to="/library" className={`nav-link ${isActive("/library") ? "nav-link-active" : ""}`}>
+        <Film className="h-3.5 w-3.5" />
+        Library
+      </Link>
+      <Link to="/schedule" className={`nav-link ${isActive("/schedule") ? "nav-link-active" : ""}`}>
+        <CalendarClock className="h-3.5 w-3.5" />
+        Schedule
+      </Link>
       {isAuthenticated && (
         <Link to="/dashboard" className={`nav-link ${isActive("/dashboard") ? "nav-link-active" : ""}`}>
           <LayoutDashboard className="h-3.5 w-3.5" />
@@ -167,6 +182,20 @@ export default function Navigation() {
 
             {/* Desktop auth */}
             <div className="hidden lg:flex items-center gap-2">
+              {isAuthenticated && (
+                <Link
+                  to="/notifications"
+                  aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} unread` : 'Notifications'}
+                  className="relative grid h-9 w-9 place-items-center rounded-full text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground"
+                >
+                  <Bell className="h-4 w-4" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-[hsl(349_86%_58%)] px-1 font-mono text-[9px] font-bold text-white">
+                      {unreadCount > 9 ? '9+' : unreadCount}
+                    </span>
+                  )}
+                </Link>
+              )}
               {isAuthenticated ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -193,6 +222,17 @@ export default function Navigation() {
                     <DropdownMenuItem className="rounded-md cursor-pointer" onClick={() => navigate("/dashboard")}>
                       <LayoutDashboard className="mr-2 h-4 w-4" /> Dashboard
                     </DropdownMenuItem>
+                    <DropdownMenuItem className="rounded-md cursor-pointer" onClick={() => navigate("/notifications")}>
+                      <Bell className="mr-2 h-4 w-4" /> Notifications
+                    </DropdownMenuItem>
+                    <DropdownMenuItem className="rounded-md cursor-pointer" onClick={() => navigate("/moderation")}>
+                      <Shield className="mr-2 h-4 w-4" /> Moderation
+                    </DropdownMenuItem>
+                    {user?.isAdmin && (
+                      <DropdownMenuItem className="rounded-md cursor-pointer" onClick={() => navigate("/admin")}>
+                        <Gauge className="mr-2 h-4 w-4" /> Admin console
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem className="rounded-md cursor-pointer" onClick={() => navigate("/settings")}>
                       <Settings className="mr-2 h-4 w-4" /> Settings
                     </DropdownMenuItem>
@@ -299,6 +339,16 @@ export default function Navigation() {
                         <Video className="h-4 w-4" /> Browse streams
                       </Button>
                     </Link>
+                    <Link to="/library" onClick={() => setMobileMenuOpen(false)}>
+                      <Button variant="ghost" className="w-full justify-start rounded-xl font-medium">
+                        <Film className="h-4 w-4" /> Library
+                      </Button>
+                    </Link>
+                    <Link to="/schedule" onClick={() => setMobileMenuOpen(false)}>
+                      <Button variant="ghost" className="w-full justify-start rounded-xl font-medium">
+                        <CalendarClock className="h-4 w-4" /> Schedule
+                      </Button>
+                    </Link>
                     {isAuthenticated && user?.isStreamer && (
                       <Link to="/stream/create" onClick={() => setMobileMenuOpen(false)}>
                         <Button variant="ghost" className="w-full justify-start rounded-xl font-medium">
@@ -318,6 +368,28 @@ export default function Navigation() {
                             <User className="h-4 w-4" /> Profile
                           </Button>
                         </Link>
+                        <Link to="/notifications" onClick={() => setMobileMenuOpen(false)}>
+                          <Button variant="ghost" className="w-full justify-start rounded-xl font-medium">
+                            <Bell className="h-4 w-4" /> Notifications
+                            {unreadCount > 0 && (
+                              <span className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-[hsl(349_86%_58%)] px-1 font-mono text-[10px] font-bold text-white">
+                                {unreadCount > 9 ? '9+' : unreadCount}
+                              </span>
+                            )}
+                          </Button>
+                        </Link>
+                        <Link to="/moderation" onClick={() => setMobileMenuOpen(false)}>
+                          <Button variant="ghost" className="w-full justify-start rounded-xl font-medium">
+                            <Shield className="h-4 w-4" /> Moderation
+                          </Button>
+                        </Link>
+                        {user?.isAdmin && (
+                          <Link to="/admin" onClick={() => setMobileMenuOpen(false)}>
+                            <Button variant="ghost" className="w-full justify-start rounded-xl font-medium">
+                              <Gauge className="h-4 w-4" /> Admin console
+                            </Button>
+                          </Link>
+                        )}
                         <Link to="/settings" onClick={() => setMobileMenuOpen(false)}>
                           <Button variant="ghost" className="w-full justify-start rounded-xl font-medium">
                             <Settings className="h-4 w-4" /> Settings

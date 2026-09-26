@@ -102,7 +102,7 @@ export default function StreamPlayer({
 
   const handleLanConnect = () => {
     setLanSoundBlocked(false);
-    lanViewerRef.current?.connect();
+    void lanViewerRef.current?.connect();
   };
 
   const handleLanUnmute = () => {
@@ -381,20 +381,43 @@ export default function StreamPlayer({
           );
         }
 
-        return (
-          <div className="aspect-video bg-black">
-            <video
-              ref={videoRef}
-              className="w-full h-full object-cover"
-              playsInline
-              autoPlay={autoPlay}
-              muted={isMuted}
-              poster={stream?.thumbnail}
-              src="/placeholder-video.mp4" // In a real app, this would be the stream URL
-            />
-            
+        // No peer connection and no replay: show the last frame (or poster) with
+        // an honest offline state instead of pointing <video> at a fake file.
+        {
+          const replayUrl = stream?.recordingUrl ?? stream?.url ?? null;
+          return (
+          <div className="relative aspect-video bg-black">
+            {replayUrl ? (
+              <video
+                ref={videoRef}
+                className="h-full w-full object-cover"
+                playsInline
+                autoPlay={autoPlay}
+                muted={isMuted}
+                controls
+                poster={stream?.thumbnail}
+                src={replayUrl}
+              />
+            ) : (
+              <div className="grid h-full w-full place-items-center">
+                {stream?.thumbnail && (
+                  <img src={stream.thumbnail} alt="" className="absolute inset-0 h-full w-full object-cover opacity-30" />
+                )}
+                <div className="relative z-10 text-center">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-white/60">
+                    {stream?.isLive ? "Connecting to the stream" : "Broadcast ended"}
+                  </p>
+                  <p className="mt-2 max-w-xs text-sm text-white/70">
+                    {stream?.isLive
+                      ? "Waiting for the broadcaster's video to arrive."
+                      : "This stream is offline. The replay appears here once it is processed."}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {stream?.isLive && (
-              <div className="absolute top-4 left-4 flex gap-2">
+              <div className="absolute top-4 left-4 z-10 flex gap-2">
                 <div className="live-indicator">LIVE</div>
                 <div className="viewer-count">
                   <UserRound size={16} />
@@ -404,6 +427,7 @@ export default function StreamPlayer({
             )}
           </div>
         );
+        }
     }
   };
   

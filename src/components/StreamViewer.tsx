@@ -33,6 +33,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { liveStreamService } from "@/services/liveStreamService";
 import { chatService } from "@/services/chatService";
+import { analyticsService, watchTracker } from "@/services/analyticsService";
+import FollowButton from "@/components/FollowButton";
+import ReportDialog from "@/components/ReportDialog";
+import TipButton from "@/components/TipButton";
 import { formatViewers, initials } from "@/utils/design";
 
 interface StreamViewerProps {
@@ -41,7 +45,6 @@ interface StreamViewerProps {
 
 export default function StreamViewer({ streamId }: StreamViewerProps) {
   const [chatMessage, setChatMessage] = useState('');
-  const [isFollowing, setIsFollowing] = useState(false);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -79,6 +82,23 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
 
     return () => subscription.close();
   }, [streamId, queryClient]);
+
+  // Watch-time tracking: one session per visit, closed on unmount.
+  useEffect(() => {
+    if (!streamId) return;
+    let tracker: { stop(): void } | null = null;
+    let cancelled = false;
+
+    void watchTracker.start({ streamId }).then((handle) => {
+      if (cancelled) handle?.stop();
+      else tracker = handle;
+    });
+
+    return () => {
+      cancelled = true;
+      tracker?.stop();
+    };
+  }, [streamId]);
 
   // Join stream effect
   useEffect(() => {
@@ -158,23 +178,6 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
     sendMessageMutation.mutate(chatMessage);
   };
 
-  const handleFollowClick = () => {
-    if (!isAuthenticated) {
-      toast({
-        title: "Login Required",
-        description: "You must be logged in to follow streamers",
-        variant: "default"
-      });
-      return;
-    }
-
-    setIsFollowing(!isFollowing);
-    toast({
-      title: isFollowing ? "Unfollowed" : "Following",
-      description: isFollowing ? "You've unfollowed this streamer" : "You're now following this streamer",
-      variant: "default"
-    });
-  };
 
   const shareStream = async () => {
     const shareUrl = window.location.href;
@@ -203,13 +206,6 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
     }
   };
 
-  const reportStream = () => {
-    toast({
-      title: "Report Submitted",
-      description: "Thank you for your report. Our team will review this stream.",
-      variant: "default"
-    });
-  };
 
   // If stream has ended and is not found or no longer live
   if (status === "error" || (stream && !stream.isLive && stream.endedAt)) {
@@ -288,20 +284,15 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
-                <Button
-                  variant={isFollowing ? "glow" : "glass"}
-                  onClick={handleFollowClick}
-                >
-                  <Heart className={`h-4 w-4 ${isFollowing ? "fill-current" : ""}`} />
-                  {isFollowing ? 'Following' : 'Follow'}
-                </Button>
+                {stream && <FollowButton userId={stream.userId} username={stream.username} />}
+                {stream && stream.userId !== user?.id && (
+                  <TipButton streamerId={stream.userId} streamerName={stream.displayName || stream.username} streamId={streamId} />
+                )}
                 <Button variant="glass" onClick={shareStream}>
                   <Share className="h-4 w-4" />
                   Share
                 </Button>
-                <Button variant="ghost" size="icon" className="rounded-full" onClick={reportStream} aria-label="Report stream">
-                  <Flag className="h-4 w-4" />
-                </Button>
+                <ReportDialog targetType="stream" targetId={streamId} iconOnly variant="ghost" />
               </div>
             </div>
 

@@ -21,9 +21,11 @@ import {
   Clock,
   Moon,
   Sun,
-  Laptop
+  Laptop,
+  Lock
 } from "lucide-react";
 import Navigation from "@/components/Navigation";
+import SecurityPanel from "@/components/settings/SecurityPanel";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { UserPreferences } from "@/types";
@@ -277,6 +279,15 @@ export default function Settings() {
               >
                 <Video className="mr-2 h-4 w-4" />
                 Streaming
+              </Button>
+
+              <Button
+                variant={activeTab === "security" ? "default" : "ghost"}
+                className="w-full justify-start"
+                onClick={() => setActiveTab("security")}
+              >
+                <Lock className="mr-2 h-4 w-4" />
+                Security
               </Button>
             </div>
             
@@ -763,6 +774,8 @@ export default function Settings() {
                   </form>
                 </Form>
               )}
+
+              {activeTab === "security" && <SecurityPanel />}
             </div>
           </div>
         </div>
