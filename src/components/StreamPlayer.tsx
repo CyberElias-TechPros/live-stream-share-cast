@@ -32,7 +32,20 @@ interface StreamPlayerProps {
   autoPlay?: boolean;
   showControls?: boolean;
   showStats?: boolean;
+  /** Measured playback metrics, so pages can show real numbers. */
+  onStats?: (stats: PlayerStats) => void;
   className?: string;
+}
+
+export interface PlayerStats {
+  /** Bits per second currently being received, when measurable. */
+  bandwidth: number | null;
+  resolution: string | null;
+  frameRate: number | null;
+  bufferHealth: number | null;
+  /** The quality the viewer asked for (`auto` = let the host decide). */
+  quality: string;
+  transport: "p2p" | "direct";
 }
 
 export default function StreamPlayer({ 
@@ -41,6 +54,7 @@ export default function StreamPlayer({
   autoPlay = true,
   showControls = true,
   showStats = false,
+  onStats,
   className = ""
 }: StreamPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -118,6 +132,16 @@ export default function StreamPlayer({
   const [resolution, setResolution] = useState<string | null>(null);
   const [frameRate, setFrameRate] = useState<number | null>(null);
   const [bufferHealth, setBufferHealth] = useState<number | null>(null);
+
+  // Keep the latest callback in a ref so sampling never restarts because the
+  // parent re-rendered with a new function identity.
+  const onStatsRef = useRef(onStats);
+  onStatsRef.current = onStats;
+  const bandwidthRef = useRef<number | null>(null);
+  const resolutionRef = useRef<string | null>(null);
+  const frameRateRef = useRef<number | null>(null);
+  const qualityRef = useRef(qualityOption);
+  qualityRef.current = qualityOption;
   
   useEffect(() => {
     if (autoPlay && videoRef.current && status === 'live') {
@@ -136,7 +160,7 @@ export default function StreamPlayer({
   }, [autoPlay, status, toast]);
   
   useEffect(() => {
-    if (!showStats || status !== 'live') return;
+    if ((!showStats && !onStats) || status !== 'live') return;
 
     let previousBytes = 0;
     let previousFrames = 0;
@@ -155,12 +179,22 @@ export default function StreamPlayer({
             if (entry.type !== 'inbound-rtp' || entry.kind === 'audio') return;
             if (entry.bytesReceived !== undefined) {
               if (previousBytes && stamp > previousStamp) {
-                setBandwidth(Math.round(((entry.bytesReceived - previousBytes) * 8) / (stamp - previousStamp)));
+                const bps = Math.round(((entry.bytesReceived - previousBytes) * 8) / (stamp - previousStamp));
+                bandwidthRef.current = bps;
+                setBandwidth(bps);
               }
               previousBytes = entry.bytesReceived;
             }
-            if (entry.frameWidth && entry.frameHeight) setResolution(`${entry.frameWidth}x${entry.frameHeight}`);
-            if (entry.framesPerSecond) setFrameRate(Math.round(entry.framesPerSecond));
+            if (entry.frameWidth && entry.frameHeight) {
+              const size = `${entry.frameWidth}x${entry.frameHeight}`;
+              resolutionRef.current = size;
+              setResolution(size);
+            }
+            if (entry.framesPerSecond) {
+              const fps = Math.round(entry.framesPerSecond);
+              frameRateRef.current = fps;
+              setFrameRate(fps);
+            }
           });
           previousStamp = stamp;
         } catch {
@@ -171,26 +205,43 @@ export default function StreamPlayer({
       if (!el) return;
 
       // Whatever the transport, the element knows its own dimensions.
-      if (el.videoWidth && el.videoHeight) setResolution(`${el.videoWidth}x${el.videoHeight}`);
+      if (el.videoWidth && el.videoHeight) {
+        const size = `${el.videoWidth}x${el.videoHeight}`;
+        resolutionRef.current = size;
+        setResolution(size);
+      }
 
       // Frame cadence from the playback quality counters.
       const quality = el.getVideoPlaybackQuality?.();
       if (quality) {
         if (previousFrames && stamp > previousStamp) {
-          setFrameRate(Math.round(((quality.totalVideoFrames - previousFrames) * 1000) / (stamp - previousStamp)));
+          const fps = Math.round(((quality.totalVideoFrames - previousFrames) * 1000) / (stamp - previousStamp));
+          frameRateRef.current = fps;
+          setFrameRate(fps);
         }
         previousFrames = quality.totalVideoFrames;
       }
 
+      let buffered: number | null = null;
       if (el.buffered.length > 0) {
-        setBufferHealth(Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime));
+        buffered = Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
+        setBufferHealth(buffered);
       }
+
+      onStatsRef.current?.({
+        bandwidth: bandwidthRef.current,
+        resolution: resolutionRef.current,
+        frameRate: frameRateRef.current,
+        bufferHealth: buffered,
+        quality: qualityRef.current,
+        transport: isLan ? 'p2p' : 'direct',
+      });
     };
 
     void sample();
     const statsInterval = window.setInterval(() => void sample(), 2000);
     return () => window.clearInterval(statsInterval);
-  }, [showStats, status]);
+  }, [showStats, onStats, status, isLan]);
   
   const togglePlay = () => {
     if (videoRef.current) {

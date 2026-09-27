@@ -42,7 +42,7 @@ export function toStream(dto: any): Stream {
     recordingUrl: dto.recordingUrl ?? undefined,
     recordingExpiry: toDate(dto.recordingExpiry),
     streamType: dto.streamType === 'local' ? 'local' : 'internet',
-    ...('peakViewers' in dto ? { peakViewers: dto.peakViewers } : {}),
+    peakViewers: dto.peakViewers ?? undefined,
     ...('hostConnected' in dto ? { hostConnected: !!dto.hostConnected } : {}),
   } as Stream;
 }

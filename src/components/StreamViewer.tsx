@@ -17,7 +17,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { useStream } from "@/contexts/StreamContext";
-import StreamPlayer from "./StreamPlayer";
+import StreamPlayer, { type PlayerStats } from "./StreamPlayer";
 import LiveBadge, { ViewerPill } from "./LiveBadge";
 import {
   Tabs,
@@ -59,6 +59,8 @@ interface StreamViewerProps {
 
 export default function StreamViewer({ streamId }: StreamViewerProps) {
   const [chatMessage, setChatMessage] = useState('');
+  /** Real playback metrics reported by the player (bitrate, size, fps, buffer). */
+  const [playerStats, setPlayerStats] = useState<PlayerStats | null>(null);
 
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
@@ -311,6 +313,7 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
             status={status}
             showControls={true}
             showStats={true}
+            onStats={setPlayerStats}
             className="rounded-2xl shadow-glow-lg"
           />
 
@@ -407,14 +410,46 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
                     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                       {[
                         { label: "VIEWERS", value: String(stream?.viewerCount || viewerCount || 0) },
-                        { label: "BANDWIDTH", value: stream?.bandwidth ? `${(stream.bandwidth / 1000).toFixed(1)} Mbps` : 'N/A' },
+                        {
+                          label: "BANDWIDTH",
+                          value: playerStats?.bandwidth
+                            ? `${(playerStats.bandwidth / 1_000_000).toFixed(2)} Mbps`
+                            : '—',
+                        },
                         {
                           label: "STREAM TIME",
                           value: stream?.startedAt
                             ? formatDistanceToNow(stream.startedAt, { includeSeconds: true })
                             : 'N/A',
                         },
-                        { label: "QUALITY", value: '720p' },
+                        {
+                          label: "VIDEO",
+                          value: playerStats
+                            ? `${playerStats.resolution ?? '—'} · ${playerStats.frameRate ? `${playerStats.frameRate}fps` : '—'}`
+                            : '—',
+                        },
+                        {
+                          label: "QUALITY",
+                          value: playerStats ? playerStats.quality : 'auto',
+                        },
+                        {
+                          label: "TRANSPORT",
+                          value: playerStats
+                            ? playerStats.transport === 'p2p'
+                              ? 'peer-to-peer'
+                              : 'direct'
+                            : '—',
+                        },
+                        {
+                          label: "BUFFER",
+                          value: playerStats?.bufferHealth !== null && playerStats?.bufferHealth !== undefined
+                            ? `${playerStats.bufferHealth.toFixed(1)}s`
+                            : '—',
+                        },
+                        {
+                          label: "PEAK VIEWERS",
+                          value: String(stream?.peakViewers ?? 0),
+                        },
                       ].map((s) => (
                         <div key={s.label} className="rounded-xl border border-white/8 bg-black/30 p-4">
                           <div className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground/70">{s.label}</div>

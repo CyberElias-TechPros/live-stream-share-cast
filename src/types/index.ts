@@ -15,6 +15,9 @@ export interface Stream {
   qualityOptions?: StreamQuality[];
   startedAt?: Date;
   endedAt?: Date;
+  /** Populated while broadcasting (host side) and by the analytics summary. */
+  peakViewers?: number;
+  /** Measured receive bitrate, filled in by the player when it is known. */
   bandwidth?: number;
   category?: string;
   tags?: string[];
