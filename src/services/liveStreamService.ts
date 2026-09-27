@@ -258,6 +258,20 @@ export const liveStreamService = {
     }
   },
 
+  /**
+   * Rotates the channel's stream key. The old key is invalid after this call,
+   * so the caller should update wherever it was stored.
+   */
+  async regenerateStreamKey(streamId: string): Promise<string | null> {
+    try {
+      const data = await api.post<{ streamKey: string }>(`/streams/${streamId}/key`);
+      return data.streamKey ?? null;
+    } catch (error) {
+      console.error('Error rotating the stream key:', error);
+      return null;
+    }
+  },
+
   async deleteStream(streamId: string): Promise<boolean> {
     try {
       await api.delete(`/streams/${streamId}`);

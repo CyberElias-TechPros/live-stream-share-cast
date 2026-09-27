@@ -252,6 +252,24 @@ streamRoutes.delete('/:id', authGuard, async (c) => {
   return c.json({ success: true });
 });
 
+/**
+ * Rotates the channel key for a stream. The previous key stops working the
+ * moment this returns, which is what a streamer needs after a leak.
+ */
+streamRoutes.post('/:id/key', authGuard, rateLimit({ limit: 10, windowMs: 60_000, name: 'keys', perUser: true }), async (c) => {
+  const auth = c.get('authUser')!;
+  const id = c.req.param('id');
+  const row = await ownedStream(c.env, id, auth.id);
+
+  const next = streamKey(auth.id);
+  await c.env.DB.prepare(`UPDATE streams SET stream_key = ?, updated_at = ? WHERE id = ?`)
+    .bind(next, nowIso(), row.id)
+    .run();
+
+  const fresh = await c.env.DB.prepare(`SELECT ${STREAM_SELECT} ${STREAM_FROM} WHERE s.id = ?`).bind(row.id).first<StreamRow>();
+  return c.json({ success: true, streamKey: next, stream: fresh ? stream(fresh, true) : null });
+});
+
 /* ------------------------------- live lifecycle ------------------------------ */
 
 streamRoutes.post('/:id/start', authGuard, async (c) => {

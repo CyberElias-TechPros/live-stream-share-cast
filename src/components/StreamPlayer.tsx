@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Stream, StreamStatus } from "@/types";
-import { LanViewer, type LanState } from "@/lib/lanStream";
+import { LanViewer, type LanState, type TransportMode } from "@/lib/lanStream";
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -67,8 +67,12 @@ export default function StreamPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  /* ----- LAN mode: receive the stream peer-to-peer over the local network ----- */
-  const isLan = !!stream?.isLocalStream;
+  /* ----- Peer-to-peer: receive the media straight from the broadcaster -----
+     Every browser broadcast works this way, whether it is pinned to the local
+     network or allowed to use TURN relays. A stream with its own playback URL
+     (an upload, or a recording) is played back from the URL instead. */
+  const isLan = !!stream && !stream.recordingUrl && !stream.url && (stream.isLive || stream.isLocalStream);
+  const transportMode: TransportMode = stream?.streamType === 'local' ? 'local' : 'internet';
   const [lanState, setLanState] = useState<LanState>("idle");
   const [lanSoundBlocked, setLanSoundBlocked] = useState(false);
   const [lanEnded, setLanEnded] = useState(false);
@@ -76,7 +80,7 @@ export default function StreamPlayer({
 
   useEffect(() => {
     if (!isLan || status !== "live" || !stream) return;
-    const viewer = new LanViewer(stream.id);
+    const viewer = new LanViewer(stream.id, transportMode);
     lanViewerRef.current = viewer;
     viewer.onState = (s) => {
       setLanState(s);
@@ -112,7 +116,7 @@ export default function StreamPlayer({
       setLanSoundBlocked(false);
       setLanState("idle");
     };
-  }, [isLan, status, stream, toast]);
+  }, [isLan, status, stream, transportMode, toast]);
 
   const handleLanConnect = () => {
     setLanSoundBlocked(false);

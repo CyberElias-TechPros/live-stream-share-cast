@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import { ChevronRight, Copy, Check, Mic, MicOff, Video, VideoOff, Settings, Monitor, Share, X, Radio, Clapperboard, Maximize, Link2, ArrowRight, Globe } from "lucide-react";
+import { ChevronRight, Copy, Check, Mic, MicOff, Video, VideoOff, Settings, Monitor, Share, X, Radio, Clapperboard, Maximize, Link2, ArrowRight, Globe, Eye, EyeOff, RefreshCw } from "lucide-react";
 import { formatViewers } from "@/utils/design";
 import Atmosphere from "./Atmosphere";
 import LiveBadge from "./LiveBadge";
@@ -54,6 +54,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
   const [streamKey, setStreamKey] = useState<string | null>(null);
+  const [revealKey, setRevealKey] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [currentStream, setCurrentStream] = useState<Stream | null>(null);
@@ -79,7 +80,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     },
   });
 
-  /* ----- LAN mode: real peer-to-peer delivery over the local network ----- */
+  /* ----- Peer-to-peer delivery: media goes browser → viewer directly ----- */
   const streamType = form.watch("streamType");
   const lanStreamerRef = useRef<LanStreamer | null>(null);
   const [lanViewerCount, setLanViewerCount] = useState(0);
@@ -170,12 +171,17 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const streamTypeRef = useRef(streamType);
   streamTypeRef.current = streamType;
 
-  /* Start/stop the LAN WebRTC broadcaster for this stream. */
+  /**
+   * Start the peer-to-peer broadcaster for this stream. Media always goes
+   * straight from this browser to each viewer; the stream *type* only decides
+   * whether the Worker may hand out TURN relays ("internet") or whether the
+   * stream must stay on the local network ("local").
+   */
   const startLan = useCallback(() => {
-    if (!currentStream || streamTypeRef.current !== "local") return;
+    if (!currentStream) return;
     const media = streamRef.current;
     if (!media || lanStreamerRef.current) return;
-    const streamer = new LanStreamer(currentStream.id, media);
+    const streamer = new LanStreamer(currentStream.id, media, streamTypeRef.current);
     streamer.onViewerCount = (n) => {
       setLanViewerCount(n);
       if (n > 0) {
@@ -293,7 +299,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
       toast({
         title: "Stream started",
         description: isLan
-          ? "You are live over your local network!"
+          ? "You are live — your stream stays on this network"
           : "You are now live!",
       });
     },
@@ -356,6 +362,22 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     }
   };
   
+  /** Rotates the channel key: the old one stops working immediately. */
+  const regenerateKey = async () => {
+    if (!currentStream) return;
+    if (!window.confirm("Generate a new stream key? Anything still using the old key stops working immediately.")) return;
+
+    const next = await liveStreamService.regenerateStreamKey(currentStream.id);
+    if (!next) {
+      toast({ title: "Could not generate a new key", description: "Try again in a moment.", variant: "destructive" });
+      return;
+    }
+
+    setStreamKey(next);
+    setRevealKey(true);
+    toast({ title: "New stream key ready", description: "Update it anywhere you had the old one saved." });
+  };
+
   const handleCopyStreamKey = () => {
     if (streamKey) {
       navigator.clipboard.writeText(streamKey);
@@ -540,11 +562,11 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
                     Live
                     {isLanLive && (
                       <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-emerald-300">
-                        <Radio size={10} /> LAN
+                        <Radio size={10} /> {isLan ? "LAN" : "P2P"}
                       </span>
                     )}
                     {isLanLive && lanViewerCount > 0 && (
-                      <span className="font-mono text-xs">{lanViewerCount} on this network</span>
+                      <span className="font-mono text-xs">{lanViewerCount} {isLan ? "on this network" : "connected"}</span>
                     )}
                   </span>
                 ) : "Not streaming yet"}
@@ -676,26 +698,46 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Stream Key</label>
-                  <div className="flex items-center">
-                    <Input 
-                      type="password" 
-                      value={streamKey || ""} 
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type={revealKey ? "text" : "password"}
+                      value={streamKey || ""}
                       readOnly
                       className="font-mono"
+                      aria-label="Stream key"
                     />
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setRevealKey((shown) => !shown)}
+                      title={revealKey ? "Hide the key" : "Show the key"}
+                      aria-label={revealKey ? "Hide the stream key" : "Show the stream key"}
+                    >
+                      {revealKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </Button>
                     <Button 
                       size="icon" 
                       variant="ghost" 
                       onClick={handleCopyStreamKey}
-                      className="ml-2"
+                      title="Copy the key"
+                      aria-label="Copy the stream key"
                     >
                       {copied ? <Check size={18} /> : <Copy size={18} />}
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => void regenerateKey()}
+                      title="Generate a new key (invalidates the old one)"
+                      aria-label="Generate a new stream key"
+                    >
+                      <RefreshCw size={18} />
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
                     {isLan
-                      ? "LAN mode — anyone on this network who opens your watch link receives the stream straight from your device. No internet required."
-                      : "Keep this key secure. You can use it with streaming software like OBS."}
+                      ? "Local mode — viewers on this network receive the stream straight from your device and no relay is used, so nobody outside it can connect."
+                      : "Your stream goes straight from this browser to each viewer. Keep this key secure: it identifies your channel."}
                   </p>
                 </div>
                 
@@ -737,7 +779,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-white/[0.04] rounded-lg p-3">
                   <div className="text-xs text-muted-foreground mb-1">
-                    {isLanLive ? "LAN VIEWERS" : "VIEWERS"}
+                    {isLanLive ? (isLan ? "LAN VIEWERS" : "CONNECTED VIEWERS") : "VIEWERS"}
                   </div>
                   <div className="text-2xl font-bold">
                     {isLanLive ? lanViewerCount : (currentStream?.viewerCount || 0)}
@@ -905,7 +947,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
                       <label className="text-sm font-medium">Network</label>
-                      <p className="text-xs text-muted-foreground">LAN mode or global internet</p>
+                      <p className="text-xs text-muted-foreground">Stay on the local network, or allow relay for remote viewers</p>
                     </div>
                     <div className="flex rounded-full border border-white/10 bg-white/[0.04] p-1">
                       <button
@@ -1274,7 +1316,7 @@ function StageView({
                   <div className="min-w-0">
                     <p className="truncate font-display text-lg font-bold">{streamTitle}</p>
                     <p className={`font-mono text-[10px] tracking-[0.25em] uppercase ${isLan ? "text-emerald-300/90" : "text-muted-foreground"}`}>
-                      {isLan ? "LAN mode · same network only" : "Ready when you are"}
+                      {isLan ? "Local network only" : "Global · relays allowed"}
                     </p>
                   </div>
                   <Button
@@ -1301,7 +1343,7 @@ function StageView({
                     <span className="truncate font-mono text-[12px] text-white/85">{streamUrl}</span>
                     {isLan && (
                       <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 font-mono text-[9px] tracking-wider text-emerald-300">
-                        <Radio size={10} /> LAN
+                        <Radio size={10} /> {isLan ? "LAN" : "P2P"}
                       </span>
                     )}
                   </div>

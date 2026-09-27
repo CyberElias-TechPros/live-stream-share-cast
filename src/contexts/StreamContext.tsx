@@ -31,6 +31,14 @@ interface StreamContextType {
 
 const StreamContext = createContext<StreamContextType | undefined>(undefined);
 
+/** Capture sizes behind the "default quality" preference. */
+const QUALITY_PRESETS: Record<string, { width: number; height: number; frameRate: number }> = {
+  '1080p': { width: 1920, height: 1080, frameRate: 30 },
+  '720p': { width: 1280, height: 720, frameRate: 30 },
+  '480p': { width: 854, height: 480, frameRate: 30 },
+  '360p': { width: 640, height: 360, frameRate: 30 },
+};
+
 export function StreamProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<StreamStatus>("idle");
   const [viewerCount, setViewerCount] = useState(0);
@@ -106,8 +114,17 @@ export function StreamProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isAuthenticated && user?.preferences?.streaming) {
       const userSettings = user.preferences.streaming;
-      
+
+      // The quality preset picked in Settings decides the capture size, so a
+      // 1080p default really records and broadcasts at 1080p.
+      const dimensions = QUALITY_PRESETS[userSettings.defaultQuality ?? '720p'] ?? QUALITY_PRESETS['720p'];
+
       updateStreamSettings({
+        video: {
+          ...streamService.getSettings().video,
+          width: dimensions.width,
+          height: dimensions.height,
+        },
         streaming: {
           codec: streamSettings.streaming.codec,
           bitrate: streamSettings.streaming.bitrate,

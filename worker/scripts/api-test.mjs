@@ -295,6 +295,21 @@ async function main() {
   const keys = await call('GET', '/streams/keys/generate', { token: streamerToken });
   check('GET /streams/keys/generate returns a stream key for streamers', keys.status === 200 && typeof keys.body?.streamKey === 'string');
 
+  const before = await call('GET', `/streams/${streamId}`, { token: streamerToken });
+  const rotated = await call('POST', `/streams/${streamId}/key`, { token: streamerToken });
+  const after = await call('GET', `/streams/${streamId}`, { token: streamerToken });
+  check(
+    'POST /streams/:id/key rotates the channel key',
+    rotated.status === 200 &&
+      typeof rotated.body?.streamKey === 'string' &&
+      rotated.body.streamKey !== before.body?.stream?.streamKey &&
+      after.body?.stream?.streamKey === rotated.body.streamKey,
+    String(rotated.status),
+  );
+
+  const foreignRotate = await call('POST', `/streams/${streamId}/key`, { token: viewerToken });
+  check('only the owner can rotate a stream key', foreignRotate.status === 403 || foreignRotate.status === 404, String(foreignRotate.status));
+
   /* ---------------------------------- chat --------------------------------- */
 
   section('chat');

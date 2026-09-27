@@ -154,8 +154,8 @@ soon as any assertion fails, so they can gate a release:
 
 ```bash
 npm --prefix worker run dev             # or point the suites at the deployed worker
-npm run test:api                        # 91 REST checks across every journey
-LSC_TEST_ADMIN_TOKEN=<operator jwt> npm run test:api   # + the operator console (104)
+npm run test:api                        # 96 REST checks across every journey
+LSC_TEST_ADMIN_TOKEN=<operator jwt> npm run test:api   # + the operator console (109)
 npm run test:realtime                   # 13 realtime checks: chat + signalling
 npm run test:api -- https://<worker-host>      # same suite against production
 npm run typecheck                       # SPA

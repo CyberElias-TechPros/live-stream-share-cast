@@ -26,6 +26,14 @@ import { platformService } from "@/services/platformService";
 
 export type LanState = "idle" | "waiting" | "ready" | "connecting" | "connected" | "failed";
 
+/**
+ * `local` keeps media on the network — no TURN relay is offered, so a connection
+ * that needs one simply fails instead of leaving the LAN. `internet` adds the
+ * TURN credentials minted by the Worker, which is what gets viewers behind
+ * symmetric NAT or on mobile networks connected.
+ */
+export type TransportMode = "local" | "internet";
+
 interface SignalMsg {
   from: string;
   to?: string;
@@ -66,9 +74,11 @@ async function iceServers(): Promise<RTCIceServer[]> {
   return icePromise;
 }
 
-async function iceConfiguration(): Promise<RTCConfiguration> {
+async function iceConfiguration(mode: TransportMode = "internet"): Promise<RTCConfiguration> {
+  const servers = await iceServers();
   return {
-    iceServers: await iceServers(),
+    // Local mode strips the relays: direct (host/STUN-reflexive) candidates only.
+    iceServers: mode === "local" ? servers.filter((server) => !String(server.urls).startsWith("turn")) : servers,
     // A relay-only fallback is used by the browser when no direct path exists.
     iceTransportPolicy: "all",
     bundlePolicy: "max-bundle",
@@ -173,6 +183,7 @@ export class LanStreamer {
   private media: MediaStream;
   private streamId: string;
   private me = selfId();
+  private mode: TransportMode;
   private pcs = new Map<string, RTCPeerConnection>();
   private sig: { send: (m: SignalMsg) => void; unsubscribe: () => void } | null = null;
   private readyTimer: number | null = null;
@@ -183,9 +194,10 @@ export class LanStreamer {
   /** Fires when a viewer asks for a different quality (kbps null = automatic). */
   onQualityHint: ((viewer: string, kbps: number | null) => void) | null = null;
 
-  constructor(streamId: string, media: MediaStream) {
+  constructor(streamId: string, media: MediaStream, mode: TransportMode = "internet") {
     this.streamId = streamId;
     this.media = media;
+    this.mode = mode;
   }
 
   /**
@@ -284,7 +296,7 @@ export class LanStreamer {
       this.pcs.delete(from);
     }
 
-    const pc = new RTCPeerConnection(await iceConfiguration());
+    const pc = new RTCPeerConnection(await iceConfiguration(this.mode));
     this.pcs.set(from, pc);
 
     // Send all current tracks on this connection.
@@ -370,6 +382,7 @@ export class LanStreamer {
 
 export class LanViewer {
   private streamId: string;
+  private mode: TransportMode;
   private me = selfId();
   private pc: RTCPeerConnection | null = null;
   private queuedCandidates: RTCIceCandidateInit[] = [];
@@ -384,8 +397,9 @@ export class LanViewer {
   onStream: ((media: MediaStream | null) => void) | null = null;
   onState: ((state: LanState) => void) | null = null;
 
-  constructor(streamId: string) {
+  constructor(streamId: string, mode: TransportMode = "internet") {
     this.streamId = streamId;
+    this.mode = mode;
   }
 
   get streamerReady(): boolean {
@@ -411,7 +425,7 @@ export class LanViewer {
   async connect(): Promise<void> {
     if (this.pc) return;
 
-    this.pc = new RTCPeerConnection(await iceConfiguration());
+    this.pc = new RTCPeerConnection(await iceConfiguration(this.mode));
 
     this.pc.addTransceiver("video", { direction: "recvonly" });
     this.pc.addTransceiver("audio", { direction: "recvonly" });
