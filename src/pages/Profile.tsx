@@ -29,15 +29,20 @@ import {
   Youtube,
   Link as LinkIcon,
   Heart,
+  Globe,
   Eye,
-  Save
+  Save,
+  Plus,
+  Trash2
 } from "lucide-react";
-import { Stream, User } from "@/types";
+import { Stream, SocialLink, User } from "@/types";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
+import { AvatarUploadButton } from "@/components/AvatarUploadButton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { profileService } from "@/services/profileService";
+import { analyticsService } from "@/services/analyticsService";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -46,7 +51,7 @@ export default function Profile() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedProfile, setEditedProfile] = useState<Partial<User>>({});
   
-  const { user, isAuthenticated, updateProfile } = useAuth();
+  const { user, isAuthenticated, updateProfile, refreshUser } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -65,6 +70,15 @@ export default function Profile() {
     enabled: !!username,
   });
   
+  // Public streamer stats (sessions, peak viewers, hours streamed), so the
+  // numbers are not inferred from the streams that happen to be loaded.
+  const { data: stats } = useQuery({
+    queryKey: ["profileStats", profile?.id],
+    queryFn: () => analyticsService.userStats(profile!.id),
+    enabled: !!profile?.id,
+    staleTime: 60_000,
+  });
+
   // Fetch user streams
   const { 
     data: streams = [], 
@@ -145,6 +159,26 @@ export default function Profile() {
     const { name, value } = e.target;
     setEditedProfile(prev => ({ ...prev, [name]: value }));
   };
+
+  const socialLinks = editedProfile.socialLinks ?? [];
+
+  const updateSocialLink = (index: number, patch: Partial<SocialLink>) => {
+    setEditedProfile(prev => ({
+      ...prev,
+      socialLinks: (prev.socialLinks ?? []).map((link, position) => (position === index ? { ...link, ...patch } : link)),
+    }));
+  };
+
+  const addSocialLink = () => {
+    setEditedProfile(prev => ({ ...prev, socialLinks: [...(prev.socialLinks ?? []), { platform: "twitter", url: "" }] }));
+  };
+
+  const removeSocialLink = (index: number) => {
+    setEditedProfile(prev => ({
+      ...prev,
+      socialLinks: (prev.socialLinks ?? []).filter((_, position) => position !== index),
+    }));
+  };
   
   const handleSaveProfile = async () => {
     try {
@@ -152,7 +186,14 @@ export default function Profile() {
         throw new Error("You can only edit your own profile");
       }
       
-      await updateProfile(editedProfile);
+      const cleaned: Partial<User> = {
+        ...editedProfile,
+        ...(editedProfile.socialLinks
+          ? { socialLinks: editedProfile.socialLinks.filter((link: SocialLink) => link.url.trim().length > 0) }
+          : {}),
+      };
+
+      await updateProfile(cleaned);
       setIsEditing(false);
       
       // Refresh profile data
@@ -261,9 +302,14 @@ export default function Profile() {
                     <AvatarImage src={profile.avatar} alt={profile.displayName || profile.username} />
                     <AvatarFallback className="bg-signature text-white text-2xl font-bold">{(profile.displayName || profile.username).charAt(0).toUpperCase()}</AvatarFallback>
                   </Avatar>
-                  <Button variant="link" className="text-xs mt-2">
-                    Change Avatar
-                  </Button>
+                  <AvatarUploadButton
+                    variant="link"
+                    className="mt-2 h-auto p-0 text-xs"
+                    onUploaded={async () => {
+                      await refreshUser();
+                      await queryClient.invalidateQueries({ queryKey: ["profile", username] });
+                    }}
+                  />
                 </div>
               ) : (
                 <Avatar className="w-24 h-24 ring-2 ring-[hsl(var(--accent-mid)_/_0.5)] ring-offset-4 ring-offset-background">
@@ -302,6 +348,88 @@ export default function Profile() {
                       />
                     </div>
                     
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="pronouns">
+                          Pronouns
+                        </label>
+                        <Input
+                          id="pronouns"
+                          name="pronouns"
+                          value={editedProfile.pronouns || ""}
+                          onChange={handleInputChange}
+                          placeholder="they/them"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1" htmlFor="websiteUrl">
+                          Website
+                        </label>
+                        <Input
+                          id="websiteUrl"
+                          name="websiteUrl"
+                          value={editedProfile.websiteUrl || ""}
+                          onChange={handleInputChange}
+                          placeholder="https://yoursite.com"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium mb-1" htmlFor="donationUrl">
+                          Donation link
+                        </label>
+                        <Input
+                          id="donationUrl"
+                          name="donationUrl"
+                          value={editedProfile.donationUrl || ""}
+                          onChange={handleInputChange}
+                          placeholder="https://… (https only)"
+                        />
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Shown on your channel so viewers can support you directly.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Social Links</label>
+                      <div className="space-y-2">
+                        {socialLinks.map((link, index) => (
+                          <div key={index} className="flex flex-col gap-2 sm:flex-row">
+                            <select
+                              className="h-10 rounded-md border border-input bg-background px-3 text-sm sm:w-40"
+                              value={link.platform}
+                              aria-label="Platform"
+                              onChange={(event) => updateSocialLink(index, { platform: event.target.value })}
+                            >
+                              {["twitter", "instagram", "youtube", "tiktok", "website"].map((platform) => (
+                                <option key={platform} value={platform}>
+                                  {platform[0].toUpperCase() + platform.slice(1)}
+                                </option>
+                              ))}
+                            </select>
+                            <Input
+                              value={link.url}
+                              aria-label={`${link.platform} URL`}
+                              placeholder="https://…"
+                              onChange={(event) => updateSocialLink(index, { url: event.target.value })}
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              aria-label="Remove link"
+                              onClick={() => removeSocialLink(index)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                      <Button type="button" variant="glass" size="sm" className="mt-2" onClick={addSocialLink}>
+                        <Plus className="mr-1.5 h-3.5 w-3.5" /> Add link
+                      </Button>
+                    </div>
+
                     <div className="flex gap-3 mt-4">
                       <Button onClick={handleSaveProfile}>
                         <Save className="mr-2 h-4 w-4" />
@@ -322,6 +450,7 @@ export default function Profile() {
                         <div className="flex items-center gap-2 text-muted-foreground">
                           <UserRound className="h-4 w-4" />
                           <span>@{profile.username}</span>
+                          {profile.pronouns && <span className="text-xs">({profile.pronouns})</span>}
                         </div>
                       </div>
                       
@@ -512,14 +641,14 @@ export default function Profile() {
                       <Card className="bg-muted/50">
                         <CardContent className="p-4">
                           <div className="text-xs text-muted-foreground mb-1">FOLLOWERS</div>
-                          <div className="text-2xl font-bold">{profile.followers ?? 0}</div>
+                          <div className="text-2xl font-bold">{stats?.followers ?? profile.followers ?? 0}</div>
                         </CardContent>
                       </Card>
                       
                       <Card className="bg-muted/50">
                         <CardContent className="p-4">
                           <div className="text-xs text-muted-foreground mb-1">STREAMS</div>
-                          <div className="text-2xl font-bold">{streams.length}</div>
+                          <div className="text-2xl font-bold">{stats?.sessions ?? streams.length}</div>
                         </CardContent>
                       </Card>
                       
@@ -534,9 +663,11 @@ export default function Profile() {
                       
                       <Card className="bg-muted/50">
                         <CardContent className="p-4">
-                          <div className="text-xs text-muted-foreground mb-1">TOTAL VIEWS</div>
+                          <div className="text-xs text-muted-foreground mb-1">
+                            {stats ? "HOURS STREAMED" : "TOTAL VIEWS"}
+                          </div>
                           <div className="text-2xl font-bold">
-                            {streams.reduce((sum, stream) => sum + (stream.viewerCount || 0), 0)}
+                            {stats ? stats.hoursStreamed : streams.reduce((sum, stream) => sum + (stream.viewerCount || 0), 0)}
                           </div>
                         </CardContent>
                       </Card>
@@ -544,6 +675,33 @@ export default function Profile() {
                   </div>
                 </CardContent>
                 <CardFooter className="border-t pt-6">
+                  {(profile.websiteUrl || profile.donationUrl) && (
+                    <div className="mb-4 flex flex-wrap gap-4">
+                      {profile.websiteUrl && (
+                        <a
+                          href={profile.websiteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <Globe className="h-4 w-4" />
+                          <span>Website</span>
+                        </a>
+                      )}
+                      {profile.donationUrl && (
+                        <a
+                          href={profile.donationUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <Heart className="h-4 w-4" />
+                          <span>Support this channel</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
+
                   {profile.socialLinks && profile.socialLinks.length > 0 ? (
                     <div className="w-full">
                       <h3 className="text-sm font-medium mb-3">Social Links</h3>

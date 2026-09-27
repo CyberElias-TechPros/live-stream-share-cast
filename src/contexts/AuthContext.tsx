@@ -19,7 +19,12 @@ export interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (username: string, email: string, password: string) => Promise<void>;
+  signup: (
+    username: string,
+    email: string,
+    password: string,
+    captchaToken?: string,
+  ) => Promise<{ verificationSent: boolean; email: string }>;
   logout: () => Promise<void>;
   updateProfile: (updates: Partial<User>) => Promise<void>;
   updateStreamerStatus: (isStreamer: boolean) => Promise<void>;
@@ -38,6 +43,8 @@ interface AuthResponse {
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
+  /** Present on signup: whether a verification mail was dispatched (or queued). */
+  emailVerificationSent?: boolean;
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
@@ -117,22 +124,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
-  const signup = async (username: string, email: string, password: string) => {
+  const signup = async (username: string, email: string, password: string, captchaToken?: string) => {
     try {
       setIsLoading(true);
       const data = await api.post<AuthResponse>(
         '/auth/signup',
-        { username, email, password, displayName: username },
+        { username, email, password, displayName: username, captchaToken },
         { auth: false },
       );
       await adoptSession(data);
 
       toast({
         title: 'Account created',
-        description: 'Welcome to I’m Live — you’re signed in.',
+        description: data.emailVerificationSent
+          ? 'Welcome to I’m Live — check your inbox to verify your email.'
+          : 'Welcome to I’m Live — you’re signed in.',
       });
 
-      navigate('/');
+      // When a verification mail went out, land on the confirmation screen so
+      // the user can resend it if the message never arrives.
+      navigate(data.emailVerificationSent ? `/verify-email?email=${encodeURIComponent(email)}` : '/');
+
+      return { verificationSent: !!data.emailVerificationSent, email };
     } catch (error) {
       console.error('Sign up error:', error);
       const message =

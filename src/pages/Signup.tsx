@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import AuthLayout from "@/components/AuthLayout";
+import CaptchaWidget from "@/components/CaptchaWidget";
 import {
   isValidEmail,
   isValidUsername,
@@ -31,14 +32,21 @@ export default function Signup() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaRequired, setCaptchaRequired] = useState(false);
 
   const { toast } = useToast();
   const navigate = useNavigate();
   const { isAuthenticated, signup, isLoading } = useAuth();
 
+  // Set the moment the form is submitted: the auth context routes new accounts
+  // (to /verify-email when a confirmation mail goes out), so the
+  // "already signed in" redirect must not fight it.
+  const submittingRef = useRef(false);
+
   // Redirect if already authenticated
   useEffect(() => {
-    if (isAuthenticated && !isLoading) {
+    if (isAuthenticated && !isLoading && !submittingRef.current) {
       navigate("/stream", { replace: true });
     }
   }, [isAuthenticated, isLoading, navigate]);
@@ -95,11 +103,22 @@ export default function Signup() {
         return;
       }
 
+      if (captchaRequired && !captchaToken) {
+        toast({
+          title: "Complete the human check",
+          description: "Finish the verification below so we know you are not a bot.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       setIsSubmitting(true);
-      await signup(sanitizedUsername, sanitizedEmail, password);
+      submittingRef.current = true;
+      await signup(sanitizedUsername, sanitizedEmail, password, captchaToken ?? undefined);
       // The auth context will handle navigation and toast on success
     } catch (error: any) {
       console.error("Signup error:", error);
+      submittingRef.current = false;
     } finally {
       setIsSubmitting(false);
     }
@@ -246,12 +265,22 @@ export default function Signup() {
             )}
           </div>
 
+          <CaptchaWidget
+            className="flex justify-center"
+            onToken={(token) => {
+              setCaptchaToken(token);
+              // The widget only reports a token once the provider is live on
+              // this deployment, so any callback means the check is required.
+              setCaptchaRequired(token !== null || captchaRequired);
+            }}
+          />
+
           <Button
             type="submit"
             variant="glow"
             size="lg"
             className="w-full"
-            disabled={isSubmitting || Object.keys(fieldErrors).length > 0}
+            disabled={isSubmitting || Object.keys(fieldErrors).length > 0 || (captchaRequired && !captchaToken)}
           >
             {isSubmitting ? "Creating your channel…" : "Create account"}
             {!isSubmitting && <ArrowRight className="transition-transform duration-300 group-hover/btn:translate-x-1" />}

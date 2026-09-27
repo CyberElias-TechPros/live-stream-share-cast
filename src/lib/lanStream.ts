@@ -13,6 +13,7 @@
  *   viewer → streamer : offer          (recvonly SDP)
  *   streamer → viewer : answer
  *   both → each other: ice             (candidates; queued until remote desc)
+ *   viewer → streamer : quality        (optional per-viewer bitrate cap)
  *   leaving peer      : close
  *
  * Frames carrying a `to` field are routed to that single peer; everything else
@@ -21,22 +22,68 @@
  */
 
 import { apiSocket } from "@/integrations/api/client";
+import { platformService } from "@/services/platformService";
 
 export type LanState = "idle" | "waiting" | "ready" | "connecting" | "connected" | "failed";
+
+/**
+ * `local` keeps media on the network — no TURN relay is offered, so a connection
+ * that needs one simply fails instead of leaving the LAN. `internet` adds the
+ * TURN credentials minted by the Worker, which is what gets viewers behind
+ * symmetric NAT or on mobile networks connected.
+ */
+export type TransportMode = "local" | "internet";
 
 interface SignalMsg {
   from: string;
   to?: string;
-  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close";
+  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close" | "quality";
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
+  /** Requested ceiling for this viewer, in kbps. `null` restores automatic. */
+  kbps?: number | null;
 }
 
-const ICE_CONFIG: RTCConfiguration = {
-  // LAN: host candidates connect directly. A public STUN is included as a
-  // harmless fallback for odd network topologies — no TURN, no relay.
-  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-};
+/**
+ * Fallback used only when `/api/config/rtc/ice` cannot be reached: host
+ * candidates still connect peers on the same network.
+ */
+const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+
+let cachedIceServers: RTCIceServer[] | null = null;
+let icePromise: Promise<RTCIceServer[]> | null = null;
+
+/**
+ * STUN/TURN servers for this session.
+ *
+ * TURN credentials are minted per request by the Worker (they expire), so they
+ * are cached in memory only — never persisted to storage.
+ */
+async function iceServers(): Promise<RTCIceServer[]> {
+  if (cachedIceServers) return cachedIceServers;
+  icePromise ??= platformService
+    .iceServers()
+    .then((servers) => {
+      cachedIceServers = servers.length ? servers : FALLBACK_ICE_SERVERS;
+      return cachedIceServers;
+    })
+    .catch(() => FALLBACK_ICE_SERVERS)
+    .finally(() => {
+      icePromise = null;
+    });
+  return icePromise;
+}
+
+async function iceConfiguration(mode: TransportMode = "internet"): Promise<RTCConfiguration> {
+  const servers = await iceServers();
+  return {
+    // Local mode strips the relays: direct (host/STUN-reflexive) candidates only.
+    iceServers: mode === "local" ? servers.filter((server) => !String(server.urls).startsWith("turn")) : servers,
+    // A relay-only fallback is used by the browser when no direct path exists.
+    iceTransportPolicy: "all",
+    bundlePolicy: "max-bundle",
+  };
+}
 
 const channelName = (streamId: string) => `lan-stream-${streamId}`;
 
@@ -136,6 +183,7 @@ export class LanStreamer {
   private media: MediaStream;
   private streamId: string;
   private me = selfId();
+  private mode: TransportMode;
   private pcs = new Map<string, RTCPeerConnection>();
   private sig: { send: (m: SignalMsg) => void; unsubscribe: () => void } | null = null;
   private readyTimer: number | null = null;
@@ -143,10 +191,38 @@ export class LanStreamer {
 
   onViewerCount: ((count: number) => void) | null = null;
   onStateChange: ((active: boolean) => void) | null = null;
+  /** Fires when a viewer asks for a different quality (kbps null = automatic). */
+  onQualityHint: ((viewer: string, kbps: number | null) => void) | null = null;
 
-  constructor(streamId: string, media: MediaStream) {
+  constructor(streamId: string, media: MediaStream, mode: TransportMode = "internet") {
     this.streamId = streamId;
     this.media = media;
+    this.mode = mode;
+  }
+
+  /**
+   * Applies a viewer's quality choice to the encodings we send them. Browsers
+   * that do not support `setParameters` simply keep the original encoding, so
+   * the request is best-effort and never breaks the call.
+   */
+  private async applyQuality(viewer: string, kbps: number | null) {
+    const pc = this.pcs.get(viewer);
+    if (!pc) return;
+
+    for (const sender of pc.getSenders()) {
+      if (!sender.track) continue;
+      try {
+        const params = sender.getParameters();
+        params.encodings = params.encodings?.length ? params.encodings : [{}];
+        for (const encoding of params.encodings) {
+          if (kbps === null) delete encoding.maxBitrate;
+          else encoding.maxBitrate = kbps * 1000;
+        }
+        await sender.setParameters(params);
+      } catch (err) {
+        console.warn("[LAN] could not apply quality hint:", err);
+      }
+    }
   }
 
   get activeViewers(): number {
@@ -191,6 +267,11 @@ export class LanStreamer {
         if (msg.sdp) void this.handleOffer(msg.from, msg.sdp);
         break;
 
+      case "quality":
+        this.onQualityHint?.(msg.from, msg.kbps ?? null);
+        void this.applyQuality(msg.from, msg.kbps ?? null);
+        break;
+
       case "ice": {
         const pc = this.pcs.get(msg.from);
         if (pc && msg.candidate) {
@@ -215,7 +296,7 @@ export class LanStreamer {
       this.pcs.delete(from);
     }
 
-    const pc = new RTCPeerConnection(ICE_CONFIG);
+    const pc = new RTCPeerConnection(await iceConfiguration(this.mode));
     this.pcs.set(from, pc);
 
     // Send all current tracks on this connection.
@@ -301,6 +382,7 @@ export class LanStreamer {
 
 export class LanViewer {
   private streamId: string;
+  private mode: TransportMode;
   private me = selfId();
   private pc: RTCPeerConnection | null = null;
   private queuedCandidates: RTCIceCandidateInit[] = [];
@@ -309,21 +391,41 @@ export class LanViewer {
   private stopped = false;
   private _ready = false;
 
+  /** Set from the host's `streamer-ready` frame, used to address quality hints. */
+  private streamerId: string | null = null;
+
   onStream: ((media: MediaStream | null) => void) | null = null;
   onState: ((state: LanState) => void) | null = null;
 
-  constructor(streamId: string) {
+  constructor(streamId: string, mode: TransportMode = "internet") {
     this.streamId = streamId;
+    this.mode = mode;
   }
 
   get streamerReady(): boolean {
     return this._ready;
   }
 
-  connect() {
+  /** The live peer connection, for measuring real playback statistics. */
+  get peerConnection(): RTCPeerConnection | null {
+    return this.pc;
+  }
+
+  /**
+   * Asks the host to cap the video bitrate sent to this viewer. `null` restores
+   * the host's automatic encoding. Works because the host owns the encoder —
+   * the request travels over the same signalling channel as the SDP.
+   */
+  requestQuality(kbps: number | null): void {
+    if (!this.pc) return;
+    this.send({ from: this.me, to: this.streamerId ?? undefined, type: "quality", kbps });
+  }
+
+  /** Opens the peer connection (ICE servers resolved on demand). */
+  async connect(): Promise<void> {
     if (this.pc) return;
 
-    this.pc = new RTCPeerConnection(ICE_CONFIG);
+    this.pc = new RTCPeerConnection(await iceConfiguration(this.mode));
 
     this.pc.addTransceiver("video", { direction: "recvonly" });
     this.pc.addTransceiver("audio", { direction: "recvonly" });
@@ -387,6 +489,7 @@ export class LanViewer {
 
     switch (msg.type) {
       case "streamer-ready":
+        this.streamerId = msg.from;
         if (!this._ready) {
           this._ready = true;
           if (this.helloTimer) window.clearInterval(this.helloTimer);

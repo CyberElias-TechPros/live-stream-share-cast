@@ -6,7 +6,7 @@
  * the app needs to know which backend is behind it.
  */
 
-import { api } from '@/integrations/api/client';
+import { api, tokenStore } from '@/integrations/api/client';
 import { toStream, toStreamSessions, toStreamStatsList } from '@/integrations/api/mappers';
 import type { Stream, StreamStats, StreamSession } from '@/types';
 
@@ -181,9 +181,14 @@ export const liveStreamService = {
     return this.updateStreamInfo(streamId, { recordingUrl }) && this.setRecordingExpiry(streamId, retentionHours);
   },
 
+  /**
+   * Marks the stream as having a recording and (re)computes its retention
+   * window on the server. Previously this called `/start`, which would have
+   * re-opened an ended broadcast.
+   */
   async setRecordingExpiry(streamId: string, retentionHours: number): Promise<boolean> {
     try {
-      await api.post(`/streams/${streamId}/start`, { isRecording: true });
+      await api.patch(`/streams/${streamId}`, { isRecording: true, retentionHours });
       return true;
     } catch {
       return false;
@@ -192,7 +197,7 @@ export const liveStreamService = {
 
   async getStreamSessions(userId?: string): Promise<StreamSession[]> {
     try {
-      const path = !userId || userId === currentUserId() ? '/users/me/sessions' : `/users/${userId}/sessions`;
+      const path = !userId || userId === tokenStore.userId ? '/users/me/sessions' : `/users/${userId}/sessions`;
       const data = await api.get<{ sessions: unknown[] }>(path);
       return toStreamSessions(data.sessions);
     } catch (error) {
@@ -253,6 +258,20 @@ export const liveStreamService = {
     }
   },
 
+  /**
+   * Rotates the channel's stream key. The old key is invalid after this call,
+   * so the caller should update wherever it was stored.
+   */
+  async regenerateStreamKey(streamId: string): Promise<string | null> {
+    try {
+      const data = await api.post<{ streamKey: string }>(`/streams/${streamId}/key`);
+      return data.streamKey ?? null;
+    } catch (error) {
+      console.error('Error rotating the stream key:', error);
+      return null;
+    }
+  },
+
   async deleteStream(streamId: string): Promise<boolean> {
     try {
       await api.delete(`/streams/${streamId}`);
@@ -265,20 +284,6 @@ export const liveStreamService = {
 };
 
 /* --------------------------------- helpers ----------------------------------- */
-
-function currentUserId(): string | null {
-  try {
-    // Imported lazily to keep this module free of circular imports.
-    const token = localStorage.getItem('lsc.access_token');
-    if (!token) return null;
-    const payload = token.split('.')[1];
-    if (!payload) return null;
-    const padded = payload.replace(/-/g, '+').replace(/_/g, '/');
-    return (JSON.parse(atob(padded + '='.repeat((4 - (padded.length % 4)) % 4))) as { sub?: string }).sub ?? null;
-  } catch {
-    return null;
-  }
-}
 
 function toStreams(rows: unknown[] | undefined): Stream[] {
   return (rows ?? []).map(toStream);

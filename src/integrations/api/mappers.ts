@@ -42,7 +42,7 @@ export function toStream(dto: any): Stream {
     recordingUrl: dto.recordingUrl ?? undefined,
     recordingExpiry: toDate(dto.recordingExpiry),
     streamType: dto.streamType === 'local' ? 'local' : 'internet',
-    ...('peakViewers' in dto ? { peakViewers: dto.peakViewers } : {}),
+    peakViewers: dto.peakViewers ?? undefined,
     ...('hostConnected' in dto ? { hostConnected: !!dto.hostConnected } : {}),
   } as Stream;
 }
@@ -92,10 +92,15 @@ export function toUser(dto: any): User {
     followers: dto.followers ?? 0,
     following: dto.following ?? 0,
     isStreamer: !!dto.isStreamer,
+    isAdmin: !!dto.isAdmin,
+    emailVerified: dto.emailVerified === undefined ? undefined : !!dto.emailVerified,
     createdAt: toDate(dto.createdAt) ?? new Date(),
     updatedAt: toDate(dto.updatedAt),
     lastSeen: toDate(dto.lastSeen),
     socialLinks: (dto.socialLinks ?? undefined) as SocialLink[] | undefined,
+    websiteUrl: dto.websiteUrl ?? null,
+    donationUrl: dto.donationUrl ?? null,
+    pronouns: dto.pronouns ?? null,
     preferences: (dto.preferences ?? defaultPreferences()) as UserPreferences,
   };
 }
@@ -133,3 +138,105 @@ export function toStreamStats(dto: any): StreamStats {
 }
 
 export const toStreamStatsList = (rows: any[] | undefined): StreamStats[] => (rows ?? []).map(toStreamStats);
+
+/* ------------------------ notifications / VOD / schedule ---------------------- */
+
+export function toNotification(dto: any) {
+  return {
+    id: dto.id,
+    type: dto.type ?? 'system',
+    title: dto.title ?? '',
+    body: dto.body ?? undefined,
+    url: dto.url ?? undefined,
+    actorId: dto.actorId ?? undefined,
+    actorUsername: dto.actorUsername ?? undefined,
+    actorAvatar: dto.actorAvatar ?? undefined,
+    streamId: dto.streamId ?? undefined,
+    data: dto.data ?? null,
+    readAt: toDate(dto.readAt),
+    createdAt: toDate(dto.createdAt) ?? new Date(),
+  };
+}
+
+export const toNotifications = (rows: any[] | undefined) => (rows ?? []).map(toNotification);
+
+export function toRecording(dto: any) {
+  return {
+    id: dto.id,
+    title: dto.title,
+    description: dto.description ?? undefined,
+    url: dto.url ?? null,
+    thumbnail: dto.thumbnail ?? null,
+    durationSeconds: dto.durationSeconds ?? null,
+    sizeBytes: dto.sizeBytes ?? null,
+    mimeType: dto.mimeType ?? null,
+    visibility: (dto.visibility ?? 'public') as 'public' | 'unlisted' | 'private',
+    status: dto.status ?? 'ready',
+    source: dto.source ?? 'live',
+    views: dto.views ?? 0,
+    watchMinutes: dto.watchMinutes ?? 0,
+    category: dto.category ?? null,
+    tags: dto.tags ?? [],
+    isMature: !!dto.isMature,
+    clipOf: dto.clipOf ?? null,
+    clipStart: dto.clipStart ?? null,
+    clipEnd: dto.clipEnd ?? null,
+    retentionExpiresAt: toDate(dto.retentionExpiresAt) ?? null,
+    publishedAt: toDate(dto.publishedAt) ?? null,
+    createdAt: toDate(dto.createdAt) ?? new Date(),
+    updatedAt: toDate(dto.updatedAt) ?? null,
+    streamId: dto.streamId ?? null,
+    userId: dto.userId,
+    username: dto.username ?? undefined,
+    displayName: dto.displayName ?? undefined,
+    userAvatar: dto.userAvatar ?? undefined,
+    isOwner: !!dto.isOwner,
+    isClip: !!dto.isClip,
+  };
+}
+
+export const toRecordings = (rows: any[] | undefined) => (rows ?? []).map(toRecording);
+
+export function toScheduledBroadcast(dto: any) {
+  return {
+    id: dto.id,
+    title: dto.title,
+    description: dto.description ?? null,
+    category: dto.category ?? null,
+    tags: dto.tags ?? [],
+    thumbnail: dto.thumbnail ?? null,
+    scheduledFor: toDate(dto.scheduledFor) ?? new Date(),
+    durationMinutes: dto.durationMinutes ?? null,
+    timezone: dto.timezone ?? null,
+    status: dto.status ?? 'scheduled',
+    streamId: dto.streamId ?? null,
+    reminderCount: dto.reminderCount ?? 0,
+    reminderSentAt: toDate(dto.reminderSentAt) ?? null,
+    createdAt: toDate(dto.createdAt) ?? new Date(),
+    userId: dto.userId,
+    username: dto.username ?? undefined,
+    displayName: dto.displayName ?? undefined,
+    userAvatar: dto.userAvatar ?? undefined,
+    isOwner: !!dto.isOwner,
+    isReminded: !!dto.isReminded,
+  };
+}
+
+export const toScheduledBroadcasts = (rows: any[] | undefined) => (rows ?? []).map(toScheduledBroadcast);
+
+export function toReport(dto: any) {
+  return {
+    id: dto.id,
+    targetType: dto.targetType,
+    targetId: dto.targetId,
+    reason: dto.reason,
+    details: dto.details ?? null,
+    status: dto.status ?? 'open',
+    resolution: dto.resolution ?? null,
+    createdAt: toDate(dto.createdAt) ?? new Date(),
+    reporterUsername: dto.reporterUsername ?? null,
+    targetUsername: dto.targetUsername ?? null,
+  };
+}
+
+export const toReports = (rows: any[] | undefined) => (rows ?? []).map(toReport);

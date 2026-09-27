@@ -16,7 +16,23 @@ import {
   LineChart,
   Line,
 } from "recharts";
-import { UserRound, Video, Clock, Eye, BarChart3, Play, Settings, ListFilter, Radio } from "lucide-react";
+import {
+  UserRound,
+  Video,
+  Clock,
+  Eye,
+  BarChart3,
+  Play,
+  Settings,
+  ListFilter,
+  Radio,
+  DollarSign,
+  Film,
+  TrendingUp,
+  Trash2,
+  Download,
+  ExternalLink,
+} from "lucide-react";
 import Navigation from "@/components/Navigation";
 import { Stream, StreamSession } from "@/types";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,15 +49,27 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { analyticsService, type AnalyticsOverview } from "@/services/analyticsService";
+import { recordingService } from "@/services/recordingService";
+import { tipService } from "@/services/tipService";
+import { useToast } from "@/hooks/use-toast";
+import type { Recording, Tip } from "@/types";
 
 export default function Dashboard() {
   const [streams, setStreams] = useState<Stream[]>([]);
   const [sessions, setSessions] = useState<StreamSession[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "live" | "ended">("all");
-  
+  const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
+  const [recordings, setRecordings] = useState<Recording[]>([]);
+  const [earnings, setEarnings] = useState<{ totalCents: number; paidCents: number; pendingCents: number; currency: string; tipCount: number; donationUrl?: string | null } | null>(null);
+  const [tips, setTips] = useState<Tip[]>([]);
+  const [donationLink, setDonationLink] = useState('');
+
   const { user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
   const accentColor = useAccentColor("--accent-mid");
   
   useEffect(() => {
@@ -54,13 +82,22 @@ export default function Dashboard() {
       setIsLoading(true);
       if (user) {
         try {
-          const [userStreams, streamSessions] = await Promise.all([
+          const [userStreams, streamSessions, analytics, myRecordings, earningsSummary, myTips] = await Promise.all([
             profileService.getUserStreams(user.id),
-            liveStreamService.getStreamSessions(user.id)
+            liveStreamService.getStreamSessions(user.id),
+            analyticsService.overview(30),
+            recordingService.mine(),
+            tipService.earnings(),
+            tipService.myTips(),
           ]);
-          
+
           setStreams(userStreams);
           setSessions(streamSessions);
+          setOverview(analytics);
+          setRecordings(myRecordings);
+          setEarnings(earningsSummary);
+          setTips(myTips);
+          setDonationLink(earningsSummary?.donationUrl ?? '');
         } catch (error) {
           console.error("Error fetching dashboard data:", error);
         } finally {
@@ -92,6 +129,57 @@ export default function Dashboard() {
     date,
     sessions: count
   }));
+
+  // Server-side analytics (analytics_daily rollups) — the source of truth for
+  // watch minutes, unique viewers and tips.
+  const insightSeries = (overview?.series ?? []).map((point) => ({
+    day: point.day,
+    watchMinutes: point.watchMinutes,
+    uniqueViewers: point.uniqueViewers,
+    newFollowers: point.newFollowers,
+    chatMessages: point.chatMessages,
+  }));
+
+  /** CSV of the persisted daily rollups — same numbers as the chart, for spreadsheets. */
+  const exportDailyRollup = async () => {
+    const days = await analyticsService.daily(90);
+    if (days.length === 0) {
+      toast({ title: 'Nothing to export yet', description: 'Daily stats appear after your next broadcast.' });
+      return;
+    }
+
+    const columns: Array<keyof (typeof days)[number]> = [
+      'day',
+      'watchMinutes',
+      'uniqueViewers',
+      'peakViewers',
+      'newFollowers',
+      'chatMessages',
+      'tipsCents',
+    ];
+    const csv = [columns.join(','), ...days.map((row) => columns.map((column) => row[column] ?? 0).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `im-live-analytics-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const saveDonationLink = async () => {
+    const ok = await tipService.setDonationLink(donationLink.trim() || null);
+    toast({ title: ok ? 'Donation link saved' : 'Could not save the donation link', variant: ok ? undefined : 'destructive' });
+  };
+
+  const deleteRecording = async (recording: Recording) => {
+    if (!window.confirm(`Delete “${recording.title}”?`)) return;
+    const ok = await recordingService.remove(recording.id);
+    if (ok) setRecordings((current) => current.filter((item) => item.id !== recording.id));
+    toast({ title: ok ? 'Recording deleted' : 'Could not delete recording', variant: ok ? undefined : 'destructive' });
+  };
   
   // Filter streams based on selected filter
   const filteredStreams = streams.filter(stream => {
@@ -211,11 +299,13 @@ export default function Dashboard() {
             
             {/* Analytics */}
             <Tabs defaultValue="streams" className="space-y-8">
-              <TabsList className="grid grid-cols-2 sm:grid-cols-4 sm:w-[600px]">
+              <TabsList className="grid w-full grid-cols-3 sm:w-[760px] sm:grid-cols-6">
                 <TabsTrigger value="streams">Streams</TabsTrigger>
                 <TabsTrigger value="viewers">Viewers</TabsTrigger>
                 <TabsTrigger value="sessions">Sessions</TabsTrigger>
-                <TabsTrigger value="analytics">Analytics</TabsTrigger>
+                <TabsTrigger value="analytics">Activity</TabsTrigger>
+                <TabsTrigger value="insights">Insights</TabsTrigger>
+                <TabsTrigger value="earnings">Earnings</TabsTrigger>
               </TabsList>
               
               <TabsContent value="streams" className="space-y-6">
@@ -237,6 +327,46 @@ export default function Dashboard() {
                   </DropdownMenu>
                 </div>
                 
+                {recordings.length > 0 && (
+                  <Card className="rounded-2xl border-white/8 bg-card/70">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="flex items-center gap-2 text-base">
+                        <Film className="h-4 w-4 text-[hsl(var(--accent-mid))]" />
+                        Latest recordings
+                      </CardTitle>
+                      <CardDescription>Auto-deleted when their retention window ends · manage them in the library</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {recordings.slice(0, 4).map((recording) => (
+                        <div key={recording.id} className="flex items-center justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{recording.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {recording.views} views · {recording.visibility} ·{' '}
+                              {formatDistanceToNow(recording.createdAt, { addSuffix: true })}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 gap-2">
+                            <Button size="sm" variant="glass" asChild>
+                              <a href="/library">
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </a>
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="glass"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => void deleteRecording(recording)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                )}
+
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {filteredStreams.length > 0 ? (
                     filteredStreams.map(stream => (
@@ -459,6 +589,159 @@ export default function Dashboard() {
                         <Line type="monotone" dataKey="sessions" stroke={accentColor} strokeWidth={2.5} dot={{ r: 3, fill: accentColor }} activeDot={{ r: 5 }} name="Sessions" />
                       </LineChart>
                     </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="insights" className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                  {[
+                    { label: 'Watch minutes', value: (overview?.totals.watchMinutes ?? 0).toLocaleString() },
+                    { label: 'Unique viewers', value: (overview?.totals.uniqueViewers ?? 0).toLocaleString() },
+                    { label: 'New followers', value: (overview?.totals.newFollowers ?? 0).toLocaleString() },
+                    { label: 'Chat messages', value: (overview?.totals.chatMessages ?? 0).toLocaleString() },
+                  ].map((item) => (
+                    <Card key={item.label} className="rounded-2xl border-white/8 bg-card/70 backdrop-blur-md">
+                      <CardContent className="pt-6">
+                        <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground/70 mb-1.5">{item.label}</p>
+                        <p className="font-display text-3xl font-bold">{item.value}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">last {overview?.range.days ?? 30} days</p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                <Card className="rounded-2xl border-white/8 bg-card/70">
+                  <CardHeader>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <CardTitle className="flex items-center gap-2">
+                          <TrendingUp className="h-4 w-4 text-[hsl(var(--accent-mid))]" />
+                          Watch minutes &amp; audience
+                        </CardTitle>
+                        <CardDescription>Rolled up nightly from viewer watch sessions</CardDescription>
+                      </div>
+                      <Button size="sm" variant="glass" onClick={() => void exportDailyRollup()}>
+                        <Download className="mr-1.5 h-3.5 w-3.5" /> Export CSV
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    {insightSeries.length > 0 ? (
+                      <ResponsiveContainer width="100%" height={380}>
+                        <LineChart data={insightSeries}>
+                          <CartesianGrid stroke="hsl(252 20% 16%)" strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="day" stroke="hsl(252 14% 64%)" fontSize={12} tickLine={false} axisLine={false} />
+                          <YAxis stroke="hsl(252 14% 64%)" fontSize={12} tickLine={false} axisLine={false} />
+                          <Tooltip
+                            contentStyle={{ background: "hsl(252 36% 6%)", border: "1px solid hsl(252 20% 16%)", borderRadius: "12px", color: "hsl(250 30% 96%)" }}
+                            labelStyle={{ color: "hsl(250 30% 96%)" }}
+                          />
+                          <Legend wrapperStyle={{ color: "hsl(252 14% 64%)" }} />
+                          <Line type="monotone" dataKey="watchMinutes" stroke={accentColor} strokeWidth={2.5} dot={false} name="Watch minutes" />
+                          <Line type="monotone" dataKey="uniqueViewers" stroke="hsl(190 90% 55%)" strokeWidth={2} dot={false} name="Unique viewers" />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <p className="py-12 text-center text-sm text-muted-foreground">
+                        No analytics yet — numbers appear after your next broadcast, once the hourly rollup runs.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-2xl border-white/8 bg-card/70">
+                  <CardHeader>
+                    <CardTitle>Top broadcasts</CardTitle>
+                    <CardDescription>Ranked by peak viewers</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {(overview?.topStreams ?? []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No broadcast data yet.</p>
+                    ) : (
+                      overview!.topStreams.map((item) => (
+                        <div key={item.streamId} className="flex items-center justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{item.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.peakViewers} peak · {Math.round(item.watchMinutes)} watch minutes
+                            </p>
+                          </div>
+                          <Button size="sm" variant="glass" onClick={() => handleViewStream(item.streamId)}>
+                            Open
+                          </Button>
+                        </div>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="earnings" className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-3">
+                  {[
+                    { label: 'Paid out', value: earnings ? `$${(earnings.paidCents / 100).toFixed(2)}` : '—' },
+                    { label: 'Pending', value: earnings ? `$${(earnings.pendingCents / 100).toFixed(2)}` : '—' },
+                    { label: 'Tips received', value: earnings ? String(earnings.tipCount) : '—' },
+                  ].map((item) => (
+                    <Card key={item.label} className="rounded-2xl border-white/8 bg-card/70 backdrop-blur-md">
+                      <CardContent className="pt-6">
+                        <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground/70 mb-1.5">{item.label}</p>
+                        <p className="font-display text-3xl font-bold">{item.value}</p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+
+                <Card className="rounded-2xl border-white/8 bg-card/70">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <DollarSign className="h-4 w-4 text-[hsl(145_70%_55%)]" />
+                      Support links
+                    </CardTitle>
+                    <CardDescription>
+                      When card payments are not configured, viewers are sent to this link instead.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-3 sm:flex-row">
+                    <Input
+                      value={donationLink}
+                      onChange={(event) => setDonationLink(event.target.value)}
+                      placeholder="https://buymeacoffee.com/yourname"
+                      maxLength={500}
+                    />
+                    <Button variant="glow" onClick={() => void saveDonationLink()}>
+                      Save link
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card className="rounded-2xl border-white/8 bg-card/70">
+                  <CardHeader>
+                    <CardTitle>Recent tips</CardTitle>
+                    <CardDescription>Everything supporters sent your way</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {tips.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No tips yet.</p>
+                    ) : (
+                      tips.slice(0, 8).map((tip) => (
+                        <div key={tip.id} className="flex items-center justify-between gap-4 rounded-xl border border-white/8 bg-white/[0.02] p-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">
+                              ${(tip.amountCents / 100).toFixed(2)} {tip.currency}
+                              {tip.message ? ` — “${tip.message}”` : ''}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(tip.createdAt, { addSuffix: true })}
+                            </p>
+                          </div>
+                          <Badge variant={tip.status === 'paid' ? 'secondary' : 'outline'} className="capitalize">
+                            {tip.status}
+                          </Badge>
+                        </div>
+                      ))
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>

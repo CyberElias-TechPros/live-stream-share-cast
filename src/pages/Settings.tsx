@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
+import { AvatarUploadButton } from "@/components/AvatarUploadButton";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -21,9 +22,13 @@ import {
   Clock,
   Moon,
   Sun,
-  Laptop
+  Laptop,
+  Lock,
+  Plug
 } from "lucide-react";
 import Navigation from "@/components/Navigation";
+import SecurityPanel from "@/components/settings/SecurityPanel";
+import IntegrationsPanel from "@/components/settings/IntegrationsPanel";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { UserPreferences } from "@/types";
@@ -70,7 +75,7 @@ const streamingSettingsSchema = z.object({
 
 export default function Settings() {
   const [activeTab, setActiveTab] = useState("profile");
-  const { user, isAuthenticated, updateProfile, updateStreamerStatus, updateUserPreferences } = useAuth();
+  const { user, isAuthenticated, updateProfile, updateStreamerStatus, updateUserPreferences, refreshUser } = useAuth();
   const navigate = useNavigate();
   
   useEffect(() => {
@@ -278,6 +283,24 @@ export default function Settings() {
                 <Video className="mr-2 h-4 w-4" />
                 Streaming
               </Button>
+
+              <Button
+                variant={activeTab === "integrations" ? "default" : "ghost"}
+                className="w-full justify-start"
+                onClick={() => setActiveTab("integrations")}
+              >
+                <Plug className="mr-2 h-4 w-4" />
+                Integrations
+              </Button>
+
+              <Button
+                variant={activeTab === "security" ? "default" : "ghost"}
+                className="w-full justify-start"
+                onClick={() => setActiveTab("security")}
+              >
+                <Lock className="mr-2 h-4 w-4" />
+                Security
+              </Button>
             </div>
             
             <div className="flex-1 space-y-6">
@@ -301,10 +324,12 @@ export default function Settings() {
                           </Avatar>
                           
                           <div>
-                            <Button variant="outline">
-                              <UploadCloud className="mr-2 h-4 w-4" />
-                              Change Avatar
-                            </Button>
+                            <AvatarUploadButton
+                              onUploaded={async (url) => {
+                                await updateProfile({ avatar: url });
+                                await refreshUser();
+                              }}
+                            />
                           </div>
                         </div>
                         
@@ -763,6 +788,10 @@ export default function Settings() {
                   </form>
                 </Form>
               )}
+
+              {activeTab === "integrations" && <IntegrationsPanel />}
+
+              {activeTab === "security" && <SecurityPanel />}
             </div>
           </div>
         </div>

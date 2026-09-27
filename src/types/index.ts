@@ -15,6 +15,9 @@ export interface Stream {
   qualityOptions?: StreamQuality[];
   startedAt?: Date;
   endedAt?: Date;
+  /** Populated while broadcasting (host side) and by the analytics summary. */
+  peakViewers?: number;
+  /** Measured receive bitrate, filled in by the player when it is known. */
   bandwidth?: number;
   category?: string;
   tags?: string[];
@@ -47,10 +50,17 @@ export interface User {
   followers?: number;
   following?: number;
   isStreamer?: boolean;
+  /** Only present on the signed-in user's own record. */
+  isAdmin?: boolean;
+  emailVerified?: boolean;
   createdAt: Date;
   updatedAt?: Date;
   lastSeen?: Date;
   socialLinks?: SocialLink[];
+  /** Public profile details the owner can fill in. */
+  websiteUrl?: string | null;
+  donationUrl?: string | null;
+  pronouns?: string | null;
   preferences?: UserPreferences;
 }
 
@@ -172,4 +182,209 @@ export interface ChatMessage {
   isModerated?: boolean;
   type: 'text' | 'emote' | 'donation' | 'system';
   metadata?: any;
+}
+
+/* ------------------------------- notifications ------------------------------- */
+
+export interface AppNotification {
+  id: string;
+  type: 'stream_live' | 'follow' | 'chat_reply' | 'chat_mention' | 'tip' | 'system' | 'moderation' | 'schedule' | string;
+  title: string;
+  body?: string;
+  url?: string;
+  actorId?: string;
+  actorUsername?: string;
+  actorAvatar?: string;
+  streamId?: string;
+  data?: Record<string, unknown> | null;
+  readAt?: Date;
+  createdAt: Date;
+}
+
+/* --------------------------------- recordings -------------------------------- */
+
+export interface Recording {
+  id: string;
+  title: string;
+  description?: string;
+  url?: string | null;
+  thumbnail?: string | null;
+  durationSeconds?: number | null;
+  sizeBytes?: number | null;
+  mimeType?: string | null;
+  visibility: 'public' | 'unlisted' | 'private';
+  status: 'processing' | 'ready' | 'failed' | 'deleted';
+  source: 'live' | 'upload' | 'clip' | string;
+  views: number;
+  watchMinutes: number;
+  category?: string | null;
+  tags: string[];
+  isMature: boolean;
+  clipOf?: string | null;
+  clipStart?: number | null;
+  clipEnd?: number | null;
+  retentionExpiresAt?: Date | null;
+  publishedAt?: Date | null;
+  createdAt: Date;
+  updatedAt?: Date | null;
+  streamId?: string | null;
+  userId: string;
+  username?: string;
+  displayName?: string;
+  userAvatar?: string;
+  isOwner: boolean;
+  isClip: boolean;
+}
+
+/* ---------------------------------- schedule --------------------------------- */
+
+export interface ScheduledBroadcast {
+  id: string;
+  title: string;
+  description?: string | null;
+  category?: string | null;
+  tags: string[];
+  thumbnail?: string | null;
+  scheduledFor: Date;
+  durationMinutes?: number | null;
+  timezone?: string | null;
+  status: 'scheduled' | 'live' | 'completed' | 'cancelled';
+  streamId?: string | null;
+  reminderCount: number;
+  reminderSentAt?: Date | null;
+  createdAt: Date;
+  userId: string;
+  username?: string;
+  displayName?: string;
+  userAvatar?: string;
+  isOwner: boolean;
+  isReminded: boolean;
+}
+
+/* -------------------------------- moderation --------------------------------- */
+
+export interface ContentReport {
+  id: string;
+  targetType: 'stream' | 'user' | 'chat_message' | 'recording';
+  targetId: string;
+  reason: string;
+  details?: string | null;
+  status: 'open' | 'reviewing' | 'resolved' | 'dismissed';
+  resolution?: string | null;
+  createdAt: Date;
+  reporterUsername?: string | null;
+  targetUsername?: string | null;
+}
+
+export interface BlockedUser {
+  id: string;
+  userId: string;
+  username: string;
+  displayName?: string;
+  avatar?: string;
+  createdAt: Date;
+}
+
+/*----------------------------------- tips ------------------------------------ */
+
+export interface TipConfig {
+  enabled: boolean;
+  provider: string;
+  currency: string;
+  minTipCents: number;
+  maxTipCents: number;
+  presets: number[];
+  hasDonationLink: boolean;
+  donationUrl?: string | null;
+}
+
+export interface Tip {
+  id: string;
+  amountCents: number;
+  currency: string;
+  message?: string | null;
+  status: 'pending' | 'paid' | 'failed' | 'refunded' | 'expired';
+  createdAt: Date;
+  paidAt?: Date | null;
+  streamerUsername?: string | null;
+  streamerName?: string | null;
+  streamerAvatar?: string | null;
+  checkoutUrl?: string | null;
+}
+
+/* ------------------------------- platform config ------------------------------ */
+
+export interface PlatformConfig {
+  brand: {
+    name: string;
+    tagline?: string;
+    url?: string | null;
+    supportEmail?: string | null;
+    docsUrl?: string | null;
+    statusUrl?: string | null;
+    socials: Record<string, string>;
+    termsVersion: string;
+    privacyVersion: string;
+    legalEntity?: string | null;
+    jurisdiction?: string | null;
+  };
+  limits: {
+    maxChatMessageLength: number;
+    maxTitleLength: number;
+    maxBioLength: number;
+    maxTags: number;
+    maxUploadBytes: number;
+    maxAvatarBytes: number;
+    recordingRetentionHours: number;
+    staleStreamMinutes: number;
+    chatHistoryPageSize: number;
+    maxStreamsPerUser: number;
+    maxScheduledPerUser: number;
+    defaultTipPresets: number[];
+  };
+  features: {
+    signups: boolean;
+    emailVerificationRequired: boolean;
+    chat: boolean;
+    scheduling: boolean;
+    vod: boolean;
+    clips: boolean;
+    tips: boolean;
+    webhooks: boolean;
+    apiTokens: boolean;
+    schedulingReminders: boolean;
+    modConsole: boolean;
+    dataExport: boolean;
+    accountDeletion: boolean;
+    pushNotifications: boolean;
+  };
+  captcha: { provider: string; siteKey?: string | null; enabled: boolean };
+  payments: {
+    provider: string;
+    enabled: boolean;
+    currency: string;
+    minTipCents: number;
+    maxTipCents: number;
+    presets: number[];
+  };
+  analytics: { provider: string; siteId?: string | null; scriptUrl?: string | null; sentryDsn?: string | null };
+  push: { enabled: boolean; publicKey?: string | null };
+  webrtc: { stunUrls: string[]; turnConfigured: boolean };
+  integrations: { email: boolean; turn: boolean; captcha: boolean; payments: boolean };
+  environment: string;
+  apiOrigin: string;
+  version: string;
+  serverTime: string;
+}
+
+export interface WatchHistoryEntry {
+  sessionId: string;
+  streamId?: string | null;
+  recordingId?: string | null;
+  title: string;
+  thumbnail?: string | null;
+  url?: string | null;
+  watchedSeconds: number;
+  joinedAt: Date;
+  leftAt?: Date | null;
 }

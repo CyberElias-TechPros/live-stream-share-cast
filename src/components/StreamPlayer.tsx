@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Stream, StreamStatus } from "@/types";
-import { LanViewer, type LanState } from "@/lib/lanStream";
+import { LanViewer, type LanState, type TransportMode } from "@/lib/lanStream";
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -32,7 +32,20 @@ interface StreamPlayerProps {
   autoPlay?: boolean;
   showControls?: boolean;
   showStats?: boolean;
+  /** Measured playback metrics, so pages can show real numbers. */
+  onStats?: (stats: PlayerStats) => void;
   className?: string;
+}
+
+export interface PlayerStats {
+  /** Bits per second currently being received, when measurable. */
+  bandwidth: number | null;
+  resolution: string | null;
+  frameRate: number | null;
+  bufferHealth: number | null;
+  /** The quality the viewer asked for (`auto` = let the host decide). */
+  quality: string;
+  transport: "p2p" | "direct";
 }
 
 export default function StreamPlayer({ 
@@ -41,6 +54,7 @@ export default function StreamPlayer({
   autoPlay = true,
   showControls = true,
   showStats = false,
+  onStats,
   className = ""
 }: StreamPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -53,8 +67,12 @@ export default function StreamPlayer({
   const containerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  /* ----- LAN mode: receive the stream peer-to-peer over the local network ----- */
-  const isLan = !!stream?.isLocalStream;
+  /* ----- Peer-to-peer: receive the media straight from the broadcaster -----
+     Every browser broadcast works this way, whether it is pinned to the local
+     network or allowed to use TURN relays. A stream with its own playback URL
+     (an upload, or a recording) is played back from the URL instead. */
+  const isLan = !!stream && !stream.recordingUrl && !stream.url && (stream.isLive || stream.isLocalStream);
+  const transportMode: TransportMode = stream?.streamType === 'local' ? 'local' : 'internet';
   const [lanState, setLanState] = useState<LanState>("idle");
   const [lanSoundBlocked, setLanSoundBlocked] = useState(false);
   const [lanEnded, setLanEnded] = useState(false);
@@ -62,7 +80,7 @@ export default function StreamPlayer({
 
   useEffect(() => {
     if (!isLan || status !== "live" || !stream) return;
-    const viewer = new LanViewer(stream.id);
+    const viewer = new LanViewer(stream.id, transportMode);
     lanViewerRef.current = viewer;
     viewer.onState = (s) => {
       setLanState(s);
@@ -98,11 +116,11 @@ export default function StreamPlayer({
       setLanSoundBlocked(false);
       setLanState("idle");
     };
-  }, [isLan, status, stream, toast]);
+  }, [isLan, status, stream, transportMode, toast]);
 
   const handleLanConnect = () => {
     setLanSoundBlocked(false);
-    lanViewerRef.current?.connect();
+    void lanViewerRef.current?.connect();
   };
 
   const handleLanUnmute = () => {
@@ -118,6 +136,16 @@ export default function StreamPlayer({
   const [resolution, setResolution] = useState<string | null>(null);
   const [frameRate, setFrameRate] = useState<number | null>(null);
   const [bufferHealth, setBufferHealth] = useState<number | null>(null);
+
+  // Keep the latest callback in a ref so sampling never restarts because the
+  // parent re-rendered with a new function identity.
+  const onStatsRef = useRef(onStats);
+  onStatsRef.current = onStats;
+  const bandwidthRef = useRef<number | null>(null);
+  const resolutionRef = useRef<string | null>(null);
+  const frameRateRef = useRef<number | null>(null);
+  const qualityRef = useRef(qualityOption);
+  qualityRef.current = qualityOption;
   
   useEffect(() => {
     if (autoPlay && videoRef.current && status === 'live') {
@@ -136,28 +164,88 @@ export default function StreamPlayer({
   }, [autoPlay, status, toast]);
   
   useEffect(() => {
-    if (showStats && videoRef.current && status === 'live') {
-      // In a real app, we would get these from WebRTC stats API
-      const statsInterval = setInterval(() => {
-        // Simulate bandwidth fluctuation
-        setBandwidth(Math.floor(Math.random() * 3000) + 1500); // 1.5-4.5 Mbps
-        setResolution(stream?.qualityOptions?.[0]?.resolution.width + 'x' + 
-                     stream?.qualityOptions?.[0]?.resolution.height || '1280x720');
-        setFrameRate(30);
-        
-        if (videoRef.current) {
-          const buffered = videoRef.current.buffered;
-          if (buffered.length > 0) {
-            const bufferEnd = buffered.end(buffered.length - 1);
-            const bufferSize = bufferEnd - videoRef.current.currentTime;
-            setBufferHealth(bufferSize);
-          }
+    if ((!showStats && !onStats) || status !== 'live') return;
+
+    let previousBytes = 0;
+    let previousFrames = 0;
+    let previousStamp = 0;
+
+    const sample = async () => {
+      const el = videoRef.current;
+      const pc = lanViewerRef.current?.peerConnection;
+      const stamp = performance.now();
+
+      // Peer-to-peer: the browser reports what is actually arriving.
+      if (pc && pc.connectionState === 'connected') {
+        try {
+          const report = await pc.getStats();
+          report.forEach((entry: RTCStats & { kind?: string; bytesReceived?: number; framesPerSecond?: number; frameWidth?: number; frameHeight?: number }) => {
+            if (entry.type !== 'inbound-rtp' || entry.kind === 'audio') return;
+            if (entry.bytesReceived !== undefined) {
+              if (previousBytes && stamp > previousStamp) {
+                const bps = Math.round(((entry.bytesReceived - previousBytes) * 8) / (stamp - previousStamp));
+                bandwidthRef.current = bps;
+                setBandwidth(bps);
+              }
+              previousBytes = entry.bytesReceived;
+            }
+            if (entry.frameWidth && entry.frameHeight) {
+              const size = `${entry.frameWidth}x${entry.frameHeight}`;
+              resolutionRef.current = size;
+              setResolution(size);
+            }
+            if (entry.framesPerSecond) {
+              const fps = Math.round(entry.framesPerSecond);
+              frameRateRef.current = fps;
+              setFrameRate(fps);
+            }
+          });
+          previousStamp = stamp;
+        } catch {
+          /* stats unavailable — fall through to element measurements */
         }
-      }, 2000);
-      
-      return () => clearInterval(statsInterval);
-    }
-  }, [showStats, status, stream]);
+      }
+
+      if (!el) return;
+
+      // Whatever the transport, the element knows its own dimensions.
+      if (el.videoWidth && el.videoHeight) {
+        const size = `${el.videoWidth}x${el.videoHeight}`;
+        resolutionRef.current = size;
+        setResolution(size);
+      }
+
+      // Frame cadence from the playback quality counters.
+      const quality = el.getVideoPlaybackQuality?.();
+      if (quality) {
+        if (previousFrames && stamp > previousStamp) {
+          const fps = Math.round(((quality.totalVideoFrames - previousFrames) * 1000) / (stamp - previousStamp));
+          frameRateRef.current = fps;
+          setFrameRate(fps);
+        }
+        previousFrames = quality.totalVideoFrames;
+      }
+
+      let buffered: number | null = null;
+      if (el.buffered.length > 0) {
+        buffered = Math.max(0, el.buffered.end(el.buffered.length - 1) - el.currentTime);
+        setBufferHealth(buffered);
+      }
+
+      onStatsRef.current?.({
+        bandwidth: bandwidthRef.current,
+        resolution: resolutionRef.current,
+        frameRate: frameRateRef.current,
+        bufferHealth: buffered,
+        quality: qualityRef.current,
+        transport: isLan ? 'p2p' : 'direct',
+      });
+    };
+
+    void sample();
+    const statsInterval = window.setInterval(() => void sample(), 2000);
+    return () => window.clearInterval(statsInterval);
+  }, [showStats, onStats, status, isLan]);
   
   const togglePlay = () => {
     if (videoRef.current) {
@@ -192,15 +280,40 @@ export default function StreamPlayer({
     }
   };
   
+  /**
+   * Quality choices are expressed as a bitrate ceiling for the host's encoder.
+   * Only peer-to-peer streams can honour them: there is one encoder (the
+   * host's) and we can ask it to cap what it sends us.
+   */
+  const QUALITY_BITRATES: Record<string, number | null> = {
+    auto: null,
+    '1080p': 6000,
+    '720p': 2500,
+    '480p': 1200,
+    '360p': 600,
+  };
+
   const changeQuality = (quality: string) => {
     setQualityOption(quality);
+
+    if (!isLan) {
+      toast({
+        title: "Quality is set by the source",
+        description: "This stream is delivered as a single rendition, so the quality menu only applies to peer-to-peer streams.",
+        variant: "default",
+      });
+      return;
+    }
+
+    const kbps = QUALITY_BITRATES[quality] ?? null;
+    lanViewerRef.current?.requestQuality(kbps);
     toast({
-      title: "Quality changed",
-      description: `Stream quality set to ${quality}`,
-      variant: "default"
+      title: kbps ? `Requested ${quality}` : "Requested automatic quality",
+      description: kbps
+        ? `The host will cap this stream at ${(kbps / 1000).toFixed(1)} Mbps when your connection allows.`
+        : "The host will choose the bitrate for your connection.",
+      variant: "default",
     });
-    
-    // In a real app, we would switch video sources or call adaptive bitrate APIs
   };
   
   const toggleFullscreen = () => {
@@ -381,20 +494,43 @@ export default function StreamPlayer({
           );
         }
 
-        return (
-          <div className="aspect-video bg-black">
-            <video
-              ref={videoRef}
-              className="w-full h-full object-cover"
-              playsInline
-              autoPlay={autoPlay}
-              muted={isMuted}
-              poster={stream?.thumbnail}
-              src="/placeholder-video.mp4" // In a real app, this would be the stream URL
-            />
-            
+        // No peer connection and no replay: show the last frame (or poster) with
+        // an honest offline state instead of pointing <video> at a fake file.
+        {
+          const replayUrl = stream?.recordingUrl ?? stream?.url ?? null;
+          return (
+          <div className="relative aspect-video bg-black">
+            {replayUrl ? (
+              <video
+                ref={videoRef}
+                className="h-full w-full object-cover"
+                playsInline
+                autoPlay={autoPlay}
+                muted={isMuted}
+                controls
+                poster={stream?.thumbnail}
+                src={replayUrl}
+              />
+            ) : (
+              <div className="grid h-full w-full place-items-center">
+                {stream?.thumbnail && (
+                  <img src={stream.thumbnail} alt="" className="absolute inset-0 h-full w-full object-cover opacity-30" />
+                )}
+                <div className="relative z-10 text-center">
+                  <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-white/60">
+                    {stream?.isLive ? "Connecting to the stream" : "Broadcast ended"}
+                  </p>
+                  <p className="mt-2 max-w-xs text-sm text-white/70">
+                    {stream?.isLive
+                      ? "Waiting for the broadcaster's video to arrive."
+                      : "This stream is offline. The replay appears here once it is processed."}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {stream?.isLive && (
-              <div className="absolute top-4 left-4 flex gap-2">
+              <div className="absolute top-4 left-4 z-10 flex gap-2">
                 <div className="live-indicator">LIVE</div>
                 <div className="viewer-count">
                   <UserRound size={16} />
@@ -404,6 +540,7 @@ export default function StreamPlayer({
             )}
           </div>
         );
+        }
     }
   };
   
@@ -445,23 +582,18 @@ export default function StreamPlayer({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Stream Quality</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => changeQuality('auto')}>
-                    Auto {qualityOption === 'auto' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('1080p')}>
-                    1080p {qualityOption === '1080p' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('720p')}>
-                    720p {qualityOption === '720p' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('480p')}>
-                    480p {qualityOption === '480p' && '✓'}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => changeQuality('360p')}>
-                    360p {qualityOption === '360p' && '✓'}
-                  </DropdownMenuItem>
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
+                    Quality {isLan ? '(asked of the host)' : '(peer-to-peer only)'}
+                  </DropdownMenuLabel>
+                  {['auto', '1080p', '720p', '480p', '360p'].map((option) => (
+                    <DropdownMenuItem
+                      key={option}
+                      disabled={!isLan}
+                      onClick={() => changeQuality(option)}
+                    >
+                      {option === 'auto' ? 'Auto' : option} {qualityOption === option && '✓'}
+                    </DropdownMenuItem>
+                  ))}
                 </DropdownMenuContent>
               </DropdownMenu>
               
@@ -486,9 +618,13 @@ export default function StreamPlayer({
             <span>{bandwidth ? `${(bandwidth / 1000).toFixed(1)} Mbps` : '-- Mbps'}</span>
           </div>
           <div className="flex gap-2 text-white/70">
-            <span>{resolution || '1280x720'}</span>
-            <span>{frameRate || 30}fps</span>
+            <span>{resolution ?? '—'}</span>
+            <span>{frameRate ? `${frameRate}fps` : '— fps'}</span>
+            {bufferHealth !== null && <span>{bufferHealth.toFixed(1)}s buffer</span>}
           </div>
+          {isLan && (
+            <div className="mt-1 text-white/50">{lanState === 'connected' ? `p2p · ${qualityOption}` : lanState}</div>
+          )}
         </div>
       )}
     </div>

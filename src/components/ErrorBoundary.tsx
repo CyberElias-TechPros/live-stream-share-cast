@@ -2,6 +2,7 @@ import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 import { WifiOff, RefreshCw } from 'lucide-react';
+import { telemetry } from '@/lib/telemetry';
 
 interface Props {
   children: ReactNode;
@@ -26,6 +27,12 @@ class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Error caught by boundary:', error, errorInfo);
+    // Ship the render crash to the API so it shows up in the admin error list.
+    telemetry.error({
+      message: error.message || 'React render error',
+      stack: `${error.stack ?? ''}\n\nComponent stack:${errorInfo.componentStack ?? ''}`.trim(),
+      source: 'error-boundary',
+    });
     this.props.onError?.(error, errorInfo);
   }
 
@@ -66,7 +73,7 @@ class ErrorBoundary extends Component<Props, State> {
                 </Button>
               </Link>
             </div>
-            {process.env.NODE_ENV === 'development' && this.state.error && (
+            {import.meta.env.DEV && this.state.error && (
               <details className="mt-6 text-left">
                 <summary className="cursor-pointer text-sm text-muted-foreground">
                   Error details

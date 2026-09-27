@@ -2,11 +2,12 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Radio } from "lucide-react";
 import Atmosphere from "./Atmosphere";
+import LiveNow from "./LiveNow";
 import Reveal from "./Reveal";
 
 interface AuthLayoutProps {
-  title: string;
-  subtitle: string;
+  title: ReactNode;
+  subtitle: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
 }
@@ -63,24 +64,7 @@ export default function AuthLayout({ title, subtitle, children, footer }: AuthLa
           </div>
 
           <Reveal delay={250}>
-            <div className="glass rounded-2xl p-5">
-              <div className="flex items-center gap-3">
-                <div className="flex -space-x-2">
-                  {["A", "M", "J", "K"].map((c, i) => (
-                    <span
-                      key={c}
-                      className="grid h-7 w-7 place-items-center rounded-full text-[10px] font-semibold text-white ring-2 ring-[hsl(252_36%_6%)]"
-                      style={{ background: `linear-gradient(135deg, hsl(${258 + i * 28} 85% 55%), hsl(${300 + i * 22} 90% 48%))` }}
-                    >
-                      {c}
-                    </span>
-                  ))}
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-semibold text-foreground">12,480 creators</span> started their first stream this week
-                </p>
-              </div>
-            </div>
+            <LiveNow variant="card" />
           </Reveal>
         </div>
 

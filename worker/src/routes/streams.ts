@@ -3,8 +3,8 @@ import type { MiddlewareHandler } from 'hono';
 import type { AppVariables, Env } from '../env';
 import { optionalAuth, requireAuth } from '../lib/auth';
 import {
+  background,
   badRequest,
-  conflict,
   forbidden,
   int,
   jsonField,
@@ -15,7 +15,6 @@ import {
 import { streamKey, uuid } from '../lib/ids';
 import {
   chatMessage,
-  parseJson,
   STREAM_FROM,
   STREAM_SELECT,
   stream,
@@ -28,17 +27,20 @@ import {
 } from '../lib/serialize';
 import { isoHoursFromNow, nowIso } from '../lib/time';
 import { rateLimit } from '../lib/ratelimit';
-import { broadcastToStream, streamPresence } from '../lib/do';
+import { broadcastToStream, streamPresence, systemMessage } from '../lib/do';
+import { admitChatMessage, assertAdmitted, chatSettingsFor } from '../lib/moderation';
+import { createNotification, notifyFollowersStreamLive } from '../lib/notifications';
+import { limitsConfig } from '../lib/config';
+import { dispatchWebhook } from '../lib/webhook';
+import { baseUrl } from '../lib/url';
+import { recordAudit } from '../lib/audit';
 
 export const streamRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 const authGuard: MiddlewareHandler<{ Bindings: Env; Variables: AppVariables }> = (c, next) => requireAuth(c, next);
 
-const DEFAULT_RETENTION_HOURS = 6;
-
 function retentionHours(env: Env): number {
-  const configured = Number(env.RECORDING_RETENTION_HOURS);
-  return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_RETENTION_HOURS;
+  return limitsConfig(env).recordingRetentionHours;
 }
 
 /* --------------------------------- listing ----------------------------------- */
@@ -114,19 +116,25 @@ streamRoutes.get('/keys/generate', authGuard, rateLimit({ limit: 30, windowMs: 6
 
 streamRoutes.post('/', authGuard, rateLimit({ limit: 20, windowMs: 60_000, name: 'create-stream', perUser: true }), async (c) => {
   const auth = c.get('authUser')!;
+  const limits = limitsConfig(c.env);
   const body = await readJson(c);
 
-  const title = trimOrNull(body.title, 200);
+  const title = trimOrNull(body.title, limits.maxTitleLength);
   if (!title) throw badRequest('A stream title is required');
 
+  const owned = await c.env.DB.prepare(`SELECT COUNT(*) AS count FROM streams WHERE user_id = ?`).bind(auth.id).first<{ count: number }>();
+  if ((owned?.count ?? 0) >= limits.maxStreamsPerUser) {
+    throw badRequest(`You have reached the limit of ${limits.maxStreamsPerUser} streams — delete an old one to create a new one`);
+  }
+
   const tags = Array.isArray(body.tags)
-    ? body.tags.filter((tag: unknown) => typeof tag === 'string').slice(0, 12)
+    ? body.tags.filter((tag: unknown) => typeof tag === 'string').slice(0, limits.maxTags)
     : typeof body.tags === 'string'
       ? body.tags
           .split(',')
           .map((tag) => tag.trim())
           .filter(Boolean)
-          .slice(0, 12)
+          .slice(0, limits.maxTags)
       : [];
 
   const streamType = body.streamType === 'local' || body.stream_type === 'local' ? 'local' : 'internet';
@@ -134,8 +142,9 @@ streamRoutes.post('/', authGuard, rateLimit({ limit: 20, windowMs: 60_000, name:
   const id = uuid();
 
   await c.env.DB.prepare(
-    `INSERT INTO streams (id, user_id, title, description, stream_key, category, tags, stream_type, is_recording, recording_expiry)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO streams (id, user_id, title, description, stream_key, category, tags, stream_type, is_recording,
+                          recording_expiry, is_mature, language, thumbnail_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       id,
@@ -148,6 +157,9 @@ streamRoutes.post('/', authGuard, rateLimit({ limit: 20, windowMs: 60_000, name:
       streamType,
       isRecording ? 1 : 0,
       isRecording && streamType === 'internet' ? isoHoursFromNow(retentionHours(c.env)) : null,
+      body.isMature === true ? 1 : 0,
+      trimOrNull(body.language, 12),
+      trimOrNull(body.thumbnail ?? body.thumbnailUrl, 2000),
     )
     .run();
 
@@ -187,7 +199,7 @@ streamRoutes.patch('/:id', authGuard, async (c) => {
   };
 
   if (body.title !== undefined) {
-    const title = trimOrNull(body.title, 200);
+    const title = trimOrNull(body.title, limitsConfig(c.env).maxTitleLength);
     if (!title) throw badRequest('Title cannot be empty');
     assign('title', title);
   }
@@ -204,8 +216,16 @@ streamRoutes.patch('/:id', authGuard, async (c) => {
     assign('tags', JSON.stringify(tags));
   }
   if (body.streamType !== undefined) assign('stream_type', body.streamType === 'local' ? 'local' : 'internet');
+  if (body.isMature !== undefined) assign('is_mature', body.isMature ? 1 : 0);
+  if (body.language !== undefined) assign('language', trimOrNull(body.language, 12));
+  if (body.scheduledFor !== undefined) assign('scheduled_for', trimOrNull(body.scheduledFor, 40));
   if (body.isRecording !== undefined) assign('is_recording', body.isRecording ? 1 : 0);
   if (body.recordingUrl !== undefined) assign('recording_url', trimOrNull(body.recordingUrl, 2000));
+  // Retention window for the recording (1–168h); 0 clears it.
+  if (body.retentionHours !== undefined) {
+    const hours = int(body.retentionHours, retentionHours(c.env), 0, 168);
+    assign('recording_expiry', hours > 0 ? isoHoursFromNow(hours) : null);
+  }
   if (body.isLive !== undefined) assign('is_live', body.isLive ? 1 : 0);
 
   if (Object.keys(updates).length === 0) throw badRequest('Nothing to update');
@@ -230,6 +250,24 @@ streamRoutes.delete('/:id', authGuard, async (c) => {
   }
   await c.env.DB.prepare(`DELETE FROM streams WHERE id = ?`).bind(row.id).run();
   return c.json({ success: true });
+});
+
+/**
+ * Rotates the channel key for a stream. The previous key stops working the
+ * moment this returns, which is what a streamer needs after a leak.
+ */
+streamRoutes.post('/:id/key', authGuard, rateLimit({ limit: 10, windowMs: 60_000, name: 'keys', perUser: true }), async (c) => {
+  const auth = c.get('authUser')!;
+  const id = c.req.param('id');
+  const row = await ownedStream(c.env, id, auth.id);
+
+  const next = streamKey(auth.id);
+  await c.env.DB.prepare(`UPDATE streams SET stream_key = ?, updated_at = ? WHERE id = ?`)
+    .bind(next, nowIso(), row.id)
+    .run();
+
+  const fresh = await c.env.DB.prepare(`SELECT ${STREAM_SELECT} ${STREAM_FROM} WHERE s.id = ?`).bind(row.id).first<StreamRow>();
+  return c.json({ success: true, streamKey: next, stream: fresh ? stream(fresh, true) : null });
 });
 
 /* ------------------------------- live lifecycle ------------------------------ */
@@ -264,6 +302,20 @@ streamRoutes.post('/:id/start', authGuard, async (c) => {
     .bind(uuid(), id, auth.id, row.stream_type ?? 'internet', now)
     .run();
 
+  // Any scheduled slot for this creator becomes "live" so reminders stop.
+  await c.env.DB.prepare(
+    `UPDATE scheduled_streams SET status = 'live', stream_id = ?, updated_at = ?
+      WHERE user_id = ? AND status = 'scheduled' AND scheduled_for <= ?`,
+  )
+    .bind(id, now, auth.id, new Date(Date.now() + 60 * 60_000).toISOString())
+    .run();
+
+  // Fan out: followers' inboxes + email, creator webhooks, chat notice.
+  background(c, notifyFollowersStreamLive(c.env, auth.id, { id, title: row.title }));
+  background(c, dispatchWebhook(c.env, auth.id, 'stream.live', { streamId: id, title: row.title, url: `${baseUrl(c.env, c.req.url)}/watch/${id}` }));
+  background(c, systemMessage(c.env, id, `${auth.username} is live`));
+  background(c, recordAudit(c.env, { actorId: auth.id, action: 'stream.started', targetType: 'stream', targetId: id }));
+
   const updated = await c.env.DB.prepare(`SELECT ${STREAM_SELECT} ${STREAM_FROM} WHERE s.id = ?`).bind(id).first<StreamRow>();
   return c.json({ success: true, stream: updated ? stream(updated, true) : null });
 });
@@ -271,7 +323,7 @@ streamRoutes.post('/:id/start', authGuard, async (c) => {
 streamRoutes.post('/:id/stop', authGuard, async (c) => {
   const auth = c.get('authUser')!;
   const id = c.req.param('id');
-  await ownedStream(c.env, id, auth.id);
+  const row = await ownedStream(c.env, id, auth.id);
 
   const now = nowIso();
   await c.env.DB.prepare(
@@ -290,6 +342,13 @@ streamRoutes.post('/:id/stop', authGuard, async (c) => {
 
   // Tell everyone in the room that the broadcast ended.
   await broadcastToStream(c.env, id, { type: 'stream', status: 'offline', streamId: id });
+
+  await c.env.DB.prepare(`UPDATE scheduled_streams SET status = 'completed', updated_at = ? WHERE stream_id = ? AND status = 'live'`)
+    .bind(now, id)
+    .run();
+
+  background(c, dispatchWebhook(c.env, auth.id, 'stream.ended', { streamId: id, title: row.title, url: `${baseUrl(c.env, c.req.url)}/watch/${id}` }));
+  background(c, recordAudit(c.env, { actorId: auth.id, action: 'stream.ended', targetType: 'stream', targetId: id }));
 
   const updated = await c.env.DB.prepare(`SELECT ${STREAM_SELECT} ${STREAM_FROM} WHERE s.id = ?`).bind(id).first<StreamRow>();
   return c.json({ success: true, stream: updated ? stream(updated, true) : null });
@@ -416,37 +475,73 @@ streamRoutes.get('/:id/chat', async (c) => {
 
   const { results } = await c.env.DB.prepare(
     `SELECT m.id, m.stream_id, m.user_id, m.message, m.type, m.metadata, m.is_moderated, m.created_at,
-            u.username, u.avatar_url
-       FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id
-      WHERE m.stream_id = ? ${before ? 'AND m.created_at < ?' : ''}
+            m.reply_to_id, m.is_deleted, m.edited_at,
+            u.username, u.avatar_url,
+            r.message AS reply_message, r.user_id AS reply_user_id, ru.username AS reply_username
+       FROM chat_messages m
+       LEFT JOIN users u ON u.id = m.user_id
+       LEFT JOIN chat_messages r ON r.id = m.reply_to_id
+       LEFT JOIN users ru ON ru.id = r.user_id
+      WHERE m.stream_id = ? AND COALESCE(m.is_deleted, 0) = 0 ${before ? 'AND m.created_at < ?' : ''}
       ORDER BY m.created_at DESC LIMIT ?`,
   )
     .bind(...(before ? [id, before, limit] : [id, limit]))
     .all<ChatMessageRow>();
 
-  return c.json({ messages: (results ?? []).map(chatMessage).reverse() });
+  return c.json({
+    messages: (results ?? [])
+      .map((row) => ({
+        ...chatMessage(row),
+        replyTo: row.reply_to_id
+          ? { id: row.reply_to_id, message: row.reply_message ?? '', username: row.reply_username ?? 'unknown' }
+          : null,
+      }))
+      .reverse(),
+    rules: await chatSettingsFor(c.env, id),
+  });
 });
 
 streamRoutes.post('/:id/chat', authGuard, rateLimit({ limit: 30, windowMs: 30_000, name: 'chat', perUser: true }), async (c) => {
   const auth = c.get('authUser')!;
   const streamId = c.req.param('id');
+  const limits = limitsConfig(c.env);
   const body = await readJson(c);
 
-  const message = String(body.message ?? '').trim();
+  // `message` is the documented field; `content` is accepted for older clients.
+  const message = String(body.message ?? body.content ?? '').trim();
   if (!message) throw badRequest('Message cannot be empty');
-  if (message.length > 2000) throw badRequest('Message is too long');
+  if (message.length > limits.maxChatMessageLength) {
+    throw badRequest(`Messages are limited to ${limits.maxChatMessageLength} characters`);
+  }
 
-  const exists = await c.env.DB.prepare(`SELECT 1 AS ok FROM streams WHERE id = ?`).bind(streamId).first<{ ok: number }>();
-  if (!exists) throw notFound('Stream not found');
+  const streamRow = await c.env.DB.prepare(`SELECT id, user_id, title FROM streams WHERE id = ?`)
+    .bind(streamId)
+    .first<{ id: string; user_id: string; title: string }>();
+  if (!streamRow) throw notFound('Stream not found');
+
+  const account = await c.env.DB.prepare(`SELECT created_at FROM users WHERE id = ?`).bind(auth.id).first<{ created_at: string }>();
+
+  // Channel rules, bans, slow mode and the blocked-word filter.
+  const verdict = await admitChatMessage(
+    c.env,
+    streamId,
+    streamRow.user_id,
+    { id: auth.id, username: auth.username, isAdmin: auth.isAdmin, createdAt: account?.created_at ?? null },
+    message,
+  );
+  assertAdmitted(verdict);
 
   const type = ['text', 'emote', 'donation', 'system'].includes(String(body.type)) ? String(body.type) : 'text';
+  const replyToId = typeof body.replyToId === 'string' || typeof body.replyTo === 'string' ? String(body.replyToId ?? body.replyTo) : null;
   const id = uuid();
   const createdAt = nowIso();
+  const metadata = jsonField(body.metadata);
 
   await c.env.DB.prepare(
-    `INSERT INTO chat_messages (id, stream_id, user_id, message, type, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO chat_messages (id, stream_id, user_id, message, type, metadata, reply_to_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(id, streamId, auth.id, message, type, jsonField(body.metadata), createdAt)
+    .bind(id, streamId, auth.id, message, type, metadata, replyToId, createdAt)
     .run();
 
   const row = await c.env.DB.prepare(
@@ -459,6 +554,44 @@ streamRoutes.post('/:id/chat', authGuard, rateLimit({ limit: 30, windowMs: 30_00
 
   // Fan out to every socket connected to this stream's Durable Object.
   await broadcastToStream(c.env, streamId, { type: 'chat', message: payload });
+
+  // @mentions notify the mentioned account (once per unique handle).
+  const mentions = [...new Set((message.match(/@([a-zA-Z0-9_]{3,24})/g) ?? []).map((match) => match.slice(1).toLowerCase()))].slice(0, 5);
+  if (mentions.length) {
+    const placeholders = mentions.map(() => '?').join(',');
+    const { results: mentioned } = await c.env.DB.prepare(
+      `SELECT id, username FROM users WHERE lower(username) IN (${placeholders}) AND id != ? AND COALESCE(is_banned, 0) = 0`,
+    )
+      .bind(...mentions, auth.id)
+      .all<{ id: string; username: string }>();
+
+    for (const user of mentioned ?? []) {
+      background(
+        c,
+        createNotification(c.env, {
+          userId: user.id,
+          type: 'mention',
+          title: `${auth.username} mentioned you`,
+          body: message.slice(0, 200),
+          url: `${baseUrl(c.env, c.req.url)}/watch/${streamId}`,
+          actorId: auth.id,
+          streamId,
+        }),
+      );
+    }
+  }
+
+  // Creator webhooks (chat.message) — background, never blocks the send path.
+  background(
+    c,
+    dispatchWebhook(c.env, streamRow.user_id, 'chat.message', {
+      streamId,
+      messageId: id,
+      userId: auth.id,
+      username: auth.username,
+      message: message.slice(0, 500),
+    }),
+  );
 
   return c.json({ message: payload }, 201);
 });
@@ -511,6 +644,3 @@ chatRoutes.patch('/:messageId', authGuard, async (c) => {
 
   return c.json({ success: true, isModerated, streamId: message.stream_id });
 });
-
-/** Escape hatch used by `parseJson` consumers; keeps the import list honest. */
-export const _unused = { parseJson, conflict };

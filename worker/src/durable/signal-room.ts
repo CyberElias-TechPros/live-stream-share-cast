@@ -7,7 +7,8 @@ import type { Env } from '../env';
  * Protocol (all frames are JSON, relayed verbatim):
  *   server → peer : { type: 'welcome', id, role, peers }
  *   both   → both : { type: 'hello-viewer' | 'streamer-ready' | 'offer' |
- *                     'answer' | 'ice' | 'close', from, to?, sdp?, candidate? }
+ *                     'answer' | 'ice' | 'close' | 'quality', from, to?, sdp?,
+ *                     candidate?, kbps? }
  *   server → peer : { type: 'peer-left', id }
  *
  * Frames with a `to` field are routed to that single peer; everything else is

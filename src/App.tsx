@@ -19,6 +19,13 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Profile from "./pages/Profile"; 
 import Dashboard from "./pages/Dashboard";
+import Notifications from "./pages/Notifications";
+import Library from "./pages/Library";
+import Schedule from "./pages/Schedule";
+import Moderation from "./pages/Moderation";
+import Admin from "./pages/Admin";
+import VerifyEmail from "./pages/VerifyEmail";
+import Legal from "./pages/Legal";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -63,8 +70,30 @@ const AppContent = () => (
       <Route path="/signup" element={<Signup />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/terms" element={<Legal kind="terms" />} />
+      <Route path="/privacy" element={<Legal kind="privacy" />} />
+      <Route path="/help" element={<Legal kind="help" />} />
       <Route path="/stream" element={<Browse />} />
       <Route path="/watch/:streamId" element={<WatchStream />} />
+      <Route path="/library" element={<Library />} />
+      <Route path="/library/:recordingId" element={<Library />} />
+      <Route path="/schedule" element={<Schedule />} />
+      <Route path="/notifications" element={
+        <ProtectedRoute>
+          <Notifications />
+        </ProtectedRoute>
+      } />
+      <Route path="/moderation" element={
+        <ProtectedRoute>
+          <Moderation />
+        </ProtectedRoute>
+      } />
+      <Route path="/admin" element={
+        <ProtectedRoute>
+          <Admin />
+        </ProtectedRoute>
+      } />
       
       {/* Protected routes */}
       <Route path="/stream/create" element={

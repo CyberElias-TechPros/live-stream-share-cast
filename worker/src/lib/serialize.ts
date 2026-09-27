@@ -17,6 +17,11 @@ export interface UserRow {
   following_count: number | null;
   preferences: string | null;
   social_links: string | null;
+  locale: string | null;
+  timezone: string | null;
+  website_url: string | null;
+  donation_url: string | null;
+  pronouns: string | null;
   last_seen: string | null;
   created_at: string;
   updated_at: string | null;
@@ -62,6 +67,12 @@ export interface ChatMessageRow {
   created_at: string;
   username?: string | null;
   avatar_url?: string | null;
+  // Reply context (joined in `GET /api/streams/:id/chat`).
+  reply_to_id?: string | null;
+  reply_message?: string | null;
+  reply_username?: string | null;
+  is_deleted?: number | null;
+  edited_at?: string | null;
 }
 
 export interface StreamSessionRow {
@@ -117,7 +128,10 @@ export function parseJson<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-/** Public profile — safe to return to anyone. */
+/**
+ * Public profile — safe to return to anyone. Website, donation link, pronouns
+ * and social links are things the owner fills in to be shown on that profile.
+ */
 export function publicUser(row: UserRow) {
   return {
     id: row.id,
@@ -130,6 +144,10 @@ export function publicUser(row: UserRow) {
     following: row.following_count ?? 0,
     lastSeen: row.last_seen,
     createdAt: row.created_at,
+    websiteUrl: row.website_url ?? null,
+    donationUrl: row.donation_url ?? null,
+    pronouns: row.pronouns ?? null,
+    socialLinks: parseJson<unknown[]>(row.social_links, []),
   };
 }
 
@@ -138,9 +156,14 @@ export function privateUser(row: UserRow) {
   return {
     ...publicUser(row),
     email: row.email,
+    // Role flags are only ever exposed on the caller's own record — the UI uses
+    // `isAdmin` to reveal the console, and the API enforces it server-side.
+    isAdmin: !!row.is_admin,
+    emailVerified: !!row.email_verified,
     updatedAt: row.updated_at,
     preferences: parseJson<Record<string, unknown> | null>(row.preferences, null) ?? defaultPreferences(),
-    socialLinks: parseJson<unknown[]>(row.social_links, []),
+    locale: row.locale ?? null,
+    timezone: row.timezone ?? null,
   };
 }
 

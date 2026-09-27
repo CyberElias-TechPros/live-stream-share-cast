@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import type { AppVariables, Env } from '../env';
 import { requireAuth } from '../lib/auth';
-import { badRequest, conflict, jsonField, notFound, readJson, trimOrNull, validateUsername } from '../lib/http';
+import { badRequest, conflict, jsonField, notFound, readJson, trimOrNull, validateUsername, int } from '../lib/http';
 import { uuid } from '../lib/ids';
 import {
   defaultPreferences,
@@ -19,6 +19,11 @@ import {
 import { nowIso } from '../lib/time';
 import { rateLimit } from '../lib/ratelimit';
 import { systemMessage } from '../lib/do';
+import { createNotification } from '../lib/notifications';
+import { dispatchWebhook } from '../lib/webhook';
+import { optionalAuth } from '../lib/auth';
+import { parseJson } from '../lib/serialize';
+import { forbidden } from '../lib/http';
 
 export const userRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -26,7 +31,7 @@ const authGuard: MiddlewareHandler<{ Bindings: Env; Variables: AppVariables }> =
 
 const USER_COLUMNS = `id, email, username, display_name, avatar_url, bio, is_streamer, is_admin,
                       email_verified, followers_count, following_count, preferences, social_links,
-                      last_seen, created_at, updated_at`;
+                      locale, timezone, website_url, donation_url, pronouns, last_seen, created_at, updated_at`;
 
 /**
  * Same list, alias-qualified. Required for the followers/following joins,
@@ -34,8 +39,8 @@ const USER_COLUMNS = `id, email, username, display_name, avatar_url, bio, is_str
  */
 const USER_COLUMNS_U = `u.id, u.email, u.username, u.display_name, u.avatar_url, u.bio,
                         u.is_streamer, u.is_admin, u.email_verified, u.followers_count,
-                        u.following_count, u.preferences, u.social_links, u.last_seen,
-                        u.created_at, u.updated_at`;
+                        u.following_count, u.preferences, u.social_links, u.locale, u.timezone,
+                        u.website_url, u.donation_url, u.pronouns, u.last_seen, u.created_at, u.updated_at`;
 
 /* ------------------------------ the current user ----------------------------- */
 /* NOTE: every `/me/*` route must be registered before the `/:id/*` catch-alls   */
@@ -71,6 +76,19 @@ userRoutes.patch('/me', authGuard, async (c) => {
   if (body.avatarUrl !== undefined) updates.avatar_url = trimOrNull(body.avatarUrl, 2000);
   if (body.socialLinks !== undefined) updates.social_links = jsonField(body.socialLinks) ?? '[]';
   if (body.preferences !== undefined) updates.preferences = jsonField(body.preferences) ?? JSON.stringify(defaultPreferences());
+  if (body.locale !== undefined) updates.locale = trimOrNull(body.locale, 12);
+  if (body.timezone !== undefined) updates.timezone = trimOrNull(body.timezone, 60);
+  if (body.pronouns !== undefined) updates.pronouns = trimOrNull(body.pronouns, 30);
+  if (body.websiteUrl !== undefined) {
+    const website = trimOrNull(body.websiteUrl, 300);
+    if (website && !/^https?:\/\//i.test(website)) throw badRequest('Website must start with http:// or https://');
+    updates.website_url = website;
+  }
+  if (body.donationUrl !== undefined) {
+    const donation = trimOrNull(body.donationUrl, 500);
+    if (donation && !/^https:\/\//i.test(donation)) throw badRequest('Donation links must use https://');
+    updates.donation_url = donation;
+  }
 
   if (Object.keys(updates).length === 0) throw badRequest('Nothing to update');
 
@@ -165,10 +183,50 @@ userRoutes.post('/me/avatar', authGuard, rateLimit({ limit: 30, windowMs: 60_000
 
 /* ------------------------------- public reads -------------------------------- */
 
-userRoutes.get('/:id', async (c) => {
+userRoutes.get('/:id', optionalAuth, async (c) => {
+  const viewer = c.get('authUser');
   const row = await c.env.DB.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).bind(c.req.param('id')).first<UserRow>();
   if (!row) throw notFound('User not found');
-  return c.json({ user: publicUser(row) });
+
+  const preferences = safeParse(row.preferences);
+  const privacy = (preferences?.privacy ?? {}) as Record<string, boolean>;
+  if (!viewer && privacy.showProfileToUnregistered === false) {
+    throw forbidden('This profile is only visible to signed-in members');
+  }
+
+  if (viewer && viewer.id !== row.id) {
+    const blocked = await c.env.DB.prepare(
+      `SELECT 1 AS ok FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`,
+    )
+      .bind(viewer.id, row.id, row.id, viewer.id)
+      .first<{ ok: number }>();
+    if (blocked) throw forbidden('This profile is not available');
+  }
+
+  const { results: links } = await c.env.DB.prepare(
+    `SELECT ss.id, ss.title, ss.thumbnail_url, ss.is_live, ss.viewer_count, ss.started_at
+       FROM streams ss WHERE ss.user_id = ? ORDER BY ss.created_at DESC LIMIT 6`,
+  )
+    .bind(row.id)
+    .all<Record<string, unknown>>();
+
+  return c.json({
+    user: publicUser(row),
+    extras: {
+      websiteUrl: row.website_url ?? null,
+      donationUrl: row.donation_url ?? null,
+      pronouns: row.pronouns ?? null,
+      socialLinks: parseJson<unknown[]>(row.social_links, []),
+    },
+    recentStreams: (links ?? []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      thumbnail: item.thumbnail_url,
+      isLive: !!item.is_live,
+      viewerCount: item.viewer_count ?? 0,
+      startedAt: item.started_at,
+    })),
+  });
 });
 
 userRoutes.get('/:id/streams', async (c) => {
@@ -196,7 +254,8 @@ userRoutes.get('/:id/followers', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT ${USER_COLUMNS_U} FROM users u
        JOIN followers f ON f.follower_id = u.id
-      WHERE f.following_id = ? ORDER BY f.created_at DESC LIMIT 200`,
+      WHERE f.following_id = ? AND COALESCE(u.is_banned, 0) = 0 AND u.deleted_at IS NULL
+      ORDER BY f.created_at DESC LIMIT 200`,
   )
     .bind(c.req.param('id'))
     .all<UserRow>();
@@ -207,11 +266,59 @@ userRoutes.get('/:id/following', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT ${USER_COLUMNS_U} FROM users u
        JOIN followers f ON f.following_id = u.id
-      WHERE f.follower_id = ? ORDER BY f.created_at DESC LIMIT 200`,
+      WHERE f.follower_id = ? AND COALESCE(u.is_banned, 0) = 0 AND u.deleted_at IS NULL
+      ORDER BY f.created_at DESC LIMIT 200`,
   )
     .bind(c.req.param('id'))
     .all<UserRow>();
   return c.json({ users: (results ?? []).map(publicUser) });
+});
+
+/** A creator's published VODs (public library view). */
+userRoutes.get('/:id/recordings', async (c) => {
+  const limit = int(c.req.query('limit'), 24, 1, 100);
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title, url, thumbnail_url, duration_seconds, views, created_at, clip_of
+       FROM recordings
+      WHERE user_id = ? AND visibility = 'public' AND status = 'ready'
+      ORDER BY published_at DESC, created_at DESC LIMIT ?`,
+  )
+    .bind(c.req.param('id'), limit)
+    .all<Record<string, unknown>>();
+
+  return c.json({
+    recordings: (results ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      url: row.url,
+      thumbnail: row.thumbnail_url,
+      durationSeconds: row.duration_seconds,
+      views: row.views ?? 0,
+      createdAt: row.created_at,
+      isClip: !!row.clip_of,
+    })),
+  });
+});
+
+/** Upcoming scheduled broadcasts for a creator (public). */
+userRoutes.get('/:id/schedule', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, title, scheduled_for, duration_minutes, category FROM scheduled_streams
+      WHERE user_id = ? AND status = 'scheduled' AND scheduled_for > ?
+      ORDER BY scheduled_for ASC LIMIT 20`,
+  )
+    .bind(c.req.param('id'), nowIso())
+    .all<Record<string, unknown>>();
+
+  return c.json({
+    scheduled: (results ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      scheduledFor: row.scheduled_for,
+      durationMinutes: row.duration_minutes,
+      category: row.category,
+    })),
+  });
 });
 
 userRoutes.get('/:id/follow', authGuard, async (c) => {
@@ -245,6 +352,31 @@ userRoutes.put('/:id/follow', authGuard, async (c) => {
     ]);
     // Notify the room the follower is watching, if they are live right now.
     await announceFollow(c.env, followerId, followingId);
+
+    const [follower, owner] = await Promise.all([
+      c.env.DB.prepare(`SELECT username, display_name FROM users WHERE id = ?`).bind(followerId).first<{ username: string; display_name: string | null }>(),
+      c.env.DB.prepare(`SELECT username, display_name FROM users WHERE id = ?`).bind(followingId).first<{ username: string; display_name: string | null }>(),
+    ]);
+
+    if (owner) {
+      await createNotification(c.env, {
+        userId: followingId,
+        type: 'follow',
+        title: `${follower?.display_name ?? follower?.username ?? 'Someone'} started following you`,
+        body: `You now have a new follower.`,
+        url: `/profile/${follower?.username ?? ''}`,
+        actorId: followerId,
+        email: follower
+          ? {
+              subject: `${follower.display_name ?? follower.username} started following you`,
+              heading: `${follower.display_name ?? follower.username} just followed your channel`,
+              paragraphs: ['They will be notified next time you go live.'],
+            }
+          : null,
+      });
+    }
+
+    await dispatchWebhook(c.env, followingId, 'user.followed', { followerId, followerUsername: follower?.username ?? null });
   }
 
   return c.json({ success: true, isFollowing: true });
@@ -276,11 +408,30 @@ userRoutes.delete('/:id/follow', authGuard, async (c) => {
  */
 export const profileRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-profileRoutes.get('/:username', async (c) => {
+profileRoutes.get('/:username', optionalAuth, async (c) => {
+  const viewer = c.get('authUser');
   const row = await c.env.DB.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE lower(username) = lower(?)`)
     .bind(c.req.param('username'))
     .first<UserRow>();
   if (!row) throw notFound('Profile not found');
+
+  // Same visibility rules as `GET /users/:id`: honour the owner's privacy
+  // preference and either side of a block.
+  const preferences = safeParse(row.preferences);
+  const privacy = (preferences?.privacy ?? {}) as Record<string, boolean>;
+  if (!viewer && privacy.showProfileToUnregistered === false) {
+    throw forbidden('This profile is only visible to signed-in members');
+  }
+
+  if (viewer && viewer.id !== row.id) {
+    const blocked = await c.env.DB.prepare(
+      `SELECT 1 AS ok FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)`,
+    )
+      .bind(viewer.id, row.id, row.id, viewer.id)
+      .first<{ ok: number }>();
+    if (blocked) throw forbidden('This profile is not available');
+  }
+
   return c.json({ user: publicUser(row) });
 });
 

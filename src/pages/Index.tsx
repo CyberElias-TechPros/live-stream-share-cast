@@ -20,6 +20,7 @@ import Reveal from "@/components/Reveal";
 import Marquee from "@/components/Marquee";
 import HeroPlayer from "@/components/HeroPlayer";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import LiveNow from "@/components/LiveNow";
 
 const TICKER = [
   "Ultra-low latency",
@@ -88,15 +89,7 @@ const Index = () => {
             <section className="relative px-5 pt-32 pb-16 sm:pt-36 md:pb-24">
               <div className="mx-auto max-w-4xl text-center">
                 <Reveal>
-                  <div className="mb-7 inline-flex items-center gap-2.5 rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 backdrop-blur-md">
-                    <span className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full rounded-full bg-live opacity-75 animate-ping" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-live" />
-                    </span>
-                    <span className="font-mono text-[11px] tracking-[0.22em] text-muted-foreground uppercase">
-                      2,847 creators broadcasting now
-                    </span>
-                  </div>
+                  <LiveNow />
                 </Reveal>
 
                 <Reveal delay={90}>

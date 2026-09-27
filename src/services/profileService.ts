@@ -52,6 +52,9 @@ export const profileService = {
         avatar: updates.avatar,
         isStreamer: updates.isStreamer,
         socialLinks: updates.socialLinks,
+        pronouns: updates.pronouns,
+        websiteUrl: updates.websiteUrl,
+        donationUrl: updates.donationUrl,
         preferences: updates.preferences,
       });
       const user = toUser(data.user);

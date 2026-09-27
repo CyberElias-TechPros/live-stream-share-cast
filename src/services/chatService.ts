@@ -82,8 +82,16 @@ export const chatService = {
    * Opens the live socket for a stream. Reconnects with backoff; returns a
    * handle with `close()`. Safe to call for anonymous visitors — they just
    * will not be able to post.
+   *
+   * `role: 'host'` marks the broadcaster: the room then treats the socket as
+   * the room owner (presence, host-only `moderate` frames, going offline when
+   * they leave).
    */
-  subscribeToStream(streamId: string, onEvent: (event: StreamChatEvent) => void): ChatSubscription {
+  subscribeToStream(
+    streamId: string,
+    onEvent: (event: StreamChatEvent) => void,
+    options: { role?: 'viewer' | 'host' } = {},
+  ): ChatSubscription {
     let socket: WebSocket | null = null;
     let retry = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -92,7 +100,7 @@ export const chatService = {
     const connect = () => {
       if (closed) return;
 
-      const ws = apiSocket(`/api/ws/chat/${streamId}`, { params: { role: 'viewer' } });
+      const ws = apiSocket(`/api/ws/chat/${streamId}`, { params: { role: options.role ?? 'viewer' } });
       socket = ws;
 
       ws.onopen = () => {

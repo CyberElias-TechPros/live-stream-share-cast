@@ -1,5 +1,6 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- API DTOs are validated field-by-field in the mappers above. */
 
-import { useToast } from '@/hooks/use-toast';
+import { telemetry } from '@/lib/telemetry';
 
 export interface ErrorLog {
   id: string;
@@ -37,13 +38,19 @@ class ErrorService {
       this.logs = this.logs.slice(-this.maxLogs);
     }
 
-    // Log to console in development
-    if (process.env.NODE_ENV === 'development') {
+    // Report to the platform (deduplicated + fingerprinted server-side), and
+    // keep a console trail so local debugging stays easy.
+    telemetry.error({
+      message: errorLog.message,
+      stack: errorLog.stack,
+      level,
+      source: 'errorService',
+      context: { ...(context ?? {}), url: errorLog.url, userAgent: errorLog.userAgent },
+    });
+
+    if (import.meta.env.DEV) {
       console.error('Error logged:', errorLog);
     }
-
-    // In production, you would send this to your error tracking service
-    // e.g., Sentry, LogRocket, or your own logging endpoint
   }
 
   getLogs(): ErrorLog[] {

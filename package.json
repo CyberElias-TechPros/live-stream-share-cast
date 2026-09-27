@@ -11,7 +11,11 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:api": "npm --prefix worker run test:api",
+    "test:realtime": "npm --prefix worker run test:realtime",
+    "typecheck": "tsc -p tsconfig.app.json --noEmit",
+    "typecheck:api": "npm --prefix worker run typecheck"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
@@ -48,7 +52,6 @@
     "cmdk": "^1.0.0",
     "date-fns": "^3.6.0",
     "embla-carousel-react": "^8.3.0",
-    "firebase": "^10.10.0",
     "input-otp": "^1.2.4",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",

@@ -1,4 +1,5 @@
 
+import { useSearchParams } from "react-router-dom";
 import Navigation from "@/components/Navigation";
 import StreamCreator from "@/components/StreamCreator";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -7,6 +8,12 @@ import Reveal from "@/components/Reveal";
 import { Radio } from "lucide-react";
 
 const CreateStream = () => {
+  // Set when arriving from a scheduled slot ("Go live" on /schedule): the Worker
+  // already created the stream, so the creator configures that one instead of
+  // making a second, orphaned stream.
+  const [searchParams] = useSearchParams();
+  const resumeStreamId = searchParams.get("streamId");
+
   return (
     <ErrorBoundary>
       <div className="relative min-h-svh bg-background">
@@ -32,7 +39,7 @@ const CreateStream = () => {
             </Reveal>
             <Reveal delay={120}>
               <ErrorBoundary>
-                <StreamCreator />
+                <StreamCreator resumeStreamId={resumeStreamId} />
               </ErrorBoundary>
             </Reveal>
           </main>

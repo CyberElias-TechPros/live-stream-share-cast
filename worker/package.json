@@ -14,7 +14,8 @@
     "tail": "wrangler tail",
     "typecheck": "tsc --noEmit",
     "seed": "node scripts/seed.mjs",
-    "test:realtime": "node scripts/ws-test.mjs"
+    "test:realtime": "node scripts/ws-test.mjs",
+    "test:api": "node scripts/api-test.mjs"
   },
   "dependencies": {
     "hono": "^4.6.14"
