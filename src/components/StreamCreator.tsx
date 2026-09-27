@@ -85,7 +85,21 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const lanStreamerRef = useRef<LanStreamer | null>(null);
   const [lanViewerCount, setLanViewerCount] = useState(0);
   const isLan = streamType === "local";
-  const isLanLive = isStreaming && isLan;
+  /* True while this browser is actually serving media to viewers. */
+  const [p2pActive, setP2pActive] = useState(false);
+  const [liveSince, setLiveSince] = useState<number | null>(null);
+  const [capture, setCapture] = useState<string | null>(null);
+
+  /* Uptime, from the true air time — never a frozen 00:00:00. */
+  const uptime = (() => {
+    const since = liveSince ?? (currentStream?.startedAt ? new Date(currentStream.startedAt).getTime() : null);
+    if (!since) return "--:--:--";
+    const total = Math.max(0, Math.floor((now - since) / 1000));
+    const hh = String(Math.floor(total / 3600)).padStart(2, "0");
+    const mm = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+    const ss = String(total % 60).padStart(2, "0");
+    return `${hh}:${mm}:${ss}`;
+  })();
 
   
   // Get user media
@@ -153,7 +167,18 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   // While the stage is open: on-air clock + media-arrival refresh.
   useEffect(() => {
     if (!stageOpen) return;
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    const tick = () => {
+      setNow(Date.now());
+      // Read the real capture parameters off the outgoing track, so the tile
+      // reflects what is being sent rather than a hard-coded preset.
+      const track = streamRef.current?.getVideoTracks()[0];
+      const settings = track?.getSettings();
+      if (settings?.width && settings.height) {
+        setCapture(`${settings.width}x${settings.height} · ${settings.frameRate ? Math.round(settings.frameRate) : 30}fps`);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [stageOpen]);
 
@@ -199,12 +224,16 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     };
     streamer.start();
     lanStreamerRef.current = streamer;
+    setP2pActive(true);
+    setLiveSince(Date.now());
   }, [currentStream, toast]);
 
   const stopLan = useCallback(() => {
     lanStreamerRef.current?.stop();
     lanStreamerRef.current = null;
     setLanViewerCount(0);
+    setP2pActive(false);
+    setLiveSince(null);
   }, []);
 
   useEffect(() => () => stopLan(), [stopLan]);
@@ -485,7 +514,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
         now={now}
         streamUrl={stageStreamUrl}
         isLan={isLan}
-        viewerTotal={isLanLive ? lanViewerCount : currentStream?.viewerCount}
+        viewerTotal={p2pActive ? lanViewerCount : currentStream?.viewerCount}
       />
     );
   }
@@ -560,12 +589,12 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
                   <span className="flex items-center gap-2">
                     <span className="h-2 w-2 bg-live rounded-full animate-pulse"></span>
                     Live
-                    {isLanLive && (
+                    {p2pActive && (
                       <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-emerald-300">
                         <Radio size={10} /> {isLan ? "LAN" : "P2P"}
                       </span>
                     )}
-                    {isLanLive && lanViewerCount > 0 && (
+                    {p2pActive && lanViewerCount > 0 && (
                       <span className="font-mono text-xs">{lanViewerCount} {isLan ? "on this network" : "connected"}</span>
                     )}
                   </span>
@@ -779,35 +808,29 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="bg-white/[0.04] rounded-lg p-3">
                   <div className="text-xs text-muted-foreground mb-1">
-                    {isLanLive ? (isLan ? "LAN VIEWERS" : "CONNECTED VIEWERS") : "VIEWERS"}
+                    {p2pActive ? (isLan ? "LAN VIEWERS" : "CONNECTED VIEWERS") : "VIEWERS"}
                   </div>
                   <div className="text-2xl font-bold">
-                    {isLanLive ? lanViewerCount : (currentStream?.viewerCount || 0)}
+                    {p2pActive ? lanViewerCount : (currentStream?.viewerCount || 0)}
                   </div>
                 </div>
                 
                 <div className="bg-white/[0.04] rounded-lg p-3">
                   <div className="text-xs text-muted-foreground mb-1">UPTIME</div>
-                  <div className="text-2xl font-bold">
-                    {currentStream?.startedAt ? (
-                      "00:00:00"
-                    ) : (
-                      "--:--:--"
-                    )}
-                  </div>
+                  <div className="text-2xl font-bold font-mono">{uptime}</div>
                 </div>
                 
                 <div className="bg-white/[0.04] rounded-lg p-3">
                   <div className="text-xs text-muted-foreground mb-1">STATUS</div>
                   <div className="text-md font-bold flex items-center gap-2">
-                    <span className="h-2 w-2 bg-green-500 rounded-full"></span>
-                    Excellent
+                    <span className={`h-2 w-2 rounded-full ${isStreaming ? "bg-green-500" : "bg-white/30"}`}></span>
+                    {isStreaming ? "On air" : "Standby"}
                   </div>
                 </div>
                 
                 <div className="bg-white/[0.04] rounded-lg p-3">
-                  <div className="text-xs text-muted-foreground mb-1">QUALITY</div>
-                  <div className="text-md font-bold">720p 30fps</div>
+                  <div className="text-xs text-muted-foreground mb-1">CAPTURE</div>
+                  <div className="text-md font-bold">{capture ?? "—"}</div>
                 </div>
               </div>
             </div>

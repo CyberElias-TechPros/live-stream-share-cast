@@ -220,7 +220,10 @@ function StreamCard({ stream, featured = false }: { stream: Stream; featured?: b
           <div className="absolute left-4 top-4 flex items-center gap-2">
             <LiveBadge />
             {stream.isLocalStream && (
-              <span className="flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-400/15 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-emerald-300 backdrop-blur-md">
+              <span
+                className="flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-400/15 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.2em] text-emerald-300 backdrop-blur-md"
+                title="Local mode — media stays on the broadcaster's network"
+              >
                 <Radio size={10} /> LAN
               </span>
             )}
@@ -279,7 +282,10 @@ function StreamCard({ stream, featured = false }: { stream: Stream; featured?: b
           <div className="absolute left-2.5 top-2.5 flex items-center gap-1.5">
             <LiveBadge size="sm" />
             {stream.isLocalStream && (
-              <span className="flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-400/15 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.18em] text-emerald-300 backdrop-blur-md">
+              <span
+                className="flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-400/15 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.18em] text-emerald-300 backdrop-blur-md"
+                title="Local mode — media stays on the broadcaster's network"
+              >
                 <Radio size={9} /> LAN
               </span>
             )}
