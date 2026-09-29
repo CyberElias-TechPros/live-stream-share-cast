@@ -53,3 +53,9 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Verify health
+        run: |
+          body="$(curl -fsS https://live-stream-share-cast-api.autumn-surf-21ec.workers.dev/api/health)"
+          echo "$body"
+          echo "$body" | grep -q '"database":"ok"' || { echo "::error::worker health check failed"; exit 1; }
