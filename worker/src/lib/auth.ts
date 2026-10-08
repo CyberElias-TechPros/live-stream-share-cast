@@ -5,7 +5,7 @@ import { isoIn, nowIso } from './time';
 
 /* ------------------------------- configuration ------------------------------ */
 
-const PBKDF2_ITERATIONS = 120_000;
+  const PBKDF2_ITERATIONS = 100_000;
 const KEY_LENGTH_BITS = 256;
 
 export const ACCESS_TTL_SECONDS = 60 * 60; // 1 hour
