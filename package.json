@@ -10,6 +10,7 @@
     "seed": "npm --prefix worker run seed",
     "build": "vite build",
     "build:dev": "vite build --mode development",
+    "db:migrate:local": "npm --prefix worker run db:migrate:local",
     "lint": "eslint .",
     "preview": "vite preview",
     "test:api": "npm --prefix worker run test:api",

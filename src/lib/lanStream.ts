@@ -544,7 +544,10 @@ export class LanViewer {
   /** Starts listening for the streamer and keeps knocking until found. */
   start() {
     if (this.sig) return;
-    this.sig = openSignalChannel(this.streamId, { peerId: this.me, role: "host" }, (msg) => this.onSignal(msg));
+    // Viewers must join as viewers. The Worker authorizes `role=host` only for
+    // the stream owner; using the host role here makes an ordinary viewer fail
+    // the signalling upgrade before WebRTC negotiation can begin.
+    this.sig = openSignalChannel(this.streamId, { peerId: this.me, role: "viewer" }, (msg) => this.onSignal(msg));
     this.knock();
     this.helloTimer = window.setInterval(() => this.knock(), 3000);
     this.emitState(this._ready ? "ready" : "waiting");

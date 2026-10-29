@@ -20,8 +20,10 @@ services/*                        /api/ws/signal ──► Durable Object (offer
   Recharts.
 * **Backend:** Cloudflare Workers (Hono), D1 (SQLite), R2, Durable Objects,
   Cron Triggers — see [`worker/README.md`](./worker/README.md).
-* **Docs:** [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) (go-live checklist,
-  every optional key) and [`docs/API.md`](./docs/API.md) (full endpoint list).
+* **Docs:** [`docs/IMPLEMENTATION-ROADMAP.md`](./docs/IMPLEMENTATION-ROADMAP.md)
+  (source-verified web + Android implementation checklist),
+  [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md) (go-live checklist, every
+  optional key), and [`docs/API.md`](./docs/API.md) (full endpoint list).
 
 ## What's implemented
 

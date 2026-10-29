@@ -236,6 +236,23 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     setLiveSince(null);
   }, []);
 
+  // Keep the server's live state aligned with the real creator lifecycle. The
+  // cleanup cron is intentionally a last-resort safety net, not the normal
+  // heartbeat mechanism; this also covers a creator who has no chat viewers.
+  useEffect(() => {
+    if (!isStreaming || !currentStream) return;
+
+    const sendHeartbeat = () => {
+      void liveStreamService.heartbeat(currentStream.id, lanViewerCount).then((ok) => {
+        if (!ok) console.warn('[stream] host heartbeat was rejected');
+      });
+    };
+
+    sendHeartbeat();
+    const timer = window.setInterval(sendHeartbeat, 30_000);
+    return () => window.clearInterval(timer);
+  }, [isStreaming, currentStream, lanViewerCount]);
+
   useEffect(() => () => stopLan(), [stopLan]);
 
   const setStreamType = (t: "local" | "internet") => {
@@ -315,7 +332,9 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const startStreamMutation = useMutation({
     mutationFn: async () => {
       if (!currentStream) throw new Error("No stream created");
-      return liveStreamService.startStream(currentStream.id);
+      const started = await liveStreamService.startStream(currentStream.id);
+      if (!started) throw new Error("The server could not start this broadcast");
+      return started;
     },
     onSuccess: () => {
       setIsStreaming(true);
@@ -345,7 +364,9 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const stopStreamMutation = useMutation({
     mutationFn: async () => {
       if (!currentStream) throw new Error("No active stream");
-      return liveStreamService.stopStream(currentStream.id);
+      const stopped = await liveStreamService.stopStream(currentStream.id);
+      if (!stopped) throw new Error("The server could not end this broadcast");
+      return stopped;
     },
     onSuccess: () => {
       setIsStreaming(false);
