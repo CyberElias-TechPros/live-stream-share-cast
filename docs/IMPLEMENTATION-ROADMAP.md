@@ -711,8 +711,9 @@ interoperability verified.
 
 - `[~] [P0][AND/OPS]` Created `android/` as a Kotlin/Compose starter with
   application ID, debug/release variants, JDK 17/SDK 35 configuration, signing
-  placeholders outside Git, and a documented `IM_LIVE_API_BASE_URL`. Gradle
-  compilation and release signing still require an Android/JDK environment.
+  placeholders outside Git, and a documented `IM_LIVE_API_BASE_URL`. The debug
+  compile and JVM contract test pass in the GitHub Actions Android gate; local
+  release signing and physical-device validation remain.
 - `[~] [P0][AND]` The initial slice is intentionally one `app` module with
   separated auth/network/live/media packages rather than a premature multi-module
   tree. Split into feature modules after device-tested contracts stabilize.

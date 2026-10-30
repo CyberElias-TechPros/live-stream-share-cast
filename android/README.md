@@ -72,11 +72,12 @@ stream history, analytics, or public discovery. It is an Android-to-Android LAN
 path; Android↔web interoperability still needs a local WebSocket bridge or
 manual browser signalling and physical-device verification.
 
-Remaining release-gate work is deliberately visible rather than hidden: build
-and compile in an Android/JDK environment, typing/unread chat UI, native in-app
-VOD playback and editing, bounded recording upload/finalisation, robust
-background/process-death recovery, TURN/direct diagnostics, analytics, App Link
-domain verification, signed AAB/FCM/store disclosures, and real Android↔web
-interoperability/device tests. Chat reconnect/backoff now refreshes one-use
-tickets, surfaces moderation error codes, and refuses offline sends; follow
-state now supports initial load and unfollow.
+The debug Android project now compiles and its JVM contract test passes in the
+GitHub Actions Android compile gate. Remaining release-gate work is deliberately
+visible rather than hidden: physical-device LAN/WebRTC runs, typing/unread chat
+UI, native in-app VOD playback and editing, bounded recording
+upload/finalisation, robust background/process-death recovery, TURN/direct
+diagnostics, analytics, App Link domain verification, signed AAB/FCM/store
+disclosures, and real Android↔web interoperability/device tests. Chat
+reconnect/backoff now refreshes one-use tickets, surfaces moderation error codes,
+and refuses offline sends; follow state now supports initial load and unfollow.
