@@ -81,7 +81,7 @@ jobs:
             tail -200 "$RUNNER_TEMP/android-build.log" >> "$GITHUB_STEP_SUMMARY"
             while IFS= read -r line; do
               case "$line" in
-                *"e: "*|*"error:"*|*"FAILURE"*|*"Could not resolve"*|*"Could not GET"*|*"Could not HEAD"*|*"PKIX"*|*"SSL"*)
+                *"e: "*|*"error:"*|*"FAILURE"*|*"Could not resolve"*|*"Could not find"*|*"Could not GET"*|*"Could not HEAD"*|*"Failed to"*|*"What went wrong"*|*"PKIX"*|*"SSL"*)
                   safe=${line//'%'/'%25'}
                   safe=${safe//$'\r'/'%0D'}
                   safe=${safe//$'\n'/'%0A'}
