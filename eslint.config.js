@@ -25,5 +25,13 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-unused-vars": "off",
     },
-  }
+  },
+  {
+    files: ["src/components/ui/**/*.{ts,tsx}", "src/contexts/*.tsx"],
+    // These shared Radix/shadcn modules intentionally export component helpers
+    // and hooks alongside components; Fast Refresh remains safe for them.
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
+  },
 );

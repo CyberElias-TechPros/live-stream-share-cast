@@ -1,10 +1,12 @@
 # Deployment
 
-Everything ships **code-complete**: the only work left at go-live is creating the
-Cloudflare resources, pasting the ids into `worker/wrangler.jsonc` and adding the
-keys you actually intend to use. Anything left unset degrades gracefully and is
-reported by `GET /api/health` (`pendingConfiguration`) and in the admin console's
-**Integrations** tab, so you always know what is still missing.
+The repository ships the verified web/API foundation plus an Android native
+starter slice. A launch still requires creating the Cloudflare resources,
+configuring exact production origins/secrets, validating providers, and passing
+real browser/WebRTC/device/accessibility/load/store gates. Optional integrations
+are reported by `GET /api/health` (`pendingConfiguration`) and the admin
+console's **Integrations** tab, but a missing key is not proof that the provider
+or media path has been tested.
 
 ---
 
@@ -42,8 +44,10 @@ npx wrangler d1 migrations apply live-stream-db --local    # dev
 npx wrangler d1 migrations apply live-stream-db --remote   # production
 ```
 
-Migrations `0001`…`0004` are ordered and idempotent; the GitHub workflow applies
-them automatically before every deploy.
+Migrations `0001`…`0005` are ordered and idempotent; `0005` adds one-use,
+stream-scoped WebSocket tickets so reusable bearer tokens do not appear in
+upgrade URLs. The GitHub workflow applies them automatically before every
+production deploy.
 
 ### 1.3 Required secrets
 
@@ -91,15 +95,32 @@ Creators add their own endpoints from **Settings → Integrations** (or
 `tip.received`, `moderation.report`. Requests carry
 `X-LSC-Signature: sha256=<hmac(secret, "<timestamp>.<raw body>")>`.
 
-### 1.6 Deploy
+### 1.6 Production configuration and deploy
+
+Production must use the named `production` environment and exact HTTPS values;
+never deploy the local development origins from the base config:
 
 ```bash
-npx wrangler deploy
+export ENVIRONMENT=production
+export ALLOWED_ORIGINS=https://your-web-origin.example
+export APP_URL=https://your-web-origin.example
+export JWT_SECRET="$(openssl rand -base64 48)"
+export CLEANUP_TOKEN="$(openssl rand -base64 32)"
+(cd worker && npm run validate:production)
+
+cd worker
+npx wrangler d1 migrations apply live-stream-db --remote --env production
+npx wrangler deploy --env production \
+  --var "ALLOWED_ORIGINS:${ALLOWED_ORIGINS}" \
+  --var "APP_URL:${APP_URL}"
 ```
 
-Or push to `main` — `.github/workflows/deploy-worker.yml` runs `npm ci`,
-`tsc --noEmit`, applies remote D1 migrations and deploys. It needs the repo
-secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+Store JWT/Cleanup values with `wrangler secret put ... --env production` rather
+than in the repository or command history. The GitHub workflow performs the
+same validation and expects repository secrets `JWT_SECRET`, `CLEANUP_TOKEN`,
+`ALLOWED_ORIGINS`, `APP_URL`, and `WORKER_URL` in addition to
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. It fails health verification
+if `configurationIssues` is non-empty.
 
 ---
 
@@ -154,8 +175,8 @@ soon as any assertion fails, so they can gate a release:
 
 ```bash
 npm --prefix worker run dev             # or point the suites at the deployed worker
-npm run test:api                        # 96 REST checks across every journey
-LSC_TEST_ADMIN_TOKEN=<operator jwt> npm run test:api   # + the operator console (109)
+npm run test:api                        # 109 REST/privacy checks across every journey
+LSC_TEST_ADMIN_TOKEN=<operator jwt> npm run test:api   # + the operator console
 npm run test:realtime                   # 13 realtime checks: chat + signalling
 npm run test:api -- https://<worker-host>      # same suite against production
 npm run typecheck                       # SPA

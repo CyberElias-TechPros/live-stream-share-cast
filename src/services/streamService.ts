@@ -7,7 +7,6 @@ export interface StreamServiceInterface {
   updateSettings(settings: StreamSettings): void;
   getMediaStream(): Promise<MediaStream>;
   stopStream(): void;
-  connectToStream(streamId: string, streamType: 'local' | 'internet'): Promise<void>;
   startRecording(saveLocally: boolean): void;
   stopRecording(): void;
   downloadRecording(filename: string): void;
@@ -76,6 +75,12 @@ class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
   
   async getMediaStream(): Promise<MediaStream> {
     try {
+      if (!window.isSecureContext && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) {
+        throw new Error('Camera and microphone require HTTPS (or localhost during development).');
+      }
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('This browser does not provide camera and microphone access.');
+      }
       this.setStatus('connecting');
       
       const constraints: MediaStreamConstraints = {
@@ -135,27 +140,6 @@ class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
     }
   }
   
-  async connectToStream(streamId: string, streamType: 'local' | 'internet'): Promise<void> {
-    try {
-      this.setStatus('connecting');
-      
-      // Validate stream ID
-      if (!streamId || streamId.length < 10) {
-        throw new Error('Invalid stream ID');
-      }
-      
-      // Simulate connection logic - replace with actual implementation
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      this.setStatus('live');
-      this.emit('connected', { streamId, streamType });
-    } catch (error) {
-      this.setStatus('error');
-      this.emit('error', error);
-      throw error;
-    }
-  }
-  
   setActiveStream(stream: Stream | null): void {
     this.activeStream = stream;
     this.emit('activeStreamChanged', stream);
@@ -167,6 +151,7 @@ class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
    * decides what the file looks like.
    */
   private recordingMimeType(): string {
+    if (typeof MediaRecorder === 'undefined') throw new Error('Recording is not supported in this browser');
     const preference =
       this.settings.streaming.codec === 'H264'
         ? ['video/webm;codecs=h264', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
@@ -252,18 +237,21 @@ class StreamServiceImpl extends EventEmitter implements StreamServiceInterface {
   }
   
   checkBrowserSupport(): { supported: boolean; features: Record<string, boolean> } {
+    const mediaRecorder = typeof window.MediaRecorder !== 'undefined';
+    const supportsMime = (mime: string) => mediaRecorder && MediaRecorder.isTypeSupported(mime);
     const features: Record<string, boolean> = {
+      secureContext: window.isSecureContext || ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname),
       webRTC: !!window.RTCPeerConnection,
       getUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
-      mediaRecorder: !!window.MediaRecorder,
+      mediaRecorder,
       webSockets: !!window.WebSocket,
       webCodecs: 'VideoEncoder' in window && 'VideoDecoder' in window,
-      h264Support: MediaRecorder.isTypeSupported('video/webm;codecs=h264'),
-      vp9Support: MediaRecorder.isTypeSupported('video/webm;codecs=vp9'),
-      screenCapture: !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+      h264Support: supportsMime('video/webm;codecs=h264'),
+      vp9Support: supportsMime('video/webm;codecs=vp9'),
+      screenCapture: !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia),
     };
     
-    const supported = features.webRTC && features.getUserMedia && features.mediaRecorder && features.webSockets;
+    const supported = features.secureContext && features.webRTC && features.getUserMedia && features.mediaRecorder && features.webSockets;
     
     return { supported, features };
   }

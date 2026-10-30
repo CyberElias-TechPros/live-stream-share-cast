@@ -15,7 +15,7 @@ JWT_SECRET=change-me-to-a-long-random-string
 CLEANUP_TOKEN=dev-cleanup-token
 
 ENVIRONMENT=development
-ALLOWED_ORIGINS=*
+ALLOWED_ORIGINS=http://localhost:8080,http://127.0.0.1:8080
 
 # ---------------------------- brand / legal --------------------------------
 APP_NAME=I'm Live
@@ -40,6 +40,8 @@ RECORDING_RETENTION_HOURS=6
 STALE_STREAM_MINUTES=5
 SIGNED_URL_TTL=3600
 MAX_UPLOAD_BYTES=524288000
+# Maximum concurrent browser P2P viewers per broadcast.
+MAX_P2P_VIEWERS=8
 # MAX_AVATAR_BYTES=5242880
 # MAX_CHAT_MESSAGE_LENGTH=500
 # MAX_TITLE_LENGTH=140

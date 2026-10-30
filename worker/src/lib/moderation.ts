@@ -127,7 +127,7 @@ export function filterMessage(message: string, settings: ChatSettings): Moderati
 
   if (settings.emotesOnly) {
     // Emote-only mode: allow pure emoji/symbol messages.
-    const stripped = message.replace(/[\p{Extended_Pictographic}\s\p{Emoji_Presentation}\u200d\ufe0f]/gu, '');
+    const stripped = message.replace(/\p{Extended_Pictographic}|\s|\u200d|\ufe0f/gu, '');
     if (stripped.length > 0) {
       return { allowed: false, code: 'emotes_only', message: 'Only emotes are allowed right now' };
     }

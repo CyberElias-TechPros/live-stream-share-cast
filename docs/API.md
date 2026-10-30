@@ -22,13 +22,27 @@ Settings → Security) work in the same header and carry scopes.
 
 ---
 
+## WebSocket upgrade tickets
+
+WebSocket clients first call `POST /api/ws/tickets` with `{ streamId, role }`.
+Viewer tickets may be issued anonymously; host tickets require the stream owner
+(or an administrator) session and an already-started live stream. The response
+contains a single-use ticket valid for 60 seconds. Pass it as `ticket` on the subsequent WebSocket upgrade. Do not
+put bearer access or refresh tokens in WebSocket URLs.
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| POST | `/ws/tickets` | optional for viewers, required for hosts | one stream/role, one minute TTL, one use |
+| GET | `/ws/chat/:streamId` | ticket | chat + presence |
+| GET | `/ws/signal/:streamId` | ticket | WebRTC offer/answer/ICE |
+
 ## Public configuration
 
 | Method | Path                     | Auth | Notes                                             |
 | ------ | ------------------------ | ---- | ------------------------------------------------- |
 | GET    | `/config`                | –    | brand, limits, features, payment presets, push key |
 | GET    | `/runtime-config.json`   | –    | same payload, cacheable (`max-age=300`)            |
-| GET    | `/config/rtc/ice`        | –    | ICE servers; TURN credentials are short-lived       |
+| GET    | `/config/rtc/ice`        | –    | `{ iceServers, ttlSeconds, turnConfigured }`; TURN credentials are short-lived |
 | GET    | `/config/categories`     | –    | browse taxonomy with live-stream counts             |
 | GET    | `/config/features`       | –    | database feature flags                              |
 | GET    | `/health`                | –    | service status + `pendingConfiguration`             |
@@ -77,7 +91,7 @@ Signup accepts an optional captcha token; login is rate limited and locks after
 | POST   | `/streams/:id/start`      | go live → notification fan-out, webhook, chat notice |
 | POST   | `/streams/:id/stop`       | end broadcast, close session, complete schedule   |
 | POST   | `/streams/:id/heartbeat`  | keeps the broadcast alive (`STALE_STREAM_MINUTES`) |
-| POST   | `/streams/:id/viewers`    | viewer bookkeeping for non-socket clients         |
+| POST   | `/streams/:id/viewers`            | owner-authenticated viewer bookkeeping for non-socket clients |
 | POST   | `/streams/:id/stats`, GET `/streams/:id/stats` | bandwidth/CPU telemetry          |
 | GET    | `/streams/:id/sessions`   | past sessions                                     |
 | GET    | `/streams/:id/presence`   | `{ viewers, hostConnected, live }` from the DO     |
@@ -165,9 +179,50 @@ Endpoints that fail 20 times in a row pause until they are re-enabled.
 
 | Path                             | Query                                  | Purpose                       |
 | -------------------------------- | -------------------------------------- | ----------------------------- |
-| `/api/ws/chat/:streamId`         | `role=host\|viewer`, `token`           | chat, presence, moderation    |
-| `/api/ws/signal/:streamId`       | `role=host\|viewer`, `peerId`, `token` | WebRTC offer/answer/ICE       |
+| `/api/ws/chat/:streamId`         | `role=host\|viewer`, `ticket`           | chat, presence, moderation    |
+| `/api/ws/signal/:streamId`       | `role=host\|viewer`, `peerId`, `ticket` | WebRTC offer/answer/ICE       |
 
-`role=host` requires ownership of the stream. Banned accounts are rejected with
+`role=host` requires ownership of an already-live stream; viewers may be
+anonymous but still need a one-use ticket. Banned accounts are rejected with
 `account_banned`. Both upgrade through the same origin as the REST API, so no
 extra proxy configuration is needed in production.
+
+Signal frames are bounded and role-checked by the Durable Object. Viewer frames
+are `hello-viewer`, `offer`, `ice`, `quality`, and `close`; host frames are
+`streamer-ready`, `answer`, `ice`, and `close`. SDP and ICE payloads are size
+limited, a peer may only address the opposite role, and quality is expressed as
+64–10000 kbps or `null` for automatic. Rejected frames use the normal socket
+error shape with codes such as `invalid_sdp`, `invalid_ice`, `invalid_target`,
+`invalid_role_frame`, `rate_limited`, and `p2p_capacity`; each peer is capped
+at 120 frames per 10-second window.
+
+### Fully offline browser room
+
+The `/offline` browser route intentionally does **not** call this API. It uses the
+`imlive-offline-webrtc` version `1` JSON bundle from `src/lib/offlinePeer.ts`:
+
+```json
+{
+  "protocol": "imlive-offline-webrtc",
+  "version": 1,
+  "type": "offer",
+  "roomCode": "ABCD2345",
+  "sdp": "v=0..."
+}
+```
+
+The broadcaster and viewer exchange the offer/answer by copy and paste. The
+peer connections use an empty `iceServers` list and no WebSocket ticket. This is
+separate from the Worker-backed `LAN` transport above: browser LAN media can be
+local while its signalling still requires the Worker. The offline route has no
+cloud discovery, chat, recording upload, analytics, or global playback link.
+
+Chat WebSocket messages are bounded to 64 KiB and use the same admission policy
+as REST chat. A signed-in socket is checked for channel bans, followers-only mode,
+account age, slow mode, blocked words, link policy, and emote-only mode before a
+message is persisted.
+Rejections include stable codes such as `auth_required`, `banned_from_chat`,
+`followers_only`, `slow_mode`, `blocked_word`, and `account_too_new`. Anonymous
+viewers may receive chat but cannot post. The `system` message type is reserved
+for the broadcaster/admin path; viewer-supplied system labels are stored as
+ordinary text.

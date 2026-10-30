@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
-import path from "path";
+import { resolve } from "node:path";
 import { componentTagger } from "lovable-tagger";
 
 // The Cloudflare Worker API (see ./worker) runs on :8787 during development.
@@ -13,6 +13,9 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    // Arena/Cloudflare preview hosts are generated per session; production
+    // hosting must still enforce its own explicit host allow-list.
+    allowedHosts: true,
     proxy: {
       "/api": {
         target: API_TARGET,
@@ -28,7 +31,7 @@ export default defineConfig(({ mode }) => ({
   ].filter(Boolean),
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": resolve(import.meta.dirname, "./src"),
     },
   },
 }));

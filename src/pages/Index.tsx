@@ -10,6 +10,7 @@ import {
   Check,
   Globe2,
   Radio,
+  WifiOff,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -131,6 +132,11 @@ const Index = () => {
                   <p className="mt-8 font-mono text-[11px] tracking-[0.25em] text-muted-foreground/70 uppercase">
                     Free to start&nbsp;&nbsp;·&nbsp;&nbsp;No downloads&nbsp;&nbsp;·&nbsp;&nbsp;Any browser
                   </p>
+                  <Link to="/offline" className="mt-4 inline-flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                    <WifiOff className="h-3.5 w-3.5" />
+                    Need a room with no internet? Open offline LAN mode
+                    <ArrowRight className="h-3 w-3" />
+                  </Link>
                 </Reveal>
               </div>
 

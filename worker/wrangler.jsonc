@@ -46,15 +46,31 @@
   },
 
   "vars": {
-    "ENVIRONMENT": "production",
-    "ALLOWED_ORIGINS": "*",
+    // Safe defaults for `wrangler dev`; production deploys must use the
+    // `production` environment and set exact origins/secrets.
+    "ENVIRONMENT": "development",
+    "ALLOWED_ORIGINS": "http://localhost:8080,http://127.0.0.1:8080",
     // Retention for uploaded recordings / avatars, in hours.
     "RECORDING_RETENTION_HOURS": "6",
     // A stream with no host heartbeat for this long is forced offline.
     "STALE_STREAM_MINUTES": "5",
     // How long R2 playback/upload URLs stay valid (seconds).
     "SIGNED_URL_TTL": "3600",
-    "MAX_UPLOAD_BYTES": "524288000"
+    "MAX_UPLOAD_BYTES": "524288000",
+    "MAX_P2P_VIEWERS": "8"
+  },
+
+  "env": {
+    "production": {
+      "vars": {
+        "ENVIRONMENT": "production",
+        "RECORDING_RETENTION_HOURS": "168",
+        "STALE_STREAM_MINUTES": "5",
+        "SIGNED_URL_TTL": "3600",
+        "MAX_UPLOAD_BYTES": "524288000",
+        "MAX_P2P_VIEWERS": "8"
+      }
+    }
   },
 
   "observability": {

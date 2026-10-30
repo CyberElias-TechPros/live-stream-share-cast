@@ -21,15 +21,16 @@
  * `from` id, so peers cannot impersonate each other.
  */
 
-import { apiSocket } from "@/integrations/api/client";
+import { apiSocket, requestWebSocketTicket } from "@/integrations/api/client";
 import { platformService } from "@/services/platformService";
 
 export type LanState = "idle" | "waiting" | "ready" | "connecting" | "connected" | "failed";
 
 /**
- * `local` keeps media on the network — no TURN relay is offered, so a connection
- * that needs one simply fails instead of leaving the LAN. `internet` adds the
- * TURN credentials minted by the Worker, which is what gets viewers behind
+ * `local` keeps media on the network — no public STUN/TURN request is made, so
+ * both devices must share a reachable LAN subnet. The browser path still uses
+ * the Worker for one-time tickets and signalling. `internet` adds the TURN
+ * credentials minted by the Worker, which is what gets viewers behind
  * symmetric NAT or on mobile networks connected.
  */
 export type TransportMode = "local" | "internet";
@@ -37,7 +38,10 @@ export type TransportMode = "local" | "internet";
 interface SignalMsg {
   from: string;
   to?: string;
-  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close" | "quality";
+  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close" | "quality" | "error" | "peer-left";
+  code?: string;
+  error?: string;
+  maxViewers?: number;
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
   /** Requested ceiling for this viewer, in kbps. `null` restores automatic. */
@@ -49,6 +53,7 @@ interface SignalMsg {
  * candidates still connect peers on the same network.
  */
 const FALLBACK_ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+const DEFAULT_MAX_P2P_VIEWERS = 8;
 
 let cachedIceServers: RTCIceServer[] | null = null;
 let icePromise: Promise<RTCIceServer[]> | null = null;
@@ -75,11 +80,11 @@ async function iceServers(): Promise<RTCIceServer[]> {
 }
 
 async function iceConfiguration(mode: TransportMode = "internet"): Promise<RTCConfiguration> {
-  const servers = await iceServers();
+  const servers = mode === "local" ? [] : await iceServers();
   return {
-    // Local mode strips the relays: direct (host/STUN-reflexive) candidates only.
-    iceServers: mode === "local" ? servers.filter((server) => !String(server.urls).startsWith("turn")) : servers,
-    // A relay-only fallback is used by the browser when no direct path exists.
+    // Strict LAN mode does not even contact public STUN/TURN. Host candidates
+    // are enough when both devices are on the same non-isolated subnet.
+    iceServers: mode === "local" ? [] : servers,
     iceTransportPolicy: "all",
     bundlePolicy: "max-bundle",
   };
@@ -106,9 +111,11 @@ function openSignalChannel(
   streamId: string,
   identity: SignalIdentity,
   onMessage: (msg: SignalMsg) => void,
+  onError?: (error: unknown) => void,
 ): { send: (msg: SignalMsg) => void; unsubscribe: () => void } {
   let socket: WebSocket | null = null;
   let stopped = false;
+  let connecting = false;
   let retry = 0;
   let timer: number | null = null;
   const outbox: SignalMsg[] = [];
@@ -121,44 +128,65 @@ function openSignalChannel(
     }
   };
 
-  const connect = () => {
-    if (stopped) return;
-
-    const ws = apiSocket(`/api/ws/signal/${streamId}`, {
-      params: { peerId: identity.peerId, role: identity.role },
-    });
-    socket = ws;
-
-    ws.onopen = () => {
-      retry = 0;
-      flush();
-    };
-
-    ws.onmessage = (event: MessageEvent) => {
-      let msg: SignalMsg;
-      try {
-        msg = JSON.parse(event.data as string) as SignalMsg;
-      } catch {
-        return;
-      }
-      if (!msg || typeof msg.type !== "string") return;
-      if (msg.from === identity.peerId) return; // our own frame echoing back
-      if (msg.to && msg.to !== identity.peerId) return; // addressed to another peer
-      onMessage(msg);
-    };
-
-    ws.onclose = () => {
-      if (stopped) return;
-      retry = Math.min(retry + 1, 6);
-      timer = window.setTimeout(connect, Math.min(1000 * 2 ** retry, 20_000));
-    };
-
-    ws.onerror = () => {
-      /* onclose handles the reconnect */
-    };
+  const scheduleRetry = () => {
+    if (stopped || timer !== null) return;
+    retry = Math.min(retry + 1, 6);
+    timer = window.setTimeout(() => {
+      timer = null;
+      void connect();
+    }, Math.min(1000 * 2 ** retry, 20_000));
   };
 
-  connect();
+  const connect = async () => {
+    if (stopped || connecting || socket?.readyState === WebSocket.OPEN) return;
+    connecting = true;
+
+    try {
+      const ticket = await requestWebSocketTicket(streamId, identity.role);
+      if (stopped) return;
+
+      const ws = apiSocket(`/api/ws/signal/${streamId}`, {
+        auth: false,
+        params: { peerId: identity.peerId, role: identity.role, ticket },
+      });
+      socket = ws;
+
+      ws.onopen = () => {
+        retry = 0;
+        connecting = false;
+        flush();
+      };
+
+      ws.onmessage = (event: MessageEvent) => {
+        let msg: SignalMsg;
+        try {
+          msg = JSON.parse(event.data as string) as SignalMsg;
+        } catch {
+          return;
+        }
+        if (!msg || typeof msg.type !== "string") return;
+        if (msg.from === identity.peerId) return; // our own frame echoing back
+        if (msg.to && msg.to !== identity.peerId) return; // addressed to another peer
+        onMessage(msg);
+      };
+
+      ws.onclose = () => {
+        socket = null;
+        connecting = false;
+        if (!stopped) scheduleRetry();
+      };
+
+      ws.onerror = () => {
+        /* onclose handles the reconnect */
+      };
+    } catch (error) {
+      connecting = false;
+      onError?.(error);
+      scheduleRetry();
+    }
+  };
+
+  void connect();
 
   return {
     send: (msg: SignalMsg) => {
@@ -169,6 +197,7 @@ function openSignalChannel(
     unsubscribe: () => {
       stopped = true;
       if (timer) window.clearTimeout(timer);
+      timer = null;
       if (socket && socket.readyState <= WebSocket.OPEN) socket.close();
       socket = null;
     },
@@ -184,7 +213,10 @@ export class LanStreamer {
   private streamId: string;
   private me = selfId();
   private mode: TransportMode;
+  private maxViewers: number;
   private pcs = new Map<string, RTCPeerConnection>();
+  private pendingCandidates = new Map<string, RTCIceCandidateInit[]>();
+  private disconnectTimers = new Map<string, number>();
   private sig: { send: (m: SignalMsg) => void; unsubscribe: () => void } | null = null;
   private readyTimer: number | null = null;
   private stopped = false;
@@ -194,10 +226,11 @@ export class LanStreamer {
   /** Fires when a viewer asks for a different quality (kbps null = automatic). */
   onQualityHint: ((viewer: string, kbps: number | null) => void) | null = null;
 
-  constructor(streamId: string, media: MediaStream, mode: TransportMode = "internet") {
+  constructor(streamId: string, media: MediaStream, mode: TransportMode = "internet", maxViewers = DEFAULT_MAX_P2P_VIEWERS) {
     this.streamId = streamId;
     this.media = media;
     this.mode = mode;
+    this.maxViewers = Math.max(1, Math.min(Math.floor(maxViewers), 100));
   }
 
   /**
@@ -274,11 +307,20 @@ export class LanStreamer {
 
       case "ice": {
         const pc = this.pcs.get(msg.from);
-        if (pc && msg.candidate) {
-          pc.addIceCandidate(msg.candidate).catch(() => {
-            /* stale candidate — safe to ignore */
-          });
+        if (!msg.candidate) break;
+        // Trickle ICE can beat the viewer's offer/remote-description callback.
+        // Queue it per viewer instead of dropping the candidate and making
+        // otherwise healthy NAT paths look like a media failure.
+        if (!pc || !pc.remoteDescription) {
+          this.pendingCandidates.set(msg.from, [
+            ...(this.pendingCandidates.get(msg.from) ?? []),
+            msg.candidate,
+          ].slice(-100));
+          break;
         }
+        pc.addIceCandidate(msg.candidate).catch(() => {
+          /* stale candidate — safe to ignore */
+        });
         break;
       }
 
@@ -289,12 +331,29 @@ export class LanStreamer {
   }
 
   private async handleOffer(from: string, sdp: RTCSessionDescriptionInit) {
+    // Enforce the same ceiling on the host in case a stale room or a custom
+    // signalling client bypasses the Worker-provided room limit.
+    if (!this.pcs.has(from) && this.pcs.size >= this.maxViewers) {
+      this.send({
+        from: this.me,
+        to: from,
+        type: "error",
+        code: "p2p_capacity",
+        error: `This broadcast has reached its ${this.maxViewers}-viewer peer-to-peer limit`,
+        maxViewers: this.maxViewers,
+      });
+      return;
+    }
+
     // Re-join: replace any existing connection from this peer.
     const existing = this.pcs.get(from);
     if (existing) {
       existing.close();
       this.pcs.delete(from);
     }
+    const previousDisconnectTimer = this.disconnectTimers.get(from);
+    if (previousDisconnectTimer) window.clearTimeout(previousDisconnectTimer);
+    this.disconnectTimers.delete(from);
 
     const pc = new RTCPeerConnection(await iceConfiguration(this.mode));
     this.pcs.set(from, pc);
@@ -316,14 +375,32 @@ export class LanStreamer {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed") {
+      const state = pc.connectionState;
+      if (state === "connected") {
+        const timer = this.disconnectTimers.get(from);
+        if (timer) window.clearTimeout(timer);
+        this.disconnectTimers.delete(from);
+      } else if (state === "failed" || state === "closed") {
         this.closePeer(from);
+      } else if (state === "disconnected" && !this.disconnectTimers.has(from)) {
+        // Mobile handoff and brief Wi-Fi loss often report `disconnected`
+        // before recovering. Give ICE a bounded grace period, but do not keep
+        // dead peers in the capacity map forever.
+        const timer = window.setTimeout(() => {
+          this.disconnectTimers.delete(from);
+          const current = this.pcs.get(from);
+          if (current && current.connectionState === "disconnected") this.closePeer(from);
+        }, 10_000);
+        this.disconnectTimers.set(from, timer);
       }
       this.emitCount();
     };
 
     try {
       await pc.setRemoteDescription(sdp);
+      const queued = this.pendingCandidates.get(from) ?? [];
+      this.pendingCandidates.delete(from);
+      await Promise.all(queued.map((candidate) => pc.addIceCandidate(candidate).catch(() => undefined)));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       this.send({ from: this.me, to: from, type: "answer", sdp: answer });
@@ -336,6 +413,10 @@ export class LanStreamer {
   }
 
   private closePeer(from: string) {
+    const timer = this.disconnectTimers.get(from);
+    if (timer) window.clearTimeout(timer);
+    this.disconnectTimers.delete(from);
+    this.pendingCandidates.delete(from);
     const pc = this.pcs.get(from);
     if (pc) {
       try {
@@ -370,6 +451,9 @@ export class LanStreamer {
       }
     });
     this.pcs.clear();
+    this.pendingCandidates.clear();
+    this.disconnectTimers.forEach((timer) => window.clearTimeout(timer));
+    this.disconnectTimers.clear();
     this.sig?.unsubscribe();
     this.sig = null;
     console.info("[LAN] streamer stopped");
@@ -390,12 +474,17 @@ export class LanViewer {
   private helloTimer: number | null = null;
   private stopped = false;
   private _ready = false;
+  private terminalError = false;
+  private reconnectTimer: number | null = null;
+  private peerDisconnectTimer: number | null = null;
+  private reconnectAttempt = 0;
 
   /** Set from the host's `streamer-ready` frame, used to address quality hints. */
   private streamerId: string | null = null;
 
   onStream: ((media: MediaStream | null) => void) | null = null;
   onState: ((state: LanState) => void) | null = null;
+  onError: ((message: string, code?: string) => void) | null = null;
 
   constructor(streamId: string, mode: TransportMode = "internet") {
     this.streamId = streamId;
@@ -423,7 +512,11 @@ export class LanViewer {
 
   /** Opens the peer connection (ICE servers resolved on demand). */
   async connect(): Promise<void> {
-    if (this.pc) return;
+    if (this.pc || this.terminalError || this.stopped) return;
+    if (this.reconnectTimer) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
 
     this.pc = new RTCPeerConnection(await iceConfiguration(this.mode));
 
@@ -450,13 +543,20 @@ export class LanViewer {
     this.pc.onconnectionstatechange = () => {
       if (!this.pc) return;
       const s = this.pc.connectionState;
-      if (s === "connected") this.emitState("connected");
-      else if (s === "failed") {
-        // Release the dead peer so "Try again" can build a fresh one.
-        this.pc.onicecandidate = null;
-        this.pc.close();
-        this.pc = null;
-        this.emitState("failed");
+      if (s === "connected") {
+        if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+        this.peerDisconnectTimer = null;
+        this.reconnectAttempt = 0;
+        this.emitState("connected");
+      } else if (s === "disconnected") {
+        if (!this.peerDisconnectTimer) {
+          this.peerDisconnectTimer = window.setTimeout(() => {
+            this.peerDisconnectTimer = null;
+            if (this.pc?.connectionState === "disconnected") this.restartPeer();
+          }, 5_000);
+        }
+      } else if (s === "failed" || s === "closed") {
+        this.restartPeer();
       }
     };
 
@@ -465,6 +565,34 @@ export class LanViewer {
 
   private send(m: SignalMsg) {
     this.sig?.send(m);
+  }
+
+  private restartPeer() {
+    if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+    this.peerDisconnectTimer = null;
+    const pc = this.pc;
+    if (!pc) return;
+    this.pc = null;
+    this.queuedCandidates = [];
+    pc.onicecandidate = null;
+    pc.onconnectionstatechange = null;
+    try {
+      pc.close();
+    } catch {
+      /* ignore */
+    }
+    this.emitState("failed");
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect() {
+    if (this.stopped || this.terminalError || !this._ready || this.reconnectTimer) return;
+    this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 6);
+    const delay = Math.min(1000 * 2 ** (this.reconnectAttempt - 1), 20_000);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect();
+    }, delay);
   }
 
   private async createOffer() {
@@ -477,7 +605,7 @@ export class LanViewer {
       this.send({ from: this.me, type: "offer", sdp: offer });
     } catch (err) {
       console.warn("[LAN] offer failed:", err);
-      this.emitState("failed");
+      this.restartPeer();
     }
   }
 
@@ -500,7 +628,7 @@ export class LanViewer {
 
       case "answer": {
         const pc = this.pc;
-        if (!pc || !msg.sdp) return;
+        if (!pc || !msg.sdp || (this.streamerId && msg.from !== this.streamerId)) return;
         pc.setRemoteDescription(msg.sdp).then(() => {
           // Flush candidates that arrived before the remote description.
           this.queuedCandidates.forEach((c) =>
@@ -509,13 +637,14 @@ export class LanViewer {
           this.queuedCandidates = [];
         }).catch((err) => {
           console.warn("[LAN] answer rejected:", err);
+          this.restartPeer();
         });
         break;
       }
 
       case "ice": {
         const pc = this.pc;
-        if (!pc || !msg.candidate) return;
+        if (!pc || !msg.candidate || (this.streamerId && msg.from !== this.streamerId)) return;
         if (pc.currentRemoteDescription) {
           pc.addIceCandidate(msg.candidate).catch(() => undefined);
         } else {
@@ -524,29 +653,86 @@ export class LanViewer {
         break;
       }
 
-      case "close":
-        // Streamer ended — drop the connection so the UI can react.
-        if (this.pc) {
-          try {
-            this.pc.close();
-          } catch {
-            /* ignore */
-          }
-          this.pc = null;
+      case "error":
+        if (msg.code === "p2p_capacity") {
+          // The room closes a capacity-rejected socket. Stop this client's
+          // reconnect loop too; otherwise every backoff attempt would mint a
+          // fresh ticket and repeat the same user-facing failure forever.
+          this.terminalError = true;
+          if (this.helloTimer) window.clearInterval(this.helloTimer);
+          this.helloTimer = null;
+          this.sig?.unsubscribe();
+          this.sig = null;
+          this.onError?.(msg.error ?? "This broadcast has reached its peer-to-peer audience limit", msg.code);
+          this.emitState("failed");
         }
+        break;
+
+      case "peer-left":
+        if (msg.from !== this.streamerId) return;
+        this.streamerId = null;
+        this.resetPeerForReconnect();
         this._ready = false;
-        this.emitState("waiting");
         this.onStream?.(null);
+        this.emitState("waiting");
+        this.waitForStreamer();
+        break;
+
+      case "close":
+        // Streamer ended or briefly disconnected — drop the connection so the
+        // UI can react, then keep listening in case the host reconnects.
+        this.resetPeerForReconnect();
+        this._ready = false;
+        this.onStream?.(null);
+        this.emitState("waiting");
+        this.waitForStreamer();
         break;
     }
+  }
+
+  private resetPeerForReconnect() {
+    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnectAttempt = 0;
+    if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+    this.peerDisconnectTimer = null;
+    this.queuedCandidates = [];
+    if (this.pc) {
+      this.pc.onicecandidate = null;
+      this.pc.onconnectionstatechange = null;
+      try {
+        this.pc.close();
+      } catch {
+        /* ignore */
+      }
+      this.pc = null;
+    }
+  }
+
+  private waitForStreamer() {
+    if (this.stopped || this.terminalError || this._ready) return;
+    if (this.helloTimer) window.clearInterval(this.helloTimer);
+    this.knock();
+    this.helloTimer = window.setInterval(() => this.knock(), 3000);
   }
 
   /** Starts listening for the streamer and keeps knocking until found. */
   start() {
     if (this.sig) return;
-    this.sig = openSignalChannel(this.streamId, { peerId: this.me, role: "host" }, (msg) => this.onSignal(msg));
-    this.knock();
-    this.helloTimer = window.setInterval(() => this.knock(), 3000);
+    // Viewers must join as viewers. The Worker authorizes `role=host` only for
+    // the stream owner; using the host role here makes an ordinary viewer fail
+    // the signalling upgrade before WebRTC negotiation can begin.
+    this.sig = openSignalChannel(
+      this.streamId,
+      { peerId: this.me, role: "viewer" },
+      (msg) => this.onSignal(msg),
+      (error) => {
+        const message = error instanceof Error ? error.message : "Could not open the viewer connection";
+        this.onError?.(message);
+        this.emitState("failed");
+      },
+    );
+    this.waitForStreamer();
     this.emitState(this._ready ? "ready" : "waiting");
   }
 
@@ -560,12 +746,33 @@ export class LanViewer {
     this.onState?.(state);
   }
 
+  /** Clears a terminal capacity rejection after the viewer explicitly retries. */
+  retry() {
+    if (this.stopped) return;
+    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnectAttempt = 0;
+    if (!this.terminalError) {
+      void this.connect();
+      return;
+    }
+    this.terminalError = false;
+    this._ready = false;
+    this.queuedCandidates = [];
+    this.onStream?.(null);
+    this.start();
+  }
+
   disconnect() {
     if (this.stopped) return;
     this.stopped = true;
     if (this.helloTimer) window.clearInterval(this.helloTimer);
     this.helloTimer = null;
-    this.send({ from: this.me, type: "close" });
+    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+    this.peerDisconnectTimer = null;
+    this.send({ from: this.me, to: this.streamerId ?? undefined, type: "close" });
     if (this.pc) {
       try {
         this.pc.close();
