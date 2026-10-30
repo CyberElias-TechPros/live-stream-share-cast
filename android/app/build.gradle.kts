@@ -72,7 +72,9 @@ dependencies {
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("org.webrtc:google-webrtc:1.0.32006")
+    // Maintained Maven Central build; it keeps the org.webrtc API package and
+    // avoids the archived google-webrtc/JCenter artifact.
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
