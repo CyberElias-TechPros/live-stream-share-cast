@@ -6,7 +6,7 @@
  * moderation events ride the same socket.
  */
 
-import { api, apiSocket } from '@/integrations/api/client';
+import { api, apiSocket, requestWebSocketTicket } from '@/integrations/api/client';
 import { toChatMessage, toChatMessages } from '@/integrations/api/mappers';
 import type { ChatMessage } from '@/types';
 
@@ -22,7 +22,10 @@ interface SendChatMessageParams {
 
 export interface StreamChatEvent {
   /** `chat` = new/relayed message, `presence` = viewer count, `stream` = live status. */
-  type: 'chat' | 'presence' | 'moderation' | 'stream' | 'ready' | 'typing';
+  type: 'chat' | 'presence' | 'moderation' | 'stream' | 'ready' | 'typing' | 'error' | 'peer-left';
+  code?: string;
+  error?: string;
+  retryAfterSeconds?: number;
   message?: ChatMessage;
   viewers?: number;
   hostConnected?: boolean;
@@ -97,35 +100,49 @@ export const chatService = {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
 
-    const connect = () => {
+    const connect = async () => {
       if (closed) return;
 
-      const ws = apiSocket(`/api/ws/chat/${streamId}`, { params: { role: options.role ?? 'viewer' } });
-      socket = ws;
-
-      ws.onopen = () => {
-        retry = 0;
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const payload = JSON.parse(event.data as string) as StreamChatEvent;
-          onEvent(payload);
-        } catch (error) {
-          console.warn('Malformed chat frame', error);
-        }
-      };
-
-      ws.onclose = () => {
+      try {
+        const role = options.role ?? 'viewer';
+        const ticket = await requestWebSocketTicket(streamId, role);
         if (closed) return;
+        const ws = apiSocket(`/api/ws/chat/${streamId}`, {
+          auth: false,
+          params: { role, ticket },
+        });
+        socket = ws;
+
+        ws.onopen = () => {
+          retry = 0;
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data as string) as StreamChatEvent;
+            onEvent(payload);
+          } catch (error) {
+            console.warn('Malformed chat frame', error);
+          }
+        };
+
+        ws.onclose = () => {
+          if (closed) return;
+          retry = Math.min(retry + 1, 6);
+          const delay = Math.min(1000 * 2 ** retry, 30_000);
+          timer = setTimeout(connect, delay);
+        };
+
+        ws.onerror = () => {
+          /* onclose handles reconnection */
+        };
+      } catch (error) {
+        if (closed) return;
+        console.warn('Could not open chat socket', error);
         retry = Math.min(retry + 1, 6);
         const delay = Math.min(1000 * 2 ** retry, 30_000);
         timer = setTimeout(connect, delay);
-      };
-
-      ws.onerror = () => {
-        /* onclose handles reconnection */
-      };
+      }
     };
 
     connect();

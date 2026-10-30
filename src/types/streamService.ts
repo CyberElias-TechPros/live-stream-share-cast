@@ -1,6 +1,6 @@
 
 import { EventEmitter } from "@/lib/eventEmitter";
-import { Stream, StreamSettings, StreamStatus } from "./index";
+import { ChatMessage, Stream, StreamSettings, StreamStatus } from "./index";
 
 /**
  * Enhanced StreamService interface with comprehensive type safety
@@ -11,7 +11,6 @@ export interface StreamService extends EventEmitter {
   updateSettings(settings: StreamSettings): void;
   getMediaStream(): Promise<MediaStream>;
   stopStream(): void;
-  connectToStream(streamId: string, streamType: 'local' | 'internet'): Promise<void>;
   
   // Recording functionality
   startRecording(saveLocally: boolean): void;
@@ -43,11 +42,11 @@ export interface StreamService extends EventEmitter {
   on(event: 'connected', listener: (data: { streamId: string; streamType: string }) => void): this;
   on(event: 'activeStreamChanged', listener: (stream: Stream | null) => void): this;
   on(event: 'trackEnded', listener: (track: MediaStreamTrack) => void): this;
-  on(event: string, listener: (...args: any[]) => void): this;
+  on(event: string, listener: (...args: unknown[]) => void): this;
   
-  off(event: string, listener: (...args: any[]) => void): this;
-  emit(event: string, ...args: any[]): boolean;
-  once(event: string, listener: (...args: any[]) => void): this;
+  off(event: string, listener: (...args: unknown[]) => void): this;
+  emit(event: string, ...args: unknown[]): boolean;
+  once(event: string, listener: (...args: unknown[]) => void): this;
   removeAllListeners(event?: string): this;
 }
 
@@ -80,7 +79,7 @@ export interface StreamEvents {
   activeStreamChanged: (stream: Stream | null) => void;
   trackEnded: (track: MediaStreamTrack) => void;
   viewerCountChanged: (count: number) => void;
-  chatMessage: (message: any) => void;
+  chatMessage: (message: ChatMessage) => void;
 }
 
 /**

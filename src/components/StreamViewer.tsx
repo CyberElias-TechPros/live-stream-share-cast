@@ -100,12 +100,19 @@ export default function StreamViewer({ streamId }: StreamViewerProps) {
         if (event.type === "presence" && typeof event.viewers === "number") {
           queryClient.invalidateQueries({ queryKey: ["stream", streamId] });
         }
+        if (event.type === "error") {
+          toast({
+            title: event.code === "auth_required" ? "Sign in to chat" : "Chat unavailable",
+            description: event.error ?? "The chat server rejected that action.",
+            variant: "destructive",
+          });
+        }
       },
       { role: isHost ? "host" : "viewer" },
     );
 
     return () => subscription.close();
-  }, [streamId, queryClient, isHost]);
+  }, [streamId, queryClient, isHost, toast]);
 
   // Watch-time tracking: one session per visit, closed on unmount.
   useEffect(() => {

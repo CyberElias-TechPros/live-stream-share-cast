@@ -116,7 +116,7 @@ export default function Signup() {
       submittingRef.current = true;
       await signup(sanitizedUsername, sanitizedEmail, password, captchaToken ?? undefined);
       // The auth context will handle navigation and toast on success
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Signup error:", error);
       submittingRef.current = false;
     } finally {

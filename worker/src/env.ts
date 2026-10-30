@@ -72,6 +72,8 @@ export interface Env {
   CHAT_HISTORY_PAGE_SIZE?: string;
   MAX_STREAMS_PER_USER?: string;
   MAX_SCHEDULED_PER_USER?: string;
+  /** Maximum simultaneous browser P2P viewers before the room rejects joins. */
+  MAX_P2P_VIEWERS?: string;
 
   /* ---------------------------------- email ---------------------------------- */
 

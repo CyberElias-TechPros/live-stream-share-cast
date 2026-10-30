@@ -15,6 +15,20 @@ const CONFIG_TTL_MS = 5 * 60 * 1000;
 let cachedConfig: { value: PlatformConfig; at: number } | null = null;
 let inflight: Promise<PlatformConfig | null> | null = null;
 
+function isPlatformConfig(value: unknown): value is PlatformConfig {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<PlatformConfig>;
+  const limits = candidate.limits;
+  const brand = candidate.brand;
+  const features = candidate.features;
+  return Boolean(
+    brand && typeof brand.name === 'string' && typeof brand.termsVersion === 'string' &&
+      limits && Number.isInteger(limits.maxP2pViewers) && limits.maxP2pViewers >= 1 && limits.maxP2pViewers <= 100 &&
+      typeof limits.maxUploadBytes === 'number' &&
+      features && typeof features.chat === 'boolean' && typeof features.vod === 'boolean',
+  );
+}
+
 function toWatchHistory(row: any): WatchHistoryEntry {
   return {
     sessionId: row.sessionId,
@@ -36,14 +50,17 @@ export const platformService = {
     if (!force && inflight) return inflight;
 
     inflight = api
-      .get<PlatformConfig>('/config', { auth: false })
-      .then((config) => {
-        cachedConfig = { value: config, at: Date.now() };
-        return config;
+      .get<unknown>('/config', { auth: false })
+      .then((payload) => {
+        if (!isPlatformConfig(payload)) throw new Error('Runtime config failed shape validation');
+        cachedConfig = { value: payload, at: Date.now() };
+        return payload;
       })
       .catch((error) => {
         console.warn('Runtime config unavailable, using defaults:', error);
-        return null;
+        // A last-known config is safer than switching feature flags/limits in
+        // the middle of a session when a deployment briefly loses its API.
+        return cachedConfig?.value ?? null;
       })
       .finally(() => {
         inflight = null;
@@ -78,8 +95,15 @@ export const platformService = {
   /** ICE servers for WebRTC — short-lived TURN credentials when configured. */
   async iceServers(): Promise<RTCIceServer[]> {
     try {
-      const data = await api.get<{ iceServers: RTCIceServer[] }>('/config/rtc/ice', { auth: false });
-      return data.iceServers ?? [];
+      // The Worker returns transport metadata alongside the server list; accept
+      // the wrapped shape and retain compatibility with an older array payload.
+      const payload = await api.get<unknown>('/config/rtc/ice', { auth: false });
+      if (Array.isArray(payload)) return payload as RTCIceServer[];
+      if (payload && typeof payload === 'object' && 'iceServers' in payload) {
+        const wrapped = (payload as { iceServers?: unknown }).iceServers;
+        return Array.isArray(wrapped) ? wrapped as RTCIceServer[] : [];
+      }
+      return [];
     } catch {
       return [];
     }

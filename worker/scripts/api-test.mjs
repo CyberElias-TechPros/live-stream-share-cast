@@ -94,6 +94,9 @@ async function main() {
     JSON.stringify(config.body).slice(0, 120),
   );
 
+  const ice = await call('GET', '/config/rtc/ice');
+  check('GET /config/rtc/ice returns ICE servers and transport metadata', ice.status === 200 && Array.isArray(ice.body?.iceServers) && typeof ice.body?.turnConfigured === 'boolean');
+
   const unauthorised = await call('GET', '/auth/me');
   check('protected routes reject a missing token with 401', unauthorised.status === 401);
 
@@ -279,18 +282,31 @@ async function main() {
   });
   const streamId = created.body?.stream?.id;
   check('POST /streams creates a broadcast', created.status === 201 && !!streamId);
+  const earlyHostTicket = await call('POST', '/ws/tickets', { token: streamerToken, body: { streamId, role: 'host' } });
+  check('host tickets cannot bypass the explicit start lifecycle', earlyHostTicket.status === 409 && earlyHostTicket.body?.code === 'stream_offline');
 
   const started = await call('POST', `/streams/${streamId}/start`, { token: streamerToken, body: {} });
   check('POST /streams/:id/start flips the broadcast live', started.status === 200);
+  const duplicateStart = await call('POST', `/streams/${streamId}/start`, { token: streamerToken, body: {} });
+  check('a second start is rejected without opening a duplicate session', duplicateStart.status === 409 && duplicateStart.body?.code === 'stream_already_live');
 
   const live = await call('GET', '/streams?live=true');
   check('GET /streams?live=true lists the live broadcast', live.status === 200 && (live.body?.streams ?? []).some((s) => s.id === streamId));
+
+  const websocketWithoutTicket = await call('GET', `/ws/chat/${streamId}`);
+  check('WebSocket upgrades reject requests without a short-lived ticket', websocketWithoutTicket.status === 401 && websocketWithoutTicket.body?.code === 'ws_ticket_required');
 
   const retention = await call('PATCH', `/streams/${streamId}`, { token: streamerToken, body: { retentionHours: 12 } });
   check('PATCH /streams/:id accepts a retention override', retention.status === 200);
 
   const presence = await call('GET', `/streams/${streamId}/presence`);
   check('GET /streams/:id/presence reports the room state', presence.status === 200 && typeof presence.body?.viewers === 'number');
+
+  const ownerViewers = await call('POST', `/streams/${streamId}/viewers`, { token: streamerToken, body: { count: 0 } });
+  check('the owner can persist a zero viewer count', ownerViewers.status === 200 && ownerViewers.body?.success === true);
+
+  const forgedViewers = await call('POST', `/streams/${streamId}/viewers`, { token: viewerToken, body: { count: 999 } });
+  check('viewer-count bookkeeping cannot be forged by another account', forgedViewers.status === 403);
 
   const keys = await call('GET', '/streams/keys/generate', { token: streamerToken });
   check('GET /streams/keys/generate returns a stream key for streamers', keys.status === 200 && typeof keys.body?.streamKey === 'string');
@@ -474,6 +490,49 @@ async function main() {
   const browse = await call('GET', '/recordings?limit=5');
   check('GET /recordings is public and paginated', browse.status === 200 && Array.isArray(browse.body?.recordings));
 
+  const recordingForm = new FormData();
+  recordingForm.append('file', new Blob(['fake webm bytes'], { type: 'video/webm' }), 'replay.webm');
+  recordingForm.append('streamId', streamId);
+  recordingForm.append('title', 'Privacy replay');
+  const uploadedRecording = await postForm('/media/recordings', recordingForm, streamerToken);
+  const recordingId = uploadedRecording.body?.id;
+  const recordingUrl = uploadedRecording.body?.url;
+  check('POST /media/recordings creates a VOD row and object', uploadedRecording.status === 201 && !!recordingId && typeof recordingUrl === 'string');
+
+  const publicBytes = await fetch(`${BASE}${recordingUrl}`).then((response) => response.status);
+  check('public VOD bytes are readable without a session', publicBytes === 200);
+
+  const madeUnlisted = await call('PATCH', `/recordings/${recordingId}`, { token: streamerToken, body: { visibility: 'unlisted' } });
+  const unlistedLibrary = await call('GET', `/recordings/${recordingId}`);
+  const unlistedBytes = await fetch(`${BASE}${recordingUrl}`).then((response) => response.status);
+  check('unlisted VODs disappear from unauthorised metadata and bytes', madeUnlisted.status === 200 && unlistedLibrary.status === 403 && unlistedBytes === 403);
+
+  const invalidTokenBytes = await fetch(`${BASE}${recordingUrl}?token=not-a-valid-media-token`).then((response) => response.status);
+  check('invalid private-media tokens do not grant byte access', invalidTokenBytes === 403);
+
+  const ownerBytes = await fetch(`${BASE}${recordingUrl}`, { headers: { authorization: `Bearer ${streamerToken}` } }).then((response) => response.status);
+  const viewerPlayback = await call('GET', `/recordings/${recordingId}/playback-url`, { token: viewerToken });
+  check('the owner can read protected bytes while another user cannot mint playback', ownerBytes === 200 && viewerPlayback.status === 403);
+
+  const madePrivate = await call('PATCH', `/recordings/${recordingId}`, { token: streamerToken, body: { visibility: 'private' } });
+  check('private VOD visibility can be changed by its owner', madePrivate.status === 200 && madePrivate.body?.recording?.visibility === 'private');
+
+  const privateBytes = await fetch(`${BASE}${recordingUrl}`).then((response) => response.status);
+  const traversalBytes = await fetch(`${BASE}/api/media/recordings/%2e%2e%2fprivate.webm`).then((response) => response.status);
+  check('private VOD bytes reject anonymous access and traversal guesses', privateBytes === 403 && traversalBytes === 404);
+
+  const playback = await call('GET', `/recordings/${recordingId}/playback-url`, { token: streamerToken });
+  const playbackResponse = playback.status === 200
+    ? await fetch(`${BASE}${playback.body.url}`).then((response) => response.status)
+    : 0;
+  check('owner receives a short-lived private playback URL', playback.status === 200 && playbackResponse === 200 && typeof playback.body?.expiresAt === 'string');
+
+  if (recordingId) {
+    const removedRecording = await call('DELETE', `/recordings/${recordingId}`, { token: streamerToken });
+    const deletedBytes = await fetch(`${BASE}${recordingUrl}`).then((response) => response.status);
+    check('DELETE /recordings/:id removes the VOD row and bytes', removedRecording.status === 200 && deletedBytes === 404);
+  }
+
   /* --------------------------------- search -------------------------------- */
 
   section('search');
@@ -560,7 +619,11 @@ async function main() {
   check('non-admins get 403 from /admin/*', forbidden.status === 403, String(forbidden.status));
 
   const cleanupNoToken = await call('POST', '/admin/cleanup', { body: {} });
-  check('POST /admin/cleanup requires the cleanup token', cleanupNoToken.status === 401 || cleanupNoToken.status === 403, String(cleanupNoToken.status));
+  check(
+    'POST /admin/cleanup requires the cleanup token or reports an unconfigured operator surface',
+    cleanupNoToken.status === 401 || cleanupNoToken.status === 403 || cleanupNoToken.status === 503,
+    String(cleanupNoToken.status),
+  );
 
   // Deeper console coverage runs when an operator token is supplied:
   //   LSC_TEST_ADMIN_TOKEN=<jwt> node scripts/api-test.mjs
@@ -605,6 +668,8 @@ async function main() {
 
   const ended = await call('GET', `/streams/${streamId}`);
   check('the stream is offline and marked not live', ended.status === 200 && ended.body?.stream?.isLive === false);
+  const delayedHeartbeat = await call('POST', `/streams/${streamId}/heartbeat`, { token: streamerToken, body: { viewerCount: 1 } });
+  check('a delayed heartbeat cannot resurrect an ended broadcast', delayedHeartbeat.status === 409 && delayedHeartbeat.body?.code === 'stream_not_live');
 
   const deleteStream = await call('DELETE', `/streams/${streamId}`, { token: streamerToken });
   check('DELETE /streams/:id removes it', deleteStream.status === 200 || deleteStream.status === 204, String(deleteStream.status));

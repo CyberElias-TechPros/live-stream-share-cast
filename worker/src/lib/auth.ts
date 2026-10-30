@@ -85,7 +85,12 @@ function hmacKey(secret: string): Promise<CryptoKey> {
 }
 
 function secretFor(env: Env): string {
-  // Development fallback so `wrangler dev` works before a secret is configured.
+  const production = (env.ENVIRONMENT ?? 'development').trim().toLowerCase() === 'production';
+  if (production && (!env.JWT_SECRET || env.JWT_SECRET.length < 32 || env.JWT_SECRET.includes('change-me') || env.JWT_SECRET.includes('dev-only'))) {
+    throw new Error('JWT_SECRET must be a strong secret in production');
+  }
+  // Development fallback keeps `wrangler dev` convenient without making the
+  // insecure value reachable from a production deployment.
   return env.JWT_SECRET || 'dev-only-insecure-secret-change-me';
 }
 

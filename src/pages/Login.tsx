@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { ArrowRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { ApiRequestError } from "@/integrations/api/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import AuthLayout from "@/components/AuthLayout";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -26,7 +27,7 @@ export default function Login() {
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated && !isLoading) {
-      const from = (location.state as any)?.from?.pathname || "/stream";
+      const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || "/stream";
       navigate(from, { replace: true });
     }
   }, [isAuthenticated, isLoading, navigate, location]);
@@ -44,12 +45,13 @@ export default function Login() {
       setIsSubmitting(true);
       await login(email, password);
       // The auth context will handle the navigation and toast
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Login error:", error);
+      const code = error instanceof ApiRequestError ? error.code : undefined;
 
-      if (error?.code === "email_not_confirmed") {
+      if (code === "email_not_confirmed") {
         setErrorMessage("Please verify your email before logging in. Check your inbox for a confirmation link.");
-      } else if (error?.message) {
+      } else if (error instanceof Error) {
         setErrorMessage(error.message);
       } else {
         setErrorMessage("Failed to log in. Please check your credentials and try again.");

@@ -1,5 +1,5 @@
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useCallback, useContext, useState, useEffect, ReactNode } from "react";
 import { Stream, StreamStatus, StreamSettings, ChatMessage } from "@/types";
 import { streamService } from "@/services/streamService";
 import { liveStreamService } from "@/services/liveStreamService";
@@ -52,6 +52,30 @@ export function StreamProvider({ children }: { children: ReactNode }) {
   const { toast } = useToast();
   
   const browserSupport = streamService.checkBrowserSupport();
+
+  const updateStreamSettings = useCallback((settings: Partial<StreamSettings>) => {
+    setStreamSettings((previous) => {
+      const newSettings: StreamSettings = {
+        ...previous,
+        ...settings,
+        audio: {
+          ...previous.audio,
+          ...settings.audio,
+        },
+        video: {
+          ...previous.video,
+          ...settings.video,
+        },
+        streaming: {
+          ...previous.streaming,
+          ...settings.streaming,
+        },
+      };
+
+      streamService.updateSettings(newSettings);
+      return newSettings;
+    });
+  }, []);
   
   // Initialize stream service event listeners
   useEffect(() => {
@@ -75,14 +99,14 @@ export function StreamProvider({ children }: { children: ReactNode }) {
       setIsRecording(false);
     };
     
-    const handleRecordingSaved = (data: any) => {
+    const handleRecordingSaved = (data: { filename?: string }) => {
       toast({
         title: "Recording Saved",
         description: `Recording saved as ${data.filename}`,
       });
     };
     
-    const handleStats = (stats: any) => {
+    const handleStats = (stats: { viewerCount?: number }) => {
       if (activeStream && activeStream.id) {
         // Update viewer count locally for immediate feedback
         setViewerCount(stats.viewerCount || 0);
@@ -126,9 +150,7 @@ export function StreamProvider({ children }: { children: ReactNode }) {
           height: dimensions.height,
         },
         streaming: {
-          codec: streamSettings.streaming.codec,
-          bitrate: streamSettings.streaming.bitrate,
-          keyFrameInterval: streamSettings.streaming.keyFrameInterval,
+          ...streamService.getSettings().streaming,
           isLocalStream: userSettings.defaultStreamType === 'local',
           streamType: userSettings.defaultStreamType || 'internet',
           recordStream: userSettings.autoRecord || false,
@@ -138,9 +160,9 @@ export function StreamProvider({ children }: { children: ReactNode }) {
         }
       });
     }
-  }, [isAuthenticated, user]);
+  }, [isAuthenticated, user, updateStreamSettings]);
   
-  const joinStream = async (streamId: string) => {
+  const joinStream = useCallback(async (streamId: string) => {
     try {
       // Get stream details
       const stream = await liveStreamService.getStreamById(streamId);
@@ -153,36 +175,30 @@ export function StreamProvider({ children }: { children: ReactNode }) {
       streamService.setActiveStream(stream);
       
       if (stream.isLive) {
-        // Connect to the stream
-        const streamType = stream.streamType || 'internet';
-        await streamService.connectToStream(streamId, streamType);
-        
-        // Update viewer count
-        const currentCount = stream.viewerCount || 0;
-        await liveStreamService.updateStreamViewCount(streamId, currentCount + 1);
-        setViewerCount(currentCount + 1);
+        // StreamPlayer owns the single real LanViewer/WebRTC connection. The
+        // context only tracks the journey state; it must not create a second
+        // simulated connection or overwrite Durable Object presence counts.
+        setStatus("connecting");
+        setViewerCount(stream.viewerCount || 0);
+      } else {
+        setStatus("ended");
+        setViewerCount(0);
       }
     } catch (error) {
       console.error("Error joining stream:", error);
       setStatus("error");
     }
-  };
+  }, []);
   
-  const leaveStream = () => {
-    if (activeStream && activeStream.isLive) {
-      // Update viewer count on leave
-      const currentCount = activeStream.viewerCount || 0;
-      if (currentCount > 0) {
-        liveStreamService.updateStreamViewCount(activeStream.id, currentCount - 1)
-          .catch(err => console.error("Error updating viewer count:", err));
-      }
-    }
-    
+  const leaveStream = useCallback(() => {
+    // Presence is owned by the chat/signalling Durable Objects. Do not
+    // decrement a snapshot in D1; concurrent viewers would race and corrupt
+    // the count.
     setActiveStream(null);
     streamService.setActiveStream(null);
     setLocalStream(null);
     setStatus("idle");
-  };
+  }, []);
   
   const startStream = async (streamId: string) => {
     try {
@@ -262,28 +278,6 @@ export function StreamProvider({ children }: { children: ReactNode }) {
         variant: "destructive"
       });
     }
-  };
-  
-  const updateStreamSettings = (settings: Partial<StreamSettings>) => {
-    const newSettings = {
-      ...streamSettings,
-      ...settings,
-      audio: {
-        ...streamSettings.audio,
-        ...settings.audio
-      },
-      video: {
-        ...streamSettings.video,
-        ...settings.video
-      },
-      streaming: {
-        ...streamSettings.streaming,
-        ...settings.streaming
-      }
-    };
-    
-    setStreamSettings(newSettings);
-    streamService.updateSettings(newSettings);
   };
   
   const sendChatMessage = async (message: string) => {

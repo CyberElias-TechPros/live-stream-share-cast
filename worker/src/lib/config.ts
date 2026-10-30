@@ -36,6 +36,24 @@ function pick<T extends string>(value: string | undefined, allowed: readonly T[]
   return allowed.includes(normalized) ? normalized : fallback;
 }
 
+/** Deployment-time checks that must be visible to health probes, not just logs. */
+export function productionConfigIssues(env: Env): string[] {
+  if ((env.ENVIRONMENT ?? 'development').trim().toLowerCase() !== 'production') return [];
+
+  const issues: string[] = [];
+  if (!env.JWT_SECRET || env.JWT_SECRET.length < 32 || env.JWT_SECRET.includes('change-me') || env.JWT_SECRET.includes('dev-only')) {
+    issues.push('JWT_SECRET');
+  }
+
+  const origins = list(env.ALLOWED_ORIGINS);
+  if (!origins.length || origins.includes('*') || origins.some((origin) => origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1'))) {
+    issues.push('ALLOWED_ORIGINS');
+  }
+
+  if (!env.APP_URL || !/^https:\/\//i.test(env.APP_URL)) issues.push('APP_URL');
+  return issues;
+}
+
 /* ------------------------------- email / SMTP -------------------------------- */
 
 export type EmailProvider = 'resend' | 'postmark' | 'sendgrid' | 'mailchannels' | 'webhook' | 'none';
@@ -287,10 +305,12 @@ export interface LimitsConfig {
   maxUploadBytes: number;
   maxAvatarBytes: number;
   recordingRetentionHours: number;
+  signedUrlTtl: number;
   staleStreamMinutes: number;
   chatHistoryPageSize: number;
   maxStreamsPerUser: number;
   maxScheduledPerUser: number;
+  maxP2pViewers: number;
   defaultTipPresets: number[];
 }
 
@@ -303,10 +323,12 @@ export function limitsConfig(env: Env): LimitsConfig {
     maxUploadBytes: num(env.MAX_UPLOAD_BYTES, 512 * 1024 * 1024),
     maxAvatarBytes: num(env.MAX_AVATAR_BYTES, 5 * 1024 * 1024),
     recordingRetentionHours: num(env.RECORDING_RETENTION_HOURS, 6),
+    signedUrlTtl: num(env.SIGNED_URL_TTL, 3600),
     staleStreamMinutes: num(env.STALE_STREAM_MINUTES, 5),
     chatHistoryPageSize: num(env.CHAT_HISTORY_PAGE_SIZE, 100),
     maxStreamsPerUser: num(env.MAX_STREAMS_PER_USER, 50),
     maxScheduledPerUser: num(env.MAX_SCHEDULED_PER_USER, 20),
+    maxP2pViewers: num(env.MAX_P2P_VIEWERS, 8),
     defaultTipPresets: [200, 500, 1000, 2500, 5000],
   };
 }

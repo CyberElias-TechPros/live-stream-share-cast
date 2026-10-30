@@ -1,17 +1,57 @@
 /*
- * Push-only service worker.
+ * Shared app-shell and Web Push service worker.
  *
- * Kept deliberately small: it renders notifications the Worker sends through
- * Web Push and focuses (or opens) the relevant page when one is clicked.
- * No caching, so a stale worker can never serve old app bundles.
+ * The cache is intentionally narrow: it only makes the SPA shell and its
+ * static assets available for the fully-offline LAN room. API calls, auth,
+ * WebSockets, signed media URLs, and uploads are never cached.
  */
 
+const SHELL_CACHE = 'imlive-shell-v1';
+const SHELL_FILES = ['/', '/manifest.webmanifest', '/app-icon.svg', '/favicon.ico'];
+
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  event.waitUntil(
+    caches.open(SHELL_CACHE)
+      .then((cache) => cache.addAll(SHELL_FILES).catch(() => undefined))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    caches.keys().then((keys) => Promise.all(
+      keys.filter((key) => key.startsWith('imlive-shell-') && key !== SHELL_CACHE)
+        .map((key) => caches.delete(key)),
+    )).then(() => self.clients.claim()),
+  );
+});
+
+self.addEventListener('fetch', (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+  const isStaticAppRequest = request.method === 'GET'
+    && url.origin === self.location.origin
+    && !url.pathname.startsWith('/api/')
+    && request.destination !== 'audio'
+    && request.destination !== 'video';
+
+  if (!isStaticAppRequest) return;
+
+  event.respondWith(
+    fetch(request).then((response) => {
+      if (response.ok && response.type === 'basic') {
+        const copy = response.clone();
+        caches.open(SHELL_CACHE).then((cache) => cache.put(request, copy)).catch(() => undefined);
+      }
+      return response;
+    }).catch(() => caches.match(request).then((cached) => {
+      if (cached) return cached;
+      // Vite's SPA fallback is the cached root document. This makes a deep
+      // route such as /offline reopen while the network is disconnected.
+      if (request.mode === 'navigate') return caches.match('/');
+      return Response.error();
+    })),
+  );
 });
 
 self.addEventListener('push', (event) => {

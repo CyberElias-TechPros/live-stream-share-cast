@@ -2,13 +2,14 @@ import { Hono } from 'hono';
 import type { MiddlewareHandler } from 'hono';
 import { trimOrNull } from '../lib/http';
 import type { AppVariables, Env } from '../env';
-import { requireAuth } from '../lib/auth';
+import { optionalAuth, requireAuth } from '../lib/auth';
 import { background, badRequest, forbidden, int, notFound, readJson } from '../lib/http';
 import { uuid } from '../lib/ids';
 import { isoHoursFromNow, nowIso } from '../lib/time';
 import { rateLimit } from '../lib/ratelimit';
 import { limitsConfig } from '../lib/config';
 import { dispatchWebhook } from '../lib/webhook';
+import { verifyMediaToken } from '../lib/mediaToken';
 
 /** Shared with the VOD library so uploads show up in `recordings` immediately. */
 
@@ -180,9 +181,31 @@ mediaRoutes.post('/thumbnails', authGuard, rateLimit({ limit: 30, windowMs: 60_0
 
 /* --------------------------------- downloads --------------------------------- */
 
-mediaRoutes.get('/recordings/*', async (c) => {
+mediaRoutes.get('/recordings/*', optionalAuth, async (c) => {
   const key = decodeURIComponent(c.req.path.replace('/api/media/recordings/', ''));
-  return serveFromBucket(c, c.env.RECORDINGS, key);
+  if (!key || key.includes('..')) throw notFound('Media not found');
+
+  const row = await c.env.DB.prepare(
+    `SELECT id, user_id, visibility, status, retention_expires_at FROM recordings WHERE r2_key = ?`,
+  )
+    .bind(key)
+    .first<{ id: string; user_id: string; visibility: string; status: string; retention_expires_at: string | null }>();
+  if (!row || row.status !== 'ready') throw notFound('Media not found');
+  if (row.retention_expires_at && new Date(row.retention_expires_at).getTime() <= Date.now()) throw notFound('Media has expired');
+
+  const viewer = c.get('authUser');
+  const isOwnerOrAdmin = viewer?.id === row.user_id || !!viewer?.isAdmin;
+  const token = c.req.query('token');
+  const signed = token ? await verifyMediaToken(c.env, key, token) : null;
+
+  // Public recordings are cacheable. Unlisted/private recordings require the
+  // exact short-lived token issued by /recordings/:id/playback-url, or an
+  // authenticated owner/admin request from an API client.
+  if (row.visibility !== 'public' && !isOwnerOrAdmin && !signed) {
+    throw forbidden('This recording is not public');
+  }
+
+  return serveFromBucket(c, c.env.RECORDINGS, key, row.visibility === 'public');
 });
 
 mediaRoutes.get('/avatars/*', async (c) => {

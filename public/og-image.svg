@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">I'm Live</title>
+  <desc id="desc">Share the moment, live.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop stop-color="#08070c"/>
+      <stop offset="1" stop-color="#191334"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" x2="1">
+      <stop stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <circle cx="1000" cy="100" r="260" fill="#7c3aed" opacity=".16"/>
+  <circle cx="160" cy="590" r="220" fill="#06b6d4" opacity=".12"/>
+  <rect x="86" y="92" width="72" height="72" rx="22" fill="url(#accent)"/>
+  <circle cx="122" cy="128" r="13" fill="white"/>
+  <text x="190" y="151" fill="white" font-family="Arial, sans-serif" font-size="58" font-weight="700">I'm Live</text>
+  <text x="90" y="300" fill="white" font-family="Arial, sans-serif" font-size="72" font-weight="700">Share the moment, live.</text>
+  <text x="94" y="365" fill="#c4b5fd" font-family="Arial, sans-serif" font-size="30">One link. Real-time video. Safer communities.</text>
+  <rect x="94" y="455" width="236" height="10" rx="5" fill="url(#accent)"/>
+</svg>
