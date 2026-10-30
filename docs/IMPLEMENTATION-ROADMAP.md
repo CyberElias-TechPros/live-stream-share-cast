@@ -772,6 +772,10 @@ interoperability verified.
   `SurfaceViewRenderer`, and speaker routing are implemented in
   `WebRtcViewerSession`/`SignallingClient`. Real interoperability and lifecycle
   tests remain.
+- `[~] [P0][AND/LAN]` Android-only offline LAN mode now provides a local TCP
+  signalling server/client, manual IP/port/room-code joining, and empty-ICE
+  server WebRTC media for Android-to-Android broadcasts. Same-WLAN physical
+  validation, discovery/QR, and Android↔web local signalling remain.
 - `[~] [P0][AND/API]` The viewer consumes the Worker ICE server response and keeps
   credentials out of UI copy/logs; direct-vs-relay diagnostics and TURN policy
   still need to be surfaced and tested.
@@ -786,9 +790,10 @@ interoperability verified.
 - `[ ] [P1][AND]` Add captions/transcript surface if the chosen media path
   supports it, quality selector/data saver, player stats, and watch analytics
   heartbeat/end on lifecycle-safe hooks.
-- `[ ] [P1][AND]` Test web host → Android viewer, Android host → web viewer,
-  Android host → Android viewer, P2P and fallback transport, and chat/presence
-  interoperability.
+- `[~] [P1][AND]` Worker-backed web/Android interoperability remains unverified;
+  the Android host → Android viewer offline LAN path is implemented but needs
+  physical-device testing, while web host → Android viewer, Android host → web
+  viewer, P2P/fallback transport, and chat/presence interoperability remain.
 
 ### 8.5 Android creator and foreground streaming
 

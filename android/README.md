@@ -50,6 +50,24 @@ store rollout.
   library listing/playback handoff, local data-saver/notification preferences,
   Compose loading/empty/error states, and safe logout.
 
+## Offline LAN mode
+
+The Android app now has a genuine local-only Android-to-Android path:
+
+1. On the broadcaster, open **Start a broadcast** and enable **LAN-only mode**.
+2. Start the camera; the app shows a Wi-Fi IP address, ephemeral port, and room code.
+3. On the viewer, choose **Join a LAN broadcast offline** and enter those three values.
+4. The local Android signalling server relays only bounded SDP/ICE frames; the
+   WebRTC audio/video connection uses an empty ICE-server list, so it does not
+   request STUN/TURN or use the Worker/API.
+
+Both devices must be on the same non-isolated Wi-Fi/LAN. Guest Wi-Fi, AP/client
+isolation, VPN routing, and different subnets can prevent the direct connection.
+This offline mode intentionally does not provide cloud chat, follows, stream
+history, analytics, or public discovery. It is an Android-to-Android LAN path;
+Android↔web interoperability still needs a local WebSocket bridge or manual
+browser signalling and physical-device verification.
+
 Remaining release-gate work is deliberately visible rather than hidden: build
 and compile in an Android/JDK environment, typing/unread chat UI, native in-app
 VOD playback and editing, bounded recording upload/finalisation, robust

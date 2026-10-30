@@ -443,7 +443,7 @@ export default function StreamPlayer({
                           Connect to stream
                         </Button>
                         <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.25em] text-white/35">
-                          Peer-to-peer · no internet needed
+                          Peer-to-peer · media stays on this LAN
                         </p>
                       </>
                     ) : lanState === "connecting" ? (

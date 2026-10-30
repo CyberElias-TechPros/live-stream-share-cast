@@ -31,7 +31,7 @@ services/*                        /api/ws/signal ──► Durable Object (offer
 | ------------------- | -------------------------------------------------------------------------------------------------- |
 | Accounts            | signup, email verification, login with lockout, refresh rotation, password reset & change, sessions, personal API tokens, data export, account deletion (30-day grace) |
 | Channels            | streamer mode, public profiles, follow graph, privacy settings, blocks, avatars                      |
-| Broadcasting        | create/start/stop with heartbeats and stale-stream sweep, P2P WebRTC via TURN/STUN, scheduled broadcasts with reminders, stream-key lifecycle (an RTMP/WHIP ingest server is not included) |
+| Broadcasting        | create/start/stop with heartbeats and stale-stream sweep, browser P2P WebRTC via LAN/direct/TURN paths, Android offline LAN rooms, scheduled broadcasts with reminders, stream-key lifecycle (an RTMP/WHIP ingest server is not included) |
 | Viewing             | browse + search + categories, live chat with moderation, presence, tips, replays/clips, continue watching |
 | Creator tools       | dashboard analytics (watch minutes, unique viewers, followers, tips), VOD library with visibility & clip tools, earnings and donation link, schedule management |
 | Moderation          | per-stream chat rules (followers-only, slow mode, word filter, min account age), timeouts/bans, reports, block list, audit trail |
@@ -41,9 +41,13 @@ services/*                        /api/ws/signal ──► Durable Object (offer
 | Operations          | hourly cron (retention, stale streams, rollups, digest emails), health endpoint reporting pending configuration |
 
 The repository contains the verified web/API foundation and a native Android
-starter slice. Production readiness still depends on real camera/WebRTC device
-runs, TURN/provider credentials, exact production origins, moderation/legal
-policy, and the Android release gate; the roadmap records those boundaries.
+starter slice. Android now also includes an offline LAN-only Android-to-Android
+mode: one device hosts a local signalling socket and the other joins with a
+Wi-Fi IP, port, and room code; the media PeerConnection uses no STUN/TURN or
+Worker API. Production readiness still depends on real camera/WebRTC device
+runs, TURN/provider credentials for internet mode, exact production origins,
+moderation/legal policy, and the Android release gate; the roadmap records those
+boundaries.
 Optional integrations activate through `GET /api/config` once their keys are
 configured, but credentials alone do not replace provider validation.
 

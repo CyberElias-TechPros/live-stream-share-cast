@@ -114,7 +114,9 @@ class WebRtcBroadcasterSession(
                 if (remoteDescriptions.contains(viewer)) peerConnections[viewer]?.addIceCandidate(ice)
                 else pendingCandidates.getOrPut(viewer) { mutableListOf() }.add(ice)
             }
-            "close", "peer-left" -> frame.optString("from").takeIf(String::isNotBlank)?.let(::closePeer)
+            "close", "peer-left" -> frame.optString("from").takeIf(String::isNotBlank)
+                ?.let(::closePeer)
+                ?: frame.optString("id").takeIf(String::isNotBlank)?.let(::closePeer)
         }
     }
 

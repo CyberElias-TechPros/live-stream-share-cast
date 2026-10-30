@@ -27,9 +27,10 @@ import { platformService } from "@/services/platformService";
 export type LanState = "idle" | "waiting" | "ready" | "connecting" | "connected" | "failed";
 
 /**
- * `local` keeps media on the network — no TURN relay is offered, so a connection
- * that needs one simply fails instead of leaving the LAN. `internet` adds the
- * TURN credentials minted by the Worker, which is what gets viewers behind
+ * `local` keeps media on the network — no public STUN/TURN request is made, so
+ * both devices must share a reachable LAN subnet. The browser path still uses
+ * the Worker for one-time tickets and signalling. `internet` adds the TURN
+ * credentials minted by the Worker, which is what gets viewers behind
  * symmetric NAT or on mobile networks connected.
  */
 export type TransportMode = "local" | "internet";
@@ -79,11 +80,11 @@ async function iceServers(): Promise<RTCIceServer[]> {
 }
 
 async function iceConfiguration(mode: TransportMode = "internet"): Promise<RTCConfiguration> {
-  const servers = await iceServers();
+  const servers = mode === "local" ? [] : await iceServers();
   return {
-    // Local mode strips the relays: direct (host/STUN-reflexive) candidates only.
-    iceServers: mode === "local" ? servers.filter((server) => !String(server.urls).startsWith("turn")) : servers,
-    // A relay-only fallback is used by the browser when no direct path exists.
+    // Strict LAN mode does not even contact public STUN/TURN. Host candidates
+    // are enough when both devices are on the same non-isolated subnet.
+    iceServers: mode === "local" ? [] : servers,
     iceTransportPolicy: "all",
     bundlePolicy: "max-bundle",
   };
