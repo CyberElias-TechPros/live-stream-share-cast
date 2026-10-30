@@ -22,7 +22,10 @@ interface SendChatMessageParams {
 
 export interface StreamChatEvent {
   /** `chat` = new/relayed message, `presence` = viewer count, `stream` = live status. */
-  type: 'chat' | 'presence' | 'moderation' | 'stream' | 'ready' | 'typing';
+  type: 'chat' | 'presence' | 'moderation' | 'stream' | 'ready' | 'typing' | 'error' | 'peer-left';
+  code?: string;
+  error?: string;
+  retryAfterSeconds?: number;
   message?: ChatMessage;
   viewers?: number;
   hostConnected?: boolean;

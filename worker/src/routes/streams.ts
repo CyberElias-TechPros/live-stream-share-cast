@@ -381,13 +381,12 @@ streamRoutes.post('/:id/heartbeat', authGuard, async (c) => {
 });
 
 /** Viewer-count bookkeeping for clients that are not on the WebSocket. */
-streamRoutes.post('/:id/viewers', rateLimit({ limit: 120, windowMs: 60_000, name: 'viewers' }), async (c) => {
+streamRoutes.post('/:id/viewers', authGuard, rateLimit({ limit: 120, windowMs: 60_000, name: 'viewers', perUser: true }), async (c) => {
+  const auth = c.get('authUser')!;
   const id = c.req.param('id');
+  await ownedStream(c.env, id, auth.id);
   const body = await readJson(c);
   const count = int(body.count ?? body.viewerCount, 0, 0, 1_000_000);
-
-  const exists = await c.env.DB.prepare(`SELECT 1 AS ok FROM streams WHERE id = ?`).bind(id).first<{ ok: number }>();
-  if (!exists) throw notFound('Stream not found');
 
   await c.env.DB.prepare(
     `UPDATE streams
@@ -535,7 +534,9 @@ streamRoutes.post('/:id/chat', authGuard, rateLimit({ limit: 30, windowMs: 30_00
   );
   assertAdmitted(verdict);
 
-  const type = ['text', 'emote', 'donation', 'system'].includes(String(body.type)) ? String(body.type) : 'text';
+  const requestedType = String(body.type ?? 'text');
+  const type = ['text', 'emote', 'donation', 'system'].includes(requestedType) ? requestedType : 'text';
+  const safeType = type === 'system' && auth.id !== streamRow.user_id && !auth.isAdmin ? 'text' : type;
   const replyToId = typeof body.replyToId === 'string' || typeof body.replyTo === 'string' ? String(body.replyToId ?? body.replyTo) : null;
   const id = uuid();
   const createdAt = nowIso();
@@ -545,7 +546,7 @@ streamRoutes.post('/:id/chat', authGuard, rateLimit({ limit: 30, windowMs: 30_00
     `INSERT INTO chat_messages (id, stream_id, user_id, message, type, metadata, reply_to_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   )
-    .bind(id, streamId, auth.id, message, type, metadata, replyToId, createdAt)
+    .bind(id, streamId, auth.id, message, safeType, metadata, replyToId, createdAt)
     .run();
 
   const row = await c.env.DB.prepare(

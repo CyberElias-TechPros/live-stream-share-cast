@@ -51,8 +51,10 @@ store rollout.
   Compose loading/empty/error states, and safe logout.
 
 Remaining release-gate work is deliberately visible rather than hidden: build
-and compile in an Android/JDK environment, reconnect/backoff and moderation chat
-states, native in-app VOD playback and editing, bounded recording upload/
-finalisation, robust background/process-death recovery, TURN/direct diagnostics,
-analytics, App Link domain verification, signed AAB/FCM/store disclosures, and
-real Android↔web interoperability/device tests.
+and compile in an Android/JDK environment, typing/unread chat UI, native in-app
+VOD playback and editing, bounded recording upload/finalisation, robust
+background/process-death recovery, TURN/direct diagnostics, analytics, App Link
+domain verification, signed AAB/FCM/store disclosures, and real Android↔web
+interoperability/device tests. Chat reconnect/backoff now refreshes one-use
+tickets, surfaces moderation error codes, and refuses offline sends; follow
+state now supports initial load and unfollow.

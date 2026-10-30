@@ -2,8 +2,8 @@
 
 > **Living execution checklist.** Source-verified on **2026-10-30 UTC** against the
 > `arena/aa9dc367-live-stream-share-cast` branch. This pass implements WebSocket
-> tickets, production configuration validation, route splitting, and an Android
-> native starter. This document is deliberately
+> tickets, production configuration validation, route splitting, a hardened
+> signalling/chat path, and an Android native starter. This document is deliberately
 > more honest than a feature inventory: code existing in the repository is not
 > automatically production-ready, and an optional integration is not the same as
 > an activated integration.
@@ -171,13 +171,15 @@ of these are true:
   is gone. Vite's `__dirname` warning was removed.
 - `[x]` `npm run db:migrate:local` — applies migrations `0001` through `0005`,
   including the one-use WebSocket ticket table.
-- `[x]` `npm run test:api` against local Worker — **110/110 REST/privacy checks
+- `[x]` `npm run test:api` against local Worker — **112/112 REST/privacy checks
   passed**, including public/unlisted/private bytes, invalid token, traversal,
   owner playback, deletion, no-ticket upgrade rejection, duplicate-start
-  protection, and ICE config shape.
-- `[x]` `npm run test:realtime` against local Worker — chat, ticket-authenticated
-  signalling, fake-SDP relay, host disconnect, and the configured eight-viewer
-  capacity rejection passed. It is still not a real camera/ICE network test.
+  protection, owner-only viewer bookkeeping, and ICE config shape.
+- `[x]` `npm run test:realtime` against local Worker — ticket-authenticated chat
+  (including authenticated viewer admission and blocked-word rejection),
+  signalling frame/role validation, fake-SDP relay, host disconnect, and the
+  configured eight-viewer capacity rejection passed. It is still not a real
+  camera/ICE network test.
 - `[x]` exact-origin CORS/security-header smoke — allowed local origin is echoed,
   an unlisted origin receives no CORS grant, and CSP/permissions/security headers
   are present.
@@ -481,9 +483,11 @@ public, mobile, and failure networks with measurable recovery.
 - `[~] [P0][WEB]` Signalling validates frame size/type, target ownership, roles,
   peer count, and rate, with ticket expiry/consumption. ICE restart, offer glare,
   bounded reconnect, and candidate queue recovery remain.
-- `[x] [P0][API]` Server-side signalling authorization derives host identity from
+- `[~] [P0][API]` Server-side signalling authorization derives host identity from
   the authenticated ticket/session, rejects unissued/expired/reused tickets,
-  bounds SDP/ICE frames, and enforces the configured P2P capacity.
+  validates frame types/roles/targets, bounds SDP/ICE/quality frames, applies a
+  per-peer frame-rate cap, and enforces the configured P2P capacity. Real
+  ICE/reconnect evidence remains.
 
 ### 6.2 ICE, TURN, and network matrix
 
@@ -752,8 +756,9 @@ interoperability verified.
   and banned/unverified states remain.
 - `[~] [P0][AND]` Live browse and watch loading exist; paging, search,
   categories, profiles, pull-to-refresh, offline cache, stale labels, and
-  no-result recovery remain. Native watch now has a follow action, history-backed
-  chat, and message send.
+  no-result recovery remain. Native watch now has initial follow-state loading,
+  follow/unfollow, history-backed chat, reconnecting message send, and explicit
+  moderation errors.
 - `[~] [P1][AND]` Library and settings navigation placeholders exist; implement
   recording playback/management plus persisted profile, privacy, notifications,
   quality, data-saver, security/session, and legal controls.
@@ -773,10 +778,11 @@ interoperability verified.
 - `[ ] [P0][AND]` Implement player lifecycle for foreground/background, rotation,
   Bluetooth route, speaker/earpiece, mute, autoplay/user gesture, reconnect,
   stream ended, and fallback transport.
-- `[~] [P0][AND]` Native chat now loads REST history, opens a ticket-authenticated
-  ChatRoom socket, deduplicates by message ID, and sends signed-in messages.
-  Reconnect/backoff, typing/unread, moderation error states, and offline policy
-  remain.
+- `[~] [P0][AND]` Native chat loads REST history, opens a ticket-authenticated
+  ChatRoom socket, deduplicates by message ID, sends signed-in messages, refreshes
+  one-use tickets on reconnect with bounded backoff, surfaces moderation error
+  codes, and explicitly refuses offline sends. Typing/unread UI and Android
+  reconnect/device tests remain.
 - `[ ] [P1][AND]` Add captions/transcript surface if the chosen media path
   supports it, quality selector/data saver, player stats, and watch analytics
   heartbeat/end on lifecycle-safe hooks.
@@ -899,8 +905,9 @@ attached evidence and the release owner signs the go/no-go checklist.
 - `[ ] [P0][QA/WEB/AND]` Add real WebRTC tests with two browser/device clients,
   real media tracks, ICE candidates, connection recovery, stream end, and TURN.
 - `[~] [P0][QA]` Local WebSocket tests cover ticket/auth, role, frame validation,
-  host disconnect, capacity, and fake-SDP relay. Reconnect, dedupe, presence,
-  moderation, and full abnormal-disconnect coverage remain.
+  authenticated chat admission/blocked words, presence, host disconnect,
+  capacity, and fake-SDP relay. Client reconnect/dedupe and full abnormal-
+  disconnect coverage remain.
 - `[~] [P0][QA/SEC]` Exact-origin/security-header, media privacy, ticket replay,
   traversal, and auth negative checks exist. Add dependency, secret, SAST, DAST/
   API abuse, SSRF, XSS/HTML, upload, and deployed-proxy privacy scans.

@@ -49,6 +49,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.imlive.app.auth.AuthRepository
 import com.imlive.app.live.ChatClient
+import com.imlive.app.live.ChatConnectionState
 import com.imlive.app.live.ChatMessage
 import com.imlive.app.live.IceServerConfig
 import com.imlive.app.live.LiveRepository
@@ -259,6 +260,7 @@ private fun WatchScreen(repository: LiveRepository, stream: LiveStream?, onBack:
     var chatText by remember { mutableStateOf("") }
     var chatError by remember { mutableStateOf<String?>(null) }
     var followed by remember { mutableStateOf(false) }
+    var followError by remember { mutableStateOf<String?>(null) }
     var videoTrack by remember { mutableStateOf<VideoTrack?>(null) }
     val eglBase = remember { EglBase.create() }
     val renderer = remember { SurfaceViewRenderer(context) }
@@ -329,11 +331,19 @@ private fun WatchScreen(repository: LiveRepository, stream: LiveStream?, onBack:
             onSuccess = { ticket ->
                 val client = ChatClient(
                     streamId = current.id,
-                    ticket = ticket,
+                    initialTicket = ticket,
+                    refreshTicket = { repository.ticket(current.id, "viewer").getOrNull() },
                     onMessage = { message ->
                         if (messages.none { it.id == message.id }) messages = (messages + message).takeLast(100)
                     },
                     onError = { chatError = it },
+                    onState = { connection ->
+                        if (connection == ChatConnectionState.CONNECTED || connection == ChatConnectionState.ACTIVE) {
+                            chatError = null
+                        } else if (connection == ChatConnectionState.RECONNECTING) {
+                            chatError = "Chat reconnecting…"
+                        }
+                    },
                 )
                 chat = client
                 client.connect()
@@ -347,6 +357,16 @@ private fun WatchScreen(repository: LiveRepository, stream: LiveStream?, onBack:
         )
     }
 
+    LaunchedEffect(stream?.ownerId) {
+        val owner = stream?.ownerId ?: return@LaunchedEffect
+        followed = false
+        followError = null
+        repository.followState(owner).fold(
+            onSuccess = { followed = it },
+            onFailure = { followError = it.message ?: "Could not load follow state" },
+        )
+    }
+
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         OutlinedButton(onClick = { signal?.close(); chat?.close(); onBack() }) { Text("Back") }
         Spacer(Modifier.height(12.dp))
@@ -356,15 +376,19 @@ private fun WatchScreen(repository: LiveRepository, stream: LiveStream?, onBack:
                 OutlinedButton(onClick = {
                     val owner = stream.ownerId
                     if (owner != null) {
-                        // Follow is idempotent on the Worker; the native surface
-                        // intentionally does not guess the previous state.
+                        followError = null
                         scope.launch {
-                            repository.follow(owner).onSuccess { followed = true }
+                            val result = if (followed) repository.unfollow(owner) else repository.follow(owner)
+                            result.fold(
+                                onSuccess = { followed = it },
+                                onFailure = { followError = it.message ?: "Could not update follow state" },
+                            )
                         }
                     }
                 }) { Text(if (followed) "Following" else "Follow") }
             }
         }
+        followError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 6.dp)) }
         Box(Modifier.fillMaxWidth().height(260.dp).background(Color.Black), contentAlignment = Alignment.Center) {
             AndroidView(factory = { renderer }, modifier = Modifier.fillMaxSize())
             if (videoTrack == null) Text(state, color = Color.White)

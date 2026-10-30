@@ -302,6 +302,12 @@ async function main() {
   const presence = await call('GET', `/streams/${streamId}/presence`);
   check('GET /streams/:id/presence reports the room state', presence.status === 200 && typeof presence.body?.viewers === 'number');
 
+  const ownerViewers = await call('POST', `/streams/${streamId}/viewers`, { token: streamerToken, body: { count: 0 } });
+  check('the owner can persist a zero viewer count', ownerViewers.status === 200 && ownerViewers.body?.success === true);
+
+  const forgedViewers = await call('POST', `/streams/${streamId}/viewers`, { token: viewerToken, body: { count: 999 } });
+  check('viewer-count bookkeeping cannot be forged by another account', forgedViewers.status === 403);
+
   const keys = await call('GET', '/streams/keys/generate', { token: streamerToken });
   check('GET /streams/keys/generate returns a stream key for streamers', keys.status === 200 && typeof keys.body?.streamKey === 'string');
 

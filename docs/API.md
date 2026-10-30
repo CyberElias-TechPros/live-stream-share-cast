@@ -91,7 +91,7 @@ Signup accepts an optional captcha token; login is rate limited and locks after
 | POST   | `/streams/:id/start`      | go live → notification fan-out, webhook, chat notice |
 | POST   | `/streams/:id/stop`       | end broadcast, close session, complete schedule   |
 | POST   | `/streams/:id/heartbeat`  | keeps the broadcast alive (`STALE_STREAM_MINUTES`) |
-| POST   | `/streams/:id/viewers`    | viewer bookkeeping for non-socket clients         |
+| POST   | `/streams/:id/viewers`            | owner-authenticated viewer bookkeeping for non-socket clients |
 | POST   | `/streams/:id/stats`, GET `/streams/:id/stats` | bandwidth/CPU telemetry          |
 | GET    | `/streams/:id/sessions`   | past sessions                                     |
 | GET    | `/streams/:id/presence`   | `{ viewers, hostConnected, live }` from the DO     |
@@ -186,3 +186,22 @@ Endpoints that fail 20 times in a row pause until they are re-enabled.
 anonymous but still need a one-use ticket. Banned accounts are rejected with
 `account_banned`. Both upgrade through the same origin as the REST API, so no
 extra proxy configuration is needed in production.
+
+Signal frames are bounded and role-checked by the Durable Object. Viewer frames
+are `hello-viewer`, `offer`, `ice`, `quality`, and `close`; host frames are
+`streamer-ready`, `answer`, `ice`, and `close`. SDP and ICE payloads are size
+limited, a peer may only address the opposite role, and quality is expressed as
+64–10000 kbps or `null` for automatic. Rejected frames use the normal socket
+error shape with codes such as `invalid_sdp`, `invalid_ice`, `invalid_target`,
+`invalid_role_frame`, `rate_limited`, and `p2p_capacity`; each peer is capped
+at 120 frames per 10-second window.
+
+Chat WebSocket messages are bounded to 64 KiB and use the same admission policy
+as REST chat. A signed-in socket is checked for channel bans, followers-only mode,
+account age, slow mode, blocked words, link policy, and emote-only mode before a
+message is persisted.
+Rejections include stable codes such as `auth_required`, `banned_from_chat`,
+`followers_only`, `slow_mode`, `blocked_word`, and `account_too_new`. Anonymous
+viewers may receive chat but cannot post. The `system` message type is reserved
+for the broadcaster/admin path; viewer-supplied system labels are stored as
+ordinary text.

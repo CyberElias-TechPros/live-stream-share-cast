@@ -83,9 +83,18 @@ class LiveRepository(private val api: ApiClient) {
         }
     }
 
+    suspend fun followState(userId: String): Result<Boolean> = runCatching {
+        api.get("/users/$userId/follow").optBoolean("isFollowing", false)
+    }
+
     suspend fun follow(userId: String): Result<Boolean> = runCatching {
         api.put("/users/$userId/follow")
         true
+    }
+
+    suspend fun unfollow(userId: String): Result<Boolean> = runCatching {
+        api.delete("/users/$userId/follow")
+        false
     }
 
     suspend fun recordingsMine(): Result<List<Recording>> = withContext(Dispatchers.IO) {

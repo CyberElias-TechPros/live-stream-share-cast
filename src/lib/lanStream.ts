@@ -37,7 +37,7 @@ export type TransportMode = "local" | "internet";
 interface SignalMsg {
   from: string;
   to?: string;
-  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close" | "quality" | "error";
+  type: "hello-viewer" | "streamer-ready" | "offer" | "answer" | "ice" | "close" | "quality" | "error" | "peer-left";
   code?: string;
   error?: string;
   maxViewers?: number;
@@ -214,6 +214,8 @@ export class LanStreamer {
   private mode: TransportMode;
   private maxViewers: number;
   private pcs = new Map<string, RTCPeerConnection>();
+  private pendingCandidates = new Map<string, RTCIceCandidateInit[]>();
+  private disconnectTimers = new Map<string, number>();
   private sig: { send: (m: SignalMsg) => void; unsubscribe: () => void } | null = null;
   private readyTimer: number | null = null;
   private stopped = false;
@@ -304,11 +306,20 @@ export class LanStreamer {
 
       case "ice": {
         const pc = this.pcs.get(msg.from);
-        if (pc && msg.candidate) {
-          pc.addIceCandidate(msg.candidate).catch(() => {
-            /* stale candidate — safe to ignore */
-          });
+        if (!msg.candidate) break;
+        // Trickle ICE can beat the viewer's offer/remote-description callback.
+        // Queue it per viewer instead of dropping the candidate and making
+        // otherwise healthy NAT paths look like a media failure.
+        if (!pc || !pc.remoteDescription) {
+          this.pendingCandidates.set(msg.from, [
+            ...(this.pendingCandidates.get(msg.from) ?? []),
+            msg.candidate,
+          ].slice(-100));
+          break;
         }
+        pc.addIceCandidate(msg.candidate).catch(() => {
+          /* stale candidate — safe to ignore */
+        });
         break;
       }
 
@@ -339,6 +350,9 @@ export class LanStreamer {
       existing.close();
       this.pcs.delete(from);
     }
+    const previousDisconnectTimer = this.disconnectTimers.get(from);
+    if (previousDisconnectTimer) window.clearTimeout(previousDisconnectTimer);
+    this.disconnectTimers.delete(from);
 
     const pc = new RTCPeerConnection(await iceConfiguration(this.mode));
     this.pcs.set(from, pc);
@@ -360,14 +374,32 @@ export class LanStreamer {
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "failed") {
+      const state = pc.connectionState;
+      if (state === "connected") {
+        const timer = this.disconnectTimers.get(from);
+        if (timer) window.clearTimeout(timer);
+        this.disconnectTimers.delete(from);
+      } else if (state === "failed" || state === "closed") {
         this.closePeer(from);
+      } else if (state === "disconnected" && !this.disconnectTimers.has(from)) {
+        // Mobile handoff and brief Wi-Fi loss often report `disconnected`
+        // before recovering. Give ICE a bounded grace period, but do not keep
+        // dead peers in the capacity map forever.
+        const timer = window.setTimeout(() => {
+          this.disconnectTimers.delete(from);
+          const current = this.pcs.get(from);
+          if (current && current.connectionState === "disconnected") this.closePeer(from);
+        }, 10_000);
+        this.disconnectTimers.set(from, timer);
       }
       this.emitCount();
     };
 
     try {
       await pc.setRemoteDescription(sdp);
+      const queued = this.pendingCandidates.get(from) ?? [];
+      this.pendingCandidates.delete(from);
+      await Promise.all(queued.map((candidate) => pc.addIceCandidate(candidate).catch(() => undefined)));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       this.send({ from: this.me, to: from, type: "answer", sdp: answer });
@@ -380,6 +412,10 @@ export class LanStreamer {
   }
 
   private closePeer(from: string) {
+    const timer = this.disconnectTimers.get(from);
+    if (timer) window.clearTimeout(timer);
+    this.disconnectTimers.delete(from);
+    this.pendingCandidates.delete(from);
     const pc = this.pcs.get(from);
     if (pc) {
       try {
@@ -414,6 +450,9 @@ export class LanStreamer {
       }
     });
     this.pcs.clear();
+    this.pendingCandidates.clear();
+    this.disconnectTimers.forEach((timer) => window.clearTimeout(timer));
+    this.disconnectTimers.clear();
     this.sig?.unsubscribe();
     this.sig = null;
     console.info("[LAN] streamer stopped");
@@ -435,6 +474,9 @@ export class LanViewer {
   private stopped = false;
   private _ready = false;
   private terminalError = false;
+  private reconnectTimer: number | null = null;
+  private peerDisconnectTimer: number | null = null;
+  private reconnectAttempt = 0;
 
   /** Set from the host's `streamer-ready` frame, used to address quality hints. */
   private streamerId: string | null = null;
@@ -469,7 +511,11 @@ export class LanViewer {
 
   /** Opens the peer connection (ICE servers resolved on demand). */
   async connect(): Promise<void> {
-    if (this.pc || this.terminalError) return;
+    if (this.pc || this.terminalError || this.stopped) return;
+    if (this.reconnectTimer) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
 
     this.pc = new RTCPeerConnection(await iceConfiguration(this.mode));
 
@@ -496,13 +542,20 @@ export class LanViewer {
     this.pc.onconnectionstatechange = () => {
       if (!this.pc) return;
       const s = this.pc.connectionState;
-      if (s === "connected") this.emitState("connected");
-      else if (s === "failed") {
-        // Release the dead peer so "Try again" can build a fresh one.
-        this.pc.onicecandidate = null;
-        this.pc.close();
-        this.pc = null;
-        this.emitState("failed");
+      if (s === "connected") {
+        if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+        this.peerDisconnectTimer = null;
+        this.reconnectAttempt = 0;
+        this.emitState("connected");
+      } else if (s === "disconnected") {
+        if (!this.peerDisconnectTimer) {
+          this.peerDisconnectTimer = window.setTimeout(() => {
+            this.peerDisconnectTimer = null;
+            if (this.pc?.connectionState === "disconnected") this.restartPeer();
+          }, 5_000);
+        }
+      } else if (s === "failed" || s === "closed") {
+        this.restartPeer();
       }
     };
 
@@ -511,6 +564,34 @@ export class LanViewer {
 
   private send(m: SignalMsg) {
     this.sig?.send(m);
+  }
+
+  private restartPeer() {
+    if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+    this.peerDisconnectTimer = null;
+    const pc = this.pc;
+    if (!pc) return;
+    this.pc = null;
+    this.queuedCandidates = [];
+    pc.onicecandidate = null;
+    pc.onconnectionstatechange = null;
+    try {
+      pc.close();
+    } catch {
+      /* ignore */
+    }
+    this.emitState("failed");
+    this.scheduleReconnect();
+  }
+
+  private scheduleReconnect() {
+    if (this.stopped || this.terminalError || !this._ready || this.reconnectTimer) return;
+    this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 6);
+    const delay = Math.min(1000 * 2 ** (this.reconnectAttempt - 1), 20_000);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.connect();
+    }, delay);
   }
 
   private async createOffer() {
@@ -523,7 +604,7 @@ export class LanViewer {
       this.send({ from: this.me, type: "offer", sdp: offer });
     } catch (err) {
       console.warn("[LAN] offer failed:", err);
-      this.emitState("failed");
+      this.restartPeer();
     }
   }
 
@@ -546,7 +627,7 @@ export class LanViewer {
 
       case "answer": {
         const pc = this.pc;
-        if (!pc || !msg.sdp) return;
+        if (!pc || !msg.sdp || (this.streamerId && msg.from !== this.streamerId)) return;
         pc.setRemoteDescription(msg.sdp).then(() => {
           // Flush candidates that arrived before the remote description.
           this.queuedCandidates.forEach((c) =>
@@ -555,13 +636,14 @@ export class LanViewer {
           this.queuedCandidates = [];
         }).catch((err) => {
           console.warn("[LAN] answer rejected:", err);
+          this.restartPeer();
         });
         break;
       }
 
       case "ice": {
         const pc = this.pc;
-        if (!pc || !msg.candidate) return;
+        if (!pc || !msg.candidate || (this.streamerId && msg.from !== this.streamerId)) return;
         if (pc.currentRemoteDescription) {
           pc.addIceCandidate(msg.candidate).catch(() => undefined);
         } else {
@@ -585,21 +667,52 @@ export class LanViewer {
         }
         break;
 
-      case "close":
-        // Streamer ended — drop the connection so the UI can react.
-        if (this.pc) {
-          try {
-            this.pc.close();
-          } catch {
-            /* ignore */
-          }
-          this.pc = null;
-        }
+      case "peer-left":
+        if (msg.from !== this.streamerId) return;
+        this.streamerId = null;
+        this.resetPeerForReconnect();
         this._ready = false;
-        this.emitState("waiting");
         this.onStream?.(null);
+        this.emitState("waiting");
+        this.waitForStreamer();
+        break;
+
+      case "close":
+        // Streamer ended or briefly disconnected — drop the connection so the
+        // UI can react, then keep listening in case the host reconnects.
+        this.resetPeerForReconnect();
+        this._ready = false;
+        this.onStream?.(null);
+        this.emitState("waiting");
+        this.waitForStreamer();
         break;
     }
+  }
+
+  private resetPeerForReconnect() {
+    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnectAttempt = 0;
+    if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+    this.peerDisconnectTimer = null;
+    this.queuedCandidates = [];
+    if (this.pc) {
+      this.pc.onicecandidate = null;
+      this.pc.onconnectionstatechange = null;
+      try {
+        this.pc.close();
+      } catch {
+        /* ignore */
+      }
+      this.pc = null;
+    }
+  }
+
+  private waitForStreamer() {
+    if (this.stopped || this.terminalError || this._ready) return;
+    if (this.helloTimer) window.clearInterval(this.helloTimer);
+    this.knock();
+    this.helloTimer = window.setInterval(() => this.knock(), 3000);
   }
 
   /** Starts listening for the streamer and keeps knocking until found. */
@@ -618,8 +731,7 @@ export class LanViewer {
         this.emitState("failed");
       },
     );
-    this.knock();
-    this.helloTimer = window.setInterval(() => this.knock(), 3000);
+    this.waitForStreamer();
     this.emitState(this._ready ? "ready" : "waiting");
   }
 
@@ -636,6 +748,9 @@ export class LanViewer {
   /** Clears a terminal capacity rejection after the viewer explicitly retries. */
   retry() {
     if (this.stopped) return;
+    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.reconnectAttempt = 0;
     if (!this.terminalError) {
       void this.connect();
       return;
@@ -652,7 +767,11 @@ export class LanViewer {
     this.stopped = true;
     if (this.helloTimer) window.clearInterval(this.helloTimer);
     this.helloTimer = null;
-    this.send({ from: this.me, type: "close" });
+    if (this.reconnectTimer) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    if (this.peerDisconnectTimer) window.clearTimeout(this.peerDisconnectTimer);
+    this.peerDisconnectTimer = null;
+    this.send({ from: this.me, to: this.streamerId ?? undefined, type: "close" });
     if (this.pc) {
       try {
         this.pc.close();

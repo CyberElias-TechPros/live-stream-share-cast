@@ -229,9 +229,9 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     const streamer = new LanStreamer(currentStream.id, media, streamTypeRef.current, maxP2pViewers);
     streamer.onViewerCount = (n) => {
       setLanViewerCount(n);
-      if (n > 0) {
-        liveStreamService.updateStreamViewCount(currentStream.id, n).catch(() => {});
-      }
+      // Persist zero as well as positive counts so the public listing does not
+      // keep advertising viewers who already disconnected.
+      liveStreamService.updateStreamViewCount(currentStream.id, n).catch(() => {});
     };
     // Viewers can ask for a lower bitrate; tell the host what changed and why.
     streamer.onQualityHint = (_viewer, kbps) => {

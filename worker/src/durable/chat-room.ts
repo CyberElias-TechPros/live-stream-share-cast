@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../env';
+import { admitChatMessage } from '../lib/moderation';
 import { uuid } from '../lib/ids';
 import { nowIso } from '../lib/time';
 
@@ -25,7 +26,10 @@ interface Attachment {
   peerId?: string;
 }
 
+const MAX_FRAME_BYTES = 64 * 1024;
 const MAX_MESSAGE_LENGTH = 2000;
+const MAX_CHAT_MESSAGES_PER_WINDOW = 30;
+const CHAT_RATE_WINDOW_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 90_000; // host is considered gone after 90s of silence
 const PRESENCE_WRITE_INTERVAL_MS = 3_000; // throttle viewer_count writes to D1
 
@@ -37,6 +41,12 @@ export class ChatRoom extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // Block eviction-driven surprises: restore lightweight bookkeeping lazily.
+    // The socket set survives hibernation, but ordinary instance fields do not;
+    // restoring the heartbeat prevents an alarm after eviction from treating a
+    // healthy host as stale.
+    void ctx.storage.get<number>('lastHostHeartbeat').then((value) => {
+      if (typeof value === 'number') this.lastHostHeartbeat = value;
+    });
     void ctx.storage.getAlarm();
   }
 
@@ -139,11 +149,16 @@ export class ChatRoom extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, data: ArrayBuffer | string) {
     await this.ensureStreamId();
+    const raw = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    if (new TextEncoder().encode(raw).byteLength > MAX_FRAME_BYTES) {
+      return this.send(ws, { type: 'error', code: 'frame_too_large', error: 'Chat frame is too large' });
+    }
+
     let payload: Record<string, unknown>;
     try {
-      payload = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data));
+      payload = JSON.parse(raw) as Record<string, unknown>;
     } catch {
-      return this.send(ws, { type: 'error', error: 'Malformed JSON' });
+      return this.send(ws, { type: 'error', code: 'malformed_frame', error: 'Malformed JSON' });
     }
 
     const attachment = (ws.deserializeAttachment() ?? {}) as Attachment;
@@ -157,6 +172,7 @@ export class ChatRoom extends DurableObject<Env> {
     if (type === 'heartbeat') {
       if (attachment.role === 'host') {
         this.lastHostHeartbeat = Date.now();
+        await this.ctx.storage.put('lastHostHeartbeat', this.lastHostHeartbeat);
         await this.env.DB.prepare(`UPDATE streams SET last_heartbeat = ? WHERE id = ?`).bind(nowIso(), this.streamId).run();
       }
       return;
@@ -166,20 +182,76 @@ export class ChatRoom extends DurableObject<Env> {
       const text = String(payload.message ?? payload.body ?? '').trim();
       if (!text) return;
       if (text.length > MAX_MESSAGE_LENGTH) {
-        return this.send(ws, { type: 'error', error: `Message is longer than ${MAX_MESSAGE_LENGTH} characters` });
+        return this.send(ws, {
+          type: 'error',
+          code: 'message_too_long',
+          error: `Message is longer than ${MAX_MESSAGE_LENGTH} characters`,
+        });
       }
       if (attachment.userId === 'anonymous') {
-        return this.send(ws, { type: 'error', error: 'Sign in to chat' });
+        return this.send(ws, { type: 'error', code: 'auth_required', error: 'Sign in to chat' });
       }
 
-      const messageType = ['text', 'emote', 'donation', 'system'].includes(String(payload.messageType ?? payload.message_type ?? 'text'))
-        ? String(payload.messageType ?? payload.message_type ?? 'text')
-        : 'text';
+      // REST and WebSocket chat must share the exact same admission policy. The
+      // old socket path only checked authentication, which let a viewer bypass
+      // followers-only, slow mode, blocked-word, account-age, and chat-ban
+      // rules by posting frames directly.
+      const actor = await this.chatActor(attachment.userId);
+      const stream = await this.env.DB.prepare(`SELECT user_id FROM streams WHERE id = ?`)
+        .bind(this.streamId)
+        .first<{ user_id: string }>();
+      if (!actor || !stream) {
+        return this.send(ws, { type: 'error', code: 'chat_unavailable', error: 'Chat is unavailable for this stream' });
+      }
+
+      // REST chat has a Worker rate limiter, but an upgraded socket bypasses
+      // HTTP middleware after the handshake. Count recent persisted messages
+      // here as well so a reconnecting client cannot turn the room into an
+      // unbounded write path.
+      const windowStart = new Date(Date.now() - CHAT_RATE_WINDOW_MS).toISOString();
+      const recent = await this.env.DB.prepare(
+        `SELECT COUNT(*) AS count FROM chat_messages WHERE stream_id = ? AND user_id = ? AND created_at >= ?`,
+      )
+        .bind(this.streamId, attachment.userId, windowStart)
+        .first<{ count: number }>();
+      if ((recent?.count ?? 0) >= MAX_CHAT_MESSAGES_PER_WINDOW) {
+        return this.send(ws, {
+          type: 'error',
+          code: 'rate_limited',
+          error: 'You are sending messages too quickly',
+          retryAfterSeconds: Math.ceil(CHAT_RATE_WINDOW_MS / 1000),
+        });
+      }
+
+      const verdict = await admitChatMessage(
+        this.env,
+        this.streamId,
+        stream.user_id,
+        {
+          id: attachment.userId,
+          username: actor.username,
+          isAdmin: !!actor.is_admin,
+          createdAt: actor.created_at,
+        },
+        text,
+      );
+      if (!verdict.allowed) {
+        return this.send(ws, {
+          type: 'error',
+          code: verdict.code ?? 'chat_rejected',
+          error: verdict.message ?? 'Message rejected by chat rules',
+          ...(verdict.until ? { until: verdict.until } : {}),
+        });
+      }
+
+      const requestedType = String(payload.messageType ?? payload.message_type ?? 'text');
+      const messageType = ['text', 'emote', 'donation', 'system'].includes(requestedType) ? requestedType : 'text';
+      const safeMessageType = messageType === 'system' && attachment.userId !== stream.user_id && !actor.is_admin ? 'text' : messageType;
 
       const saved = await this.persistMessage({
         userId: attachment.userId,
         message: text,
-        type: messageType,
+        type: safeMessageType,
         metadata: payload.metadata ? JSON.stringify(payload.metadata) : null,
       });
 
@@ -227,7 +299,16 @@ export class ChatRoom extends DurableObject<Env> {
   /** Safety net: force the stream offline if the host vanished without a close frame. */
   async alarm() {
     if (this.hasHost()) {
-      if (Date.now() - this.lastHostHeartbeat > HEARTBEAT_TIMEOUT_MS) {
+      // D1 is authoritative across Durable Object hibernation/eviction. Fall
+      // back to storage for a fresh object, then to the in-memory value for a
+      // heartbeat that arrived in the current invocation.
+      const row = await this.env.DB.prepare(`SELECT last_heartbeat FROM streams WHERE id = ?`)
+        .bind(this.streamId)
+        .first<{ last_heartbeat: string | null }>();
+      const persisted = row?.last_heartbeat ? Date.parse(row.last_heartbeat) : 0;
+      const stored = this.lastHostHeartbeat || (await this.ctx.storage.get<number>('lastHostHeartbeat')) || 0;
+      const lastHeartbeat = Math.max(persisted, stored);
+      if (!lastHeartbeat || Date.now() - lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
         await this.forceHostOffline();
       } else {
         await this.ctx.storage.setAlarm(Date.now() + 30_000);
@@ -260,6 +341,7 @@ export class ChatRoom extends DurableObject<Env> {
 
   private async onHostConnect() {
     this.lastHostHeartbeat = Date.now();
+    await this.ctx.storage.put('lastHostHeartbeat', this.lastHostHeartbeat);
     const now = nowIso();
     await this.env.DB.prepare(
       `UPDATE streams
@@ -298,6 +380,8 @@ export class ChatRoom extends DurableObject<Env> {
       .run();
 
     await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.delete('lastHostHeartbeat');
+    this.lastHostHeartbeat = 0;
     this.broadcast({ type: 'stream', status: 'offline', streamId: this.streamId });
   }
 
@@ -341,6 +425,16 @@ export class ChatRoom extends DurableObject<Env> {
     } catch {
       /* ignore */
     }
+  }
+
+  private async chatActor(userId: string): Promise<{
+    username: string;
+    is_admin: number | null;
+    created_at: string | null;
+  } | null> {
+    return this.env.DB.prepare(`SELECT username, is_admin, created_at FROM users WHERE id = ? AND deleted_at IS NULL`)
+      .bind(userId)
+      .first<{ username: string; is_admin: number | null; created_at: string | null }>();
   }
 
   private async persistMessage(input: {
