@@ -13,7 +13,9 @@ import { usePageTracking } from "@/hooks/useAnalytics";
 import { SoundCues } from "@/components/SoundToggle";
 import ErrorBoundary from "@/components/ErrorBoundary";
 const Index = lazy(() => import("./pages/Index"));
-const Offline = lazy(() => import("./pages/Offline"));
+// Keep the no-internet room in the initial app shell so a user who cached the
+// home page can still open it after disconnecting before ever visiting /offline.
+import Offline from "./pages/Offline";
 const CreateStream = lazy(() => import("./pages/CreateStream"));
 const WatchStream = lazy(() => import("./pages/WatchStream"));
 const Browse = lazy(() => import("./pages/Browse"));
