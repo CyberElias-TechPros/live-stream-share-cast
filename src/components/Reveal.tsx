@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { createElement, useEffect, useRef, type ReactNode } from "react";
 
 interface RevealProps {
   children: ReactNode;
@@ -36,11 +36,17 @@ export default function Reveal({ children, className = "", delay = 0, as = "div"
     return () => observer.disconnect();
   }, []);
 
-  const Tag = as as any;
+  const setRef = (element: HTMLElement | null) => {
+    ref.current = element;
+  };
 
-  return (
-    <Tag ref={ref} className={`reveal ${className}`} style={delay ? { transitionDelay: `${delay}ms` } : undefined}>
-      {children}
-    </Tag>
+  return createElement(
+    as,
+    {
+      ref: setRef,
+      className: `reveal ${className}`,
+      style: delay ? { transitionDelay: `${delay}ms` } : undefined,
+    },
+    children,
   );
 }

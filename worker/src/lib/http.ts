@@ -29,7 +29,7 @@ export function ok<T>(c: Context, data: T, status: ContentfulStatusCode = 200) {
 }
 
 /** Reads a JSON body, tolerating an empty body (returns `{}`). */
-export async function readJson<T = Record<string, any>>(c: Context): Promise<T> {
+export async function readJson<T = Record<string, unknown>>(c: Context): Promise<T> {
   try {
     const body = await c.req.json<T>();
     return body ?? ({} as T);
@@ -73,10 +73,14 @@ export function pick<T extends Record<string, unknown>>(source: T, allowed: read
 /* ----------------------------------- CORS ----------------------------------- */
 
 export function corsHeaders(env: Env, origin?: string | null): Record<string, string> {
-  const allowList = (env.ALLOWED_ORIGINS || '*').split(',').map((o) => o.trim()).filter(Boolean);
-  const allowAll = allowList.includes('*');
-  const requested = origin || '*';
-  const allowed = allowAll ? requested : allowList.includes(requested) ? requested : allowList[0] ?? 'null';
+  const configured = (env.ALLOWED_ORIGINS || '').split(',').map((o) => o.trim()).filter(Boolean);
+  const allowList = configured.length
+    ? configured
+    : (env.ENVIRONMENT ?? 'development').toLowerCase() === 'production'
+      ? []
+      : ['http://localhost:8080', 'http://127.0.0.1:8080'];
+  const requested = origin || '';
+  const allowed = requested && allowList.includes(requested) ? requested : 'null';
 
   return {
     'Access-Control-Allow-Origin': allowed,

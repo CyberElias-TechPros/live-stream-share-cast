@@ -59,9 +59,9 @@ export default function ForgotPassword() {
         console.info("[auth] password reset link:", data.resetUrl);
         setDevResetUrl(data.resetUrl);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Reset password error:", error);
-      setErrorMessage(error.message || "Failed to send password reset email. Please try again.");
+      setErrorMessage(error instanceof Error ? error.message : "Failed to send password reset email. Please try again.");
     } finally {
       setIsSubmitting(false);
     }

@@ -29,6 +29,20 @@ async function waitFor(predicate, { timeout = 4000, interval = 150 } = {}) {
   return Boolean(result);
 }
 
+async function ticket(streamId, role, token) {
+  const response = await fetch(`${API}/ws/tickets`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ streamId, role }),
+  });
+  const body = await response.json();
+  if (!response.ok || !body.ticket) throw new Error(`ticket request failed (${response.status}): ${JSON.stringify(body)}`);
+  return body.ticket;
+}
+
 function socket(path, label) {
   const ws = new WebSocket(`${WS}${path}`);
   const inbox = [];
@@ -75,13 +89,21 @@ async function main() {
   const streamId = created.stream.id;
   console.log(`   stream ${streamId}`);
 
+  await fetch(`${API}/streams/${streamId}/start`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({}),
+  });
+
   console.log('2) host connects to the chat room');
-  const host = socket(`/api/ws/chat/${streamId}?role=host&token=${token}`, 'host');
+  const hostTicket = await ticket(streamId, 'host', token);
+  const host = socket(`/api/ws/chat/${streamId}?role=host&ticket=${encodeURIComponent(hostTicket)}`, 'host');
   await host.open();
   await wait(300);
 
   console.log('3) anonymous viewer connects');
-  const viewer = socket(`/api/ws/chat/${streamId}`, 'viewer');
+  const viewerTicket = await ticket(streamId, 'viewer');
+  const viewer = socket(`/api/ws/chat/${streamId}?role=viewer&ticket=${encodeURIComponent(viewerTicket)}`, 'viewer');
   await viewer.open();
   await waitFor(() => host.has('presence', (m) => m.viewers >= 1));
 
@@ -108,9 +130,11 @@ async function main() {
   await wait(400);
 
   console.log('7) WebRTC signalling: viewer offer → host');
-  const hostSignal = socket(`/api/ws/signal/${streamId}?role=host&peerId=host-1&token=${token}`, 'signal:host');
+  const hostSignalTicket = await ticket(streamId, 'host', token);
+  const hostSignal = socket(`/api/ws/signal/${streamId}?role=host&peerId=host-1&ticket=${encodeURIComponent(hostSignalTicket)}`, 'signal:host');
   await hostSignal.open();
-  const viewerSignal = socket(`/api/ws/signal/${streamId}?peerId=viewer-1`, 'signal:viewer');
+  const viewerSignalTicket = await ticket(streamId, 'viewer');
+  const viewerSignal = socket(`/api/ws/signal/${streamId}?role=viewer&peerId=viewer-1&ticket=${encodeURIComponent(viewerSignalTicket)}`, 'signal:viewer');
   await viewerSignal.open();
   await wait(300);
 
@@ -124,7 +148,23 @@ async function main() {
   viewerSignal.send({ type: 'quality', to: 'host-1', kbps: 1200 });
   await wait(300);
 
-  console.log('8) host disconnects — stream should go offline');
+  console.log('8) P2P capacity rejects the ninth viewer');
+  const capacityViewers = [];
+  for (let index = 2; index <= 8; index += 1) {
+    const peerTicket = await ticket(streamId, 'viewer');
+    const peer = socket(`/api/ws/signal/${streamId}?role=viewer&peerId=viewer-${index}&ticket=${encodeURIComponent(peerTicket)}`, `signal:viewer-${index}`);
+    capacityViewers.push(peer);
+    await peer.open();
+  }
+  const rejectedTicket = await ticket(streamId, 'viewer');
+  const capacityRejected = socket(`/api/ws/signal/${streamId}?role=viewer&peerId=viewer-9&ticket=${encodeURIComponent(rejectedTicket)}`, 'signal:viewer-9');
+  await capacityRejected.open();
+  await waitFor(() => capacityRejected.has('error', (message) => message.code === 'p2p_capacity'));
+
+  console.log('9) host disconnects — stream should go offline');
+  capacityRejected.close();
+  for (const peer of capacityViewers) peer.close();
+  await wait(300);
   host.close();
   await waitFor(async () => {
     const state = await fetch(`${API}/streams/${streamId}`).then((r) => r.json());
@@ -152,6 +192,7 @@ async function main() {
     ['answer relayed to viewer', viewerSignal.has('answer', (m) => m.to === 'viewer-1')],
     ['quality hint relayed to the host', hostSignal.has('quality', (m) => m.kbps === 1200)],
     ['the relay stamps the real sender id', hostSignal.inbox.some((m) => m.type === 'quality' && m.from === 'viewer-1')],
+    ['P2P capacity rejects the ninth viewer', capacityRejected.has('error', (m) => m.code === 'p2p_capacity' && m.maxViewers === 8)],
     ['stream offline after host left', after.stream.isLive === false],
   ];
 

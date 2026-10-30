@@ -5,6 +5,7 @@ import { optionalAuth, requireAuth } from '../lib/auth';
 import {
   background,
   badRequest,
+  conflict,
   forbidden,
   int,
   jsonField,
@@ -279,9 +280,10 @@ streamRoutes.post('/:id/start', authGuard, async (c) => {
   const isRecording = body.isRecording === true || body.recordStream === true;
 
   const row = await ownedStream(c.env, id, auth.id);
+  if (row.is_live) throw conflict('This broadcast is already live', 'stream_already_live');
   const now = nowIso();
 
-  await c.env.DB.prepare(
+  const started = await c.env.DB.prepare(
     `UPDATE streams
         SET is_live = 1,
             started_at = ?,
@@ -290,10 +292,11 @@ streamRoutes.post('/:id/start', authGuard, async (c) => {
             recording_expiry = CASE WHEN ? THEN ? ELSE recording_expiry END,
             last_heartbeat = ?,
             updated_at = ?
-      WHERE id = ?`,
+      WHERE id = ? AND is_live = 0`,
   )
     .bind(now, isRecording ? 1 : 0, isRecording ? 1 : 0, isoHoursFromNow(retentionHours(c.env)), now, now, id)
     .run();
+  if ((started.meta?.changes ?? 0) !== 1) throw conflict('This broadcast was started in another session', 'stream_start_conflict');
 
   // Open a session row for analytics.
   await c.env.DB.prepare(
@@ -363,16 +366,17 @@ streamRoutes.post('/:id/heartbeat', authGuard, async (c) => {
   const body = await readJson(c);
   const viewerCount = int(body.viewerCount, 0, 0, 1_000_000);
 
-  await c.env.DB.prepare(
+  const updated = await c.env.DB.prepare(
     `UPDATE streams
         SET last_heartbeat = ?, host_connected = 1, is_live = 1,
             viewer_count = MAX(COALESCE(viewer_count, 0), ?),
             peak_viewers = MAX(COALESCE(peak_viewers, 0), ?)
-      WHERE id = ?`,
+      WHERE id = ? AND is_live = 1`,
   )
     .bind(nowIso(), viewerCount, viewerCount, id)
     .run();
 
+  if ((updated.meta?.changes ?? 0) !== 1) throw conflict('This broadcast is no longer live', 'stream_not_live');
   return c.json({ success: true });
 });
 

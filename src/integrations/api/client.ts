@@ -175,9 +175,20 @@ export const api = {
 /* -------------------------------- WebSocket ---------------------------------- */
 
 export interface SocketOptions {
-  /** Appended as `?token=` so the Worker can authenticate the upgrade. */
+  /** Legacy bearer query authentication; new callers should use a ticket. */
   auth?: boolean;
   params?: Record<string, string | number | boolean | undefined>;
+}
+
+/**
+ * Requests a single-use WebSocket ticket. The response is intentionally kept
+ * out of persistent storage; callers place it in the upgrade URL only for the
+ * one connection attempt and request a fresh ticket after reconnecting.
+ */
+export async function requestWebSocketTicket(streamId: string, role: 'host' | 'viewer'): Promise<string> {
+  const response = await api.post<{ ticket: string }>('/ws/tickets', { streamId, role });
+  if (!response.ticket) throw new ApiRequestError(502, 'The API did not return a WebSocket ticket', 'ws_ticket_missing');
+  return response.ticket;
 }
 
 /**

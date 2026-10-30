@@ -31,7 +31,7 @@ services/*                        /api/ws/signal ──► Durable Object (offer
 | ------------------- | -------------------------------------------------------------------------------------------------- |
 | Accounts            | signup, email verification, login with lockout, refresh rotation, password reset & change, sessions, personal API tokens, data export, account deletion (30-day grace) |
 | Channels            | streamer mode, public profiles, follow graph, privacy settings, blocks, avatars                      |
-| Broadcasting        | create/start/stop with heartbeats and stale-stream sweep, P2P WebRTC via TURN/STUN, scheduled broadcasts with reminders, stream keys for OBS-style ingest |
+| Broadcasting        | create/start/stop with heartbeats and stale-stream sweep, P2P WebRTC via TURN/STUN, scheduled broadcasts with reminders, stream-key lifecycle (an RTMP/WHIP ingest server is not included) |
 | Viewing             | browse + search + categories, live chat with moderation, presence, tips, replays/clips, continue watching |
 | Creator tools       | dashboard analytics (watch minutes, unique viewers, followers, tips), VOD library with visibility & clip tools, earnings and donation link, schedule management |
 | Moderation          | per-stream chat rules (followers-only, slow mode, word filter, min account age), timeouts/bans, reports, block list, audit trail |
@@ -40,8 +40,12 @@ services/*                        /api/ws/signal ──► Durable Object (offer
 | Integrations        | creator webhooks (8 events, HMAC-signed), product analytics, Sentry, captcha, Stripe or custom payment provider |
 | Operations          | hourly cron (retention, stale streams, rollups, digest emails), health endpoint reporting pending configuration |
 
-Everything above is code-complete; adding keys activates each integration
-without touching the code (runtime config is served by `GET /api/config`).
+The repository contains the verified web/API foundation and a native Android
+starter slice. Production readiness still depends on real camera/WebRTC device
+runs, TURN/provider credentials, exact production origins, moderation/legal
+policy, and the Android release gate; the roadmap records those boundaries.
+Optional integrations activate through `GET /api/config` once their keys are
+configured, but credentials alone do not replace provider validation.
 
 ## Running the full stack locally
 
@@ -53,7 +57,7 @@ Two processes: the Worker API on `:8787` and Vite on `:8080` (Vite proxies
 cd worker
 npm ci
 cp .dev.vars.example .dev.vars      # set JWT_SECRET (openssl rand -base64 48)
-npm run db:migrate:local            # D1 schema (migrations 0001…0004)
+npm run db:migrate:local            # D1 schema (migrations 0001…0005)
 npm run seed                        # optional demo data
 npm run dev                         # http://127.0.0.1:8787
 
@@ -86,6 +90,7 @@ curl -X POST http://127.0.0.1:8787/api/admin/cleanup \
 | `npm run db:migrate`   | root   | apply migrations locally                         |
 | `npm run seed`         | root   | seed demo data                                   |
 | `npm run typecheck`    | root   | type-check the SPA                               |
+| `npm run verify`       | root   | typecheck, lint, build, Worker typecheck, and local migration gate |
 | `npm run test:api`     | root   | end-to-end REST contract suite (needs a running API; `LSC_TEST_ADMIN_TOKEN` adds the operator checks) |
 | `npm run test:realtime`| root   | chat + WebRTC signalling suite                   |
 | `npm run dev`          | worker | `wrangler dev` (D1/R2/DO simulated locally)      |
@@ -114,12 +119,13 @@ src/
 │                        Library, Schedule, Notifications, Moderation, Admin, Settings, auth
 └── services/            one module per API area (streams, recordings, moderation, tips…)
 worker/
-├── migrations/          D1 schema (0001…0004)
+├── migrations/          D1 schema (0001…0005, including one-use WebSocket tickets)
 ├── src/
 │   ├── durable/         ChatRoom, SignalRoom
 │   ├── lib/             auth, config, email, push, webhook, payments, analytics, cleanup…
 │   └── routes/          auth, users, streams, media, recordings, notifications,
 │                        analytics, schedule, moderation, payments, integrations, admin
 └── wrangler.jsonc       bindings, cron trigger, vars
-docs/                    DEPLOYMENT.md, API.md
+android/                 Kotlin + Compose native client starter (API/WebRTC contract shared with web)
+docs/                    DEPLOYMENT.md, API.md, IMPLEMENTATION-ROADMAP.md
 ```

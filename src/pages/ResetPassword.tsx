@@ -74,9 +74,9 @@ export default function ResetPassword() {
       setTimeout(() => {
         navigate("/login");
       }, 3000);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Password reset error:", error);
-      setErrorMessage(error.message || "Failed to reset password. Please try again.");
+      setErrorMessage(error instanceof Error ? error.message : "Failed to reset password. Please try again.");
     } finally {
       setIsSubmitting(false);
     }

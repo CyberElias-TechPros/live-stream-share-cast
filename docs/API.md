@@ -22,13 +22,27 @@ Settings → Security) work in the same header and carry scopes.
 
 ---
 
+## WebSocket upgrade tickets
+
+WebSocket clients first call `POST /api/ws/tickets` with `{ streamId, role }`.
+Viewer tickets may be issued anonymously; host tickets require the stream owner
+(or an administrator) session and an already-started live stream. The response
+contains a single-use ticket valid for 60 seconds. Pass it as `ticket` on the subsequent WebSocket upgrade. Do not
+put bearer access or refresh tokens in WebSocket URLs.
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| POST | `/ws/tickets` | optional for viewers, required for hosts | one stream/role, one minute TTL, one use |
+| GET | `/ws/chat/:streamId` | ticket | chat + presence |
+| GET | `/ws/signal/:streamId` | ticket | WebRTC offer/answer/ICE |
+
 ## Public configuration
 
 | Method | Path                     | Auth | Notes                                             |
 | ------ | ------------------------ | ---- | ------------------------------------------------- |
 | GET    | `/config`                | –    | brand, limits, features, payment presets, push key |
 | GET    | `/runtime-config.json`   | –    | same payload, cacheable (`max-age=300`)            |
-| GET    | `/config/rtc/ice`        | –    | ICE servers; TURN credentials are short-lived       |
+| GET    | `/config/rtc/ice`        | –    | `{ iceServers, ttlSeconds, turnConfigured }`; TURN credentials are short-lived |
 | GET    | `/config/categories`     | –    | browse taxonomy with live-stream counts             |
 | GET    | `/config/features`       | –    | database feature flags                              |
 | GET    | `/health`                | –    | service status + `pendingConfiguration`             |
@@ -165,9 +179,10 @@ Endpoints that fail 20 times in a row pause until they are re-enabled.
 
 | Path                             | Query                                  | Purpose                       |
 | -------------------------------- | -------------------------------------- | ----------------------------- |
-| `/api/ws/chat/:streamId`         | `role=host\|viewer`, `token`           | chat, presence, moderation    |
-| `/api/ws/signal/:streamId`       | `role=host\|viewer`, `peerId`, `token` | WebRTC offer/answer/ICE       |
+| `/api/ws/chat/:streamId`         | `role=host\|viewer`, `ticket`           | chat, presence, moderation    |
+| `/api/ws/signal/:streamId`       | `role=host\|viewer`, `peerId`, `ticket` | WebRTC offer/answer/ICE       |
 
-`role=host` requires ownership of the stream. Banned accounts are rejected with
+`role=host` requires ownership of an already-live stream; viewers may be
+anonymous but still need a one-use ticket. Banned accounts are rejected with
 `account_banned`. Both upgrade through the same origin as the REST API, so no
 extra proxy configuration is needed in production.

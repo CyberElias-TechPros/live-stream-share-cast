@@ -16,6 +16,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Stream, StreamStatus } from "@/types";
 import { LanViewer, type LanState, type TransportMode } from "@/lib/lanStream";
+import { platformService } from "@/services/platformService";
 import { 
   DropdownMenu,
   DropdownMenuContent,
@@ -76,7 +77,14 @@ export default function StreamPlayer({
   const [lanState, setLanState] = useState<LanState>("idle");
   const [lanSoundBlocked, setLanSoundBlocked] = useState(false);
   const [lanEnded, setLanEnded] = useState(false);
+  const [maxP2pViewers, setMaxP2pViewers] = useState(8);
   const lanViewerRef = useRef<LanViewer | null>(null);
+
+  useEffect(() => {
+    void platformService.getConfig().then((config) => {
+      if (config?.limits.maxP2pViewers) setMaxP2pViewers(config.limits.maxP2pViewers);
+    });
+  }, []);
 
   useEffect(() => {
     if (!isLan || status !== "live" || !stream) return;
@@ -87,7 +95,16 @@ export default function StreamPlayer({
       if (s === "failed") {
         toast({
           title: "Connection failed",
-          description: "Make sure you're on the same network as the host.",
+          description: "Try again, or ask the creator to use internet delivery for a larger audience.",
+          variant: "destructive",
+        });
+      }
+    };
+    viewer.onError = (message, code) => {
+      if (code === "p2p_capacity") {
+        toast({
+          title: "Peer-to-peer audience limit reached",
+          description: `${message} (configured ceiling: ${maxP2pViewers} viewers)`,
           variant: "destructive",
         });
       }
@@ -116,11 +133,11 @@ export default function StreamPlayer({
       setLanSoundBlocked(false);
       setLanState("idle");
     };
-  }, [isLan, status, stream, transportMode, toast]);
+  }, [isLan, status, stream, transportMode, toast, maxP2pViewers]);
 
   const handleLanConnect = () => {
     setLanSoundBlocked(false);
-    void lanViewerRef.current?.connect();
+    lanViewerRef.current?.retry();
   };
 
   const handleLanUnmute = () => {

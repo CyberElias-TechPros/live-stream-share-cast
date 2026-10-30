@@ -1,7 +1,9 @@
 # I'm Live — web + Android implementation roadmap
 
-> **Living execution checklist.** Source-verified on **2026-10-29 UTC** against the
-> `arena/aa9dc367-live-stream-share-cast` branch. This document is deliberately
+> **Living execution checklist.** Source-verified on **2026-10-30 UTC** against the
+> `arena/aa9dc367-live-stream-share-cast` branch. This pass implements WebSocket
+> tickets, production configuration validation, route splitting, and an Android
+> native starter. This document is deliberately
 > more honest than a feature inventory: code existing in the repository is not
 > automatically production-ready, and an optional integration is not the same as
 > an activated integration.
@@ -160,57 +162,67 @@ of these are true:
 
 ### 2.2 Baseline checks run for this roadmap
 
-- `[x]` `npm run typecheck` — passes.
+- `[x]` `npm run typecheck` — passes after route-level lazy loading, dynamic P2P
+  limits, recording lifecycle, and WebSocket ticket client changes.
 - `[x]` `npm run typecheck:api` — passes.
-- `[x]` `npm run build` — passes; Vite reports a roughly **1.31 MB minified
-  JavaScript chunk**, so code splitting is required before mobile/low-bandwidth
-  launch.
-- `[!]` `npm run lint` — fails with **28 errors and 11 warnings**, including
-  `any` usage, empty interfaces, a `require()` import, hook dependency warnings,
-  and a misleading character class in worker moderation code.
-- `[x]` `npm run test:api` against local Worker — **96/96 REST checks passed**.
-- `[x]` `npm run test:realtime` against local Worker — **13/13 chat/signalling
-  checks passed**, but the WebRTC portion uses fake SDP and is not a real camera
-  negotiation test.
-- `[!]` The root README describes `npm run db:migrate:local`, but the root
-  package does not expose that script. The working root command is currently
-  `npm run db:migrate`; either the docs or scripts must be made consistent.
-- `[!]` `npm audit` reports **26 root dependency advisories** (17 high, 7
-  moderate, 2 low) and **9 worker advisories** (7 high, 2 moderate). A
-  production-only audit still reports high-severity transitive/direct issues;
-  upgrade, replace, or explicitly risk-accept each before launch.
-- `[!]` There are no committed browser E2E tests, Android tests, WebRTC network
-  tests, accessibility tests, load tests, or release smoke workflows.
+- `[x]` `npm run lint` — passes with the upgraded ESLint/TypeScript-ESLint stack.
+- `[x]` `npm run build` — passes; route chunks are now split. The main entry is
+  about **374 kB minified / 116 kB gzip** and the former roughly 1.31 MB monolith
+  is gone. Vite's `__dirname` warning was removed.
+- `[x]` `npm run db:migrate:local` — applies migrations `0001` through `0005`,
+  including the one-use WebSocket ticket table.
+- `[x]` `npm run test:api` against local Worker — **110/110 REST/privacy checks
+  passed**, including public/unlisted/private bytes, invalid token, traversal,
+  owner playback, deletion, no-ticket upgrade rejection, duplicate-start
+  protection, and ICE config shape.
+- `[x]` `npm run test:realtime` against local Worker — chat, ticket-authenticated
+  signalling, fake-SDP relay, host disconnect, and the configured eight-viewer
+  capacity rejection passed. It is still not a real camera/ICE network test.
+- `[x]` exact-origin CORS/security-header smoke — allowed local origin is echoed,
+  an unlisted origin receives no CORS grant, and CSP/permissions/security headers
+  are present.
+- `[x]` CI/release workflows now cover web/Worker quality, local migration/API/
+  realtime smoke, audit, production config validation, and environment-driven
+  health checks. They have not run on GitHub in this branch yet.
+- `[x]` Root and Worker `npm audit --omit=dev --audit-level=high` both report
+  zero vulnerabilities locally. CI must repeat the gate; this does not replace
+  provider-side/runtime scanning.
+- `[!]` Real browser E2E, real WebRTC camera/ICE/NAT tests, accessibility tooling,
+  load tests, remote migration/restore, Android compilation/device tests, and
+  provider/credential validation remain release gates.
 
-### 2.3 Known blockers to put at the top of the board
+### 2.3 Remaining blockers to put at the top of the board
 
-1. `[!] [P0]` **Viewer signalling role bug:** `LanViewer.start()` currently opens
-   `/api/ws/signal/:streamId` with `role: "host"`. A normal viewer can therefore
-   be rejected by the Worker’s host ownership check. Fix and add a regression
-   test before claiming viewer playback works.
-2. `[!] [P0]` **Host liveness gap:** `StreamCreator` starts the database stream
-   and the signalling socket, but does not continuously call the Worker
-   heartbeat route. A browser crash, mobile backgrounding event, or missing
-   signalling socket can leave live state stale until cleanup. Add a heartbeat
-   loop, socket lifecycle state, idempotent stop, and an explicit offline state.
-3. `[!] [P0]` **P2P scale limitation:** every viewer creates a peer connection to
-   the host. Establish a supported audience limit and a server-assisted fallback
-   before public discovery grows.
-4. `[!] [P0]` **Recording mismatch:** R2 upload and VOD APIs exist, but the
-   browser `MediaRecorder` path currently collects chunks for local download;
-   the “save to cloud” promise is not completed end-to-end. Implement chunked or
-   final upload, recording row lifecycle, retry/resume, and publish/retention
-   behaviour.
-5. `[!] [P0]` **Media privacy:** public media routes must not make private VOD
-   bytes retrievable by guessing/obtaining an R2-backed URL. Enforce recording
-   visibility/ownership before serving bytes or issue short-lived signed URLs.
-6. `[!] [P0]` **Production configuration:** `ALLOWED_ORIGINS=*`, development
-   secrets/fallbacks, missing provider keys, hard-coded deployment health URL,
-   and no staging gate are not acceptable for a public release.
-7. `[!] [P1]` **Client architecture drift:** `streamService.connectToStream()` is
-   explicitly simulated while `StreamPlayer` owns the real `LanViewer`; the
-   context also performs approximate viewer-count increments/decrements. Choose
-   one authoritative media/presence state machine and remove the dead path.
+1. `[~] [P0]` **Real media path:** viewer signalling now uses the server-derived
+   viewer role, host heartbeat/stop paths are wired, and the configurable P2P
+   ceiling is enforced. A real browser camera-to-camera test across ICE/NAT,
+   reconnection, visibility changes, and media-track failure is still required.
+2. `[~] [P0]` **Recording product:** browser recording now has a bounded chunk
+   lifecycle and an explicit local-download path; cloud publish remains a
+   provider/device-scale decision because the current upload contract is a final
+   blob. Add resumable multipart/R2 handling before promising long recordings.
+3. `[x] [P0]` **Media privacy:** recording playback checks visibility/ownership,
+   avatar access is authorized, and the contract suite covers public/unlisted/
+   private, invalid-token, traversal, owner, and delete cases. Re-run this gate
+   against the deployed CDN/proxy before launch.
+4. `[~] [P0]` **Production configuration:** exact origins, secure fallback
+   rejection, one-use WebSocket tickets, deployment validation, health checks,
+   and environment-driven CI are implemented. Actual Cloudflare staging/
+   production resources, secrets, provider credentials, backups, and rollback
+   evidence still require operator access.
+5. `[x] [P1]` **Client architecture drift:** route-level code splitting and the
+   real player/creator path are in place; `src/services/streamService.ts` is now
+   explicitly retained as the browser capture/settings/recording adapter, while
+   `LanViewer`/`LanStreamer` remain the sole live media transport authority.
+6. `[!] [P0]` **Android release gate:** the native project, secure auth, API
+   client, ticket signalling, recv-only WebRTC session, Compose browse/watch
+   flow, permissions, and foreground-service notification exist. Native rendered
+   video/audio, creator capture/publish, chat/follow/library/settings, FCM,
+   signed AAB, and device/network validation are not complete.
+7. `[!] [P0]` **External acceptance:** TURN/SFU decision, browser/device matrix,
+   accessibility automation, load/cost test, remote D1/R2/DO smoke, provider
+   webhooks/email/push/payment credentials, legal copy, support runbook, and
+   staged rollout still need real environments and owners.
 
 ---
 
@@ -360,16 +372,16 @@ protected, and staging secrets/providers are configured or deliberately disabled
   if bearer tokens remain, keep access tokens short-lived, minimise persistent
   storage, rotate refresh tokens safely, and protect against XSS. If cookies are
   used, add CSRF protection and strict SameSite/origin checks.
-- `[ ] [P0][SEC/API]` Replace long-lived WebSocket `?token=` values with a
-  short-lived, single-use WebSocket ticket endpoint or another design that does
-  not place reusable credentials in URLs/logs/history. Keep origin validation.
-- `[ ] [P0][SEC/API]` Verify every route’s owner/admin/moderator scope with a
-  route matrix. Add negative tests for IDOR across users, streams, chat,
-  recordings, avatars, notifications, tips, schedules, exports, webhooks, and
-  admin routes.
-- `[ ] [P0][SEC/API]` Make JWT secrets mandatory in production; remove or loudly
-  block the development fallback. Rotate secrets with a documented session
-  invalidation and incident procedure.
+- `[x] [P0][SEC/API]` Replaced reusable WebSocket `?token=` credentials with
+  short-lived, stream/role-scoped, single-use tickets stored only as hashes;
+  upgrade routes consume them atomically and preserve origin validation.
+- `[~] [P0][SEC/API]` The route matrix and local negative suite cover auth,
+  ownership, IDOR/privacy, media, moderation, tokens, exports, webhooks, tips,
+  and admin boundaries. Continue adding every route's banned/rate-limit/provider
+  disabled case and deployed-proxy evidence.
+- `[x] [P0][SEC/API]` Production JWT/Cleanup validation rejects missing,
+  placeholder, or weak secrets; secret rotation/session invalidation procedure is
+  documented, while actual provider-side rotation remains operational work.
 - `[ ] [P0][SEC/API]` Keep password hashing cost current, validate password
   length/strength without unsafe over-restriction, prevent reset-token replay,
   redact reset URLs/tokens from logs, and test account lockout without account
@@ -386,12 +398,13 @@ protected, and staging secrets/providers are configured or deliberately disabled
 
 ### 5.3 Network, abuse, and input security
 
-- `[ ] [P0][SEC/API/OPS]` Replace production `ALLOWED_ORIGINS=*` with an exact
-  allow-list for web origins, Android app-link expectations, and approved local
-  development origins. Test CORS preflight and credential behaviour.
-- `[ ] [P0][SEC/API]` Apply body and upload limits before parsing, MIME sniffing
-  protection, image/video validation, filename/key normalisation, decompression
-  limits, and request timeouts.
+- `[~] [P0][SEC/API/OPS]` Production now rejects wildcard origins and runtime
+  CORS echoes only exact configured origins; local defaults are development-only.
+  Staging/production preflight, Android App Link origin policy, and deployed
+  proxy evidence remain.
+- `[~] [P0][SEC/API]` JSON size, upload byte, image MIME, filename/key
+  normalisation, traversal, SDP/ICE frame, and retention limits are implemented;
+  full MIME sniffing/decompression/timeouts and a deployed abuse scan remain.
 - `[ ] [P0][SEC/API]` Bind rate limiting to a distributed KV or equivalent for
   auth, signup, password reset, chat, reports, uploads, WebSockets, search,
   webhooks, tips, and admin endpoints; test per-IP, per-account, and global
@@ -399,12 +412,13 @@ protected, and staging secrets/providers are configured or deliberately disabled
 - `[ ] [P0][SEC/API]` Review SSRF protections for creator webhooks, email relay,
   payment webhook/provider URLs, external images, and redirect/callback URLs.
   Block private/link-local address ranges and unsafe schemes where applicable.
-- `[ ] [P0][SEC/API]` Add security headers and a strict CSP compatible with the
-  actual fonts, media, WebSocket, analytics, Sentry, and payment origins. Remove
-  the development GPT engineer script from production unless explicitly needed.
-- `[ ] [P0][SEC/API]` Fix media privacy: look up the recording row before serving
-  R2 bytes, enforce public/unlisted/private rules, require owner/auth for private
-  media, prevent path traversal, and use short-lived signed URLs where possible.
+- `[x] [P0][SEC/API]` Added security headers/CSP for the actual app/API/media/
+  WebSocket origins and removed the external GPT Engineer bootstrap/social asset
+  dependency. Provider-specific analytics/Sentry/payment CSP domains still need
+  staging review before enabling those integrations.
+- `[x] [P0][SEC/API]` Media routes look up recording rows before R2 bytes,
+  enforce public/unlisted/private visibility, block traversal, honor retention,
+  and issue short-lived HMAC playback tokens for protected VODs.
 - `[ ] [P1][SEC]` Threat-model token theft, creator impersonation, stream-key
   leakage, malicious SDP/ICE frames, chat flood, report abuse, webhook secret
   exposure, payment replay, R2 enumeration, and account deletion abuse.
@@ -439,39 +453,37 @@ public, mobile, and failure networks with measurable recovery.
 
 ### 6.1 Correct the current WebRTC path first
 
-- `[ ] [P0][WEB/API]` Change `LanViewer.start()` to connect with `role: "viewer"`.
-  Preserve host-only checks in the Worker. **Why:** the current role can reject
-  ordinary viewers before SDP exchange. **Connects to:**
-  `src/lib/lanStream.ts`, `/api/ws/signal/:streamId`, `SignalRoom`.
-- `[ ] [P0][QA]` Add a regression test that constructs a viewer signalling URL,
-  verifies it cannot claim host, and completes a real browser offer/answer with
-  a test media track. Fake SDP relay coverage remains useful but is not enough.
-- `[ ] [P0][WEB]` Replace the simulated `streamService.connectToStream()` path
-  with the actual player/connection state, or remove it and make one media state
-  machine authoritative. Remove duplicate viewer count increments/decrements.
-- `[ ] [P0][WEB]` Add an explicit media state machine: idle, requesting
-  permission, ready, signalling, connecting, connected, degraded, reconnecting,
-  ended, denied, unsupported, and failed. Make UI actions idempotent.
-- `[ ] [P0][WEB]` Validate `RTCPeerConnection`, `MediaRecorder`, codec, screen
-  capture, autoplay, and secure-context requirements before a creator enters
-  “Go live”; offer a useful fallback message for each unsupported capability.
-- `[~] [P0][WEB/API]` Send host heartbeats on an interval shorter than the stale
-  threshold while the creator is live; a 30-second loop is now wired in
-  `StreamCreator`. Still add abnormal-disconnect, end/unmount, token-refresh,
-  and server-alarm tests. Use a server-side alarm/DO presence check as a second
-  safety net, not as the only liveness signal.
-- `[ ] [P0][WEB/API]` Make start/stop/heartbeat race-safe: two tabs cannot create
-  duplicate sessions, stop cannot be undone by a delayed heartbeat, and a
-  reconnect cannot create a second host identity without explicit ownership.
-- `[ ] [P0][WEB]` Handle page visibility, mobile browser suspension, `beforeunload`,
-  camera/mic track-ended, device unplug, permission revocation, laptop sleep,
-  network change, and tab restore. Show the creator exactly what viewers see.
-- `[ ] [P0][WEB]` Implement signalling reconnect with bounded exponential
-  backoff, fresh peer IDs where needed, ICE restart, offer glare handling,
-  candidate queue limits, stale peer cleanup, and a maximum reconnect duration.
-- `[ ] [P0][API]` Validate signalling frame type, size, SDP/ICE shape, target
-  ownership, role, peer count, and rate. Do not trust client-provided identity
-  or `role`; derive permissions server-side.
+- `[x] [P0][WEB/API]` Change `LanViewer.start()` to connect with `role: "viewer"`.
+  The Worker derives host ownership from the authenticated user and does not
+  trust a client role for authorization.
+- `[~] [P0][QA]` The contract suite constructs viewer ticket URLs, rejects direct
+  no-ticket upgrades, relays fake SDP, and tests host disconnect/capacity. A real
+  browser offer/answer with camera tracks and ICE/NAT coverage remains required.
+- `[~] [P0][WEB]` `StreamPlayer` owns the real `LanViewer` path and duplicate
+  viewer count mutations were removed from the context. The legacy
+  `streamService.connectToStream()` module remains only as an import-graph cleanup
+  task; it is not the playback authority.
+- `[~] [P0][WEB]` Creator/player lifecycle states now expose permission, connect,
+  connected, error, ended, and recording transitions. A full cross-browser state
+  machine for degraded/reconnecting/unsupported and every track failure remains.
+- `[x] [P0][WEB]` Capability and secure-context checks are performed before live
+  capture; recording support is checked before recording starts and unsupported
+  actions receive explicit errors.
+- `[~] [P0][WEB/API]` Host heartbeats run every 30 seconds while live, with
+  idempotent stop/unmount cleanup and server stale-stream cleanup. Abnormal
+  disconnect, token refresh, visibility suspension, and server-alarm tests remain.
+- `[~] [P0][WEB/API]` Start/stop/heartbeat ownership and session uniqueness are
+  guarded by conditional Worker updates, duplicate-start conflicts, and delayed-
+  heartbeat rejection; a true two-tab race and browser-side recovery E2E remain.
+- `[ ] [P0][WEB]` Handle page visibility/mobile suspension, track-ended/device
+  unplug, permission revocation, sleep, network change, and tab restore with
+  user-facing recovery and host/viewer-consistent state.
+- `[~] [P0][WEB]` Signalling validates frame size/type, target ownership, roles,
+  peer count, and rate, with ticket expiry/consumption. ICE restart, offer glare,
+  bounded reconnect, and candidate queue recovery remain.
+- `[x] [P0][API]` Server-side signalling authorization derives host identity from
+  the authenticated ticket/session, rejects unissued/expired/reused tickets,
+  bounds SDP/ICE frames, and enforces the configured P2P capacity.
 
 ### 6.2 ICE, TURN, and network matrix
 
@@ -493,9 +505,10 @@ public, mobile, and failure networks with measurable recovery.
 
 ### 6.3 Scale/fallback architecture
 
-- `[?][P0][API/OPS/PM]` Set the supported P2P viewer ceiling. Enforce it in the
-  signalling room and show the creator a reasoned limit rather than allowing an
-  uplink collapse.
+- `[x][P0][API/WEB/OPS]` Set the initial P2P viewer ceiling to eight, make it a
+  validated Worker runtime variable, enforce it in `SignalRoom`, and expose it
+  through `/api/config` so creator/player copy matches server behaviour. Revisit
+  the number with real uplink/load evidence.
 - `[ ] [P0][API/OPS]` Choose and integrate an SFU/server-assisted path for public
   streams above the ceiling (for example a managed WebRTC/SFU or a media
   platform). Define how stream IDs, auth, recording, moderation, metrics, and
@@ -553,20 +566,20 @@ critical creator/viewer/moderator paths on desktop and mobile viewport sizes.
 
 ### 7.1 App shell, routing, and runtime configuration
 
-- `[ ] [P0][WEB]` Load runtime config once with cache/stale fallback, validate its
-  shape, and show a controlled maintenance/not-configured state instead of
-  crashing if `/api/config` fails.
-- `[ ] [P0][WEB]` Add route-level error boundaries and retry controls; preserve a
-  safe return path after login/permission prompts without open redirects.
-- `[ ] [P0][WEB]` Add canonical titles/meta/OG image per public stream, profile,
-  and recording. Replace the placeholder Lovable OG image and update Twitter/site
-  identity to the actual brand.
-- `[ ] [P0][WEB]` Add `manifest.webmanifest`, app icons, safe service-worker
-  registration/versioning, and a documented PWA policy if installability is part
-  of the web promise. Push service worker alone is not a complete PWA.
-- `[ ] [P1][WEB]` Configure SPA hosting rewrites for every public deep link,
-  cache headers for immutable assets, no-cache for runtime config, and a clear
-  fallback for stale bundles.
+- `[~] [P0][WEB]` Runtime config is loaded through the platform service and now
+  drives limits such as `maxP2pViewers`; callers retain safe defaults. A global
+  stale-cache/maintenance UX and schema validation remain.
+- `[~] [P0][WEB]` Route-level lazy loading and Vite SPA fallback are in place.
+  Per-route error boundaries, retry controls, and safe post-auth return paths
+  remain to be completed.
+- `[x] [P0][WEB]` Local Open Graph artwork and manifest metadata replaced the
+  external Lovable/GPT Engineer assets. Dynamic per-stream/profile/recording
+  canonical metadata remains.
+- `[~] [P0][WEB]` `manifest.webmanifest` and local artwork exist; a full icon set,
+  versioned service worker, offline policy, and installability test remain.
+- `[x] [P1][WEB]` SPA rewrites, API proxying, immutable asset caching, and
+  runtime-config no-cache headers are configured in the Vite/deployment paths.
+  Verify the exact host platform headers/rewrite rules during staging.
 - `[ ] [P1][WEB]` Add mobile bottom navigation or an equivalent discoverable
   navigation pattern; avoid relying on the desktop floating nav at phone widths.
 
@@ -596,8 +609,10 @@ critical creator/viewer/moderator paths on desktop and mobile viewport sizes.
 - `[ ] [P0][WEB]` Implement the full viewer state sequence: metadata loading,
   stream offline, waiting for host, connecting, autoplay blocked, muted start,
   connected, degraded, reconnecting, ended, replay available, and unavailable.
-- `[ ] [P0][WEB]` Fix viewer signalling role and add a visible “connect/retry/
-  unmute” action with keyboard and screen-reader support.
+- `[~] [P0][WEB]` Viewer signalling now uses the authenticated viewer ticket and
+  role; the player has connection/error states and retry affordances. Full
+  connect/retry/unmute accessibility and autoplay-blocked browser coverage
+  remain.
 - `[ ] [P0][WEB]` Make player controls complete: play/pause, mute/volume,
   fullscreen, quality/transport explanation, captions hook, connection
   diagnostics, keyboard shortcuts, and touch controls.
@@ -622,13 +637,15 @@ critical creator/viewer/moderator paths on desktop and mobile viewport sizes.
 - `[ ] [P0][WEB]` Add device selectors, live preview, camera/mic toggles, screen
   share, audio level, video resolution/frame rate, and a clear permission reset
   path.
-- `[ ] [P0][WEB]` Wire actual host heartbeat and media state to the creator UI;
-  stop using `isStreaming` as the sole source of truth.
-- `[ ] [P0][WEB]` Ensure `startStream`/`stopStream` failures are thrown/handled;
-  do not show “live” when the API returned `false`. Make end-stream confirmation
-  and recovery safe.
-- `[ ] [P0][WEB]` Finish recording choice: off, local download, cloud VOD;
-  display upload progress, remaining quota, finalisation, retry, and expiry.
+- `[~] [P0][WEB]` Creator heartbeats, server start/stop results, P2P state, and
+  recording transitions are wired; the UI still needs a richer authoritative
+  media state machine for abnormal/network/device failures.
+- `[x] [P0][WEB]` `startStream`/`stopStream` failures are surfaced and the UI does
+  not claim live when the API rejects the operation; add two-tab race E2E before
+  release.
+- `[~] [P0][WEB]` Recording choice distinguishes local download from cloud VOD,
+  bounds in-memory browser capture, and reports upload success/failure. Progress,
+  resumable uploads, quota/finalisation state, and expiry UI remain.
 - `[ ] [P1][WEB]` Add stream metadata editing while live only for safe fields,
   schedule handoff, stream key rotate/revoke, share panel, viewer diagnostics,
   and stream health/quality cards.
@@ -688,68 +705,78 @@ interoperability verified.
 
 ### 8.1 Android project and shared contract
 
-- `[ ] [P0][AND/OPS]` Create `android/` Gradle project with application ID,
-  build types (debug/staging/release), signing config outside Git, versioning,
-  CI cache, baseline profile, and minimum/target SDK decision.
-- `[ ] [P0][AND]` Establish modules such as `app`, `core:network`, `core:auth`,
-  `core:designsystem`, `core:media`, `feature:auth`, `feature:browse`,
-  `feature:watch`, `feature:broadcast`, `feature:chat`, `feature:library`, and
-  `feature:settings`. Keep platform code out of shared domain models.
-- `[ ] [P0][AND/API]` Generate or hand-maintain a typed Kotlin API client from
-  the versioned contract. Map Worker error codes, pagination, date/time, nulls,
-  retries, and refresh exactly like web.
-- `[ ] [P0][AND]` Add secure token storage backed by Android Keystore; handle
-  process death, refresh rotation, logout-all, clock skew, and no token logs.
-- `[ ] [P0][AND]` Add build-time/runtime environment selection without shipping
-  staging endpoints or debug secrets in release.
+- `[~] [P0][AND/OPS]` Created `android/` as a Kotlin/Compose starter with
+  application ID, debug/release variants, JDK 17/SDK 35 configuration, signing
+  placeholders outside Git, and a documented `IM_LIVE_API_BASE_URL`. Gradle
+  compilation and release signing still require an Android/JDK environment.
+- `[~] [P0][AND]` The initial slice is intentionally one `app` module with
+  separated auth/network/live/media packages rather than a premature multi-module
+  tree. Split into feature modules after device-tested contracts stabilize.
+- `[~] [P0][AND/API]` `ApiClient`, `AuthRepository`, `LiveRepository`, and the
+  signalling client hand-maintain the current Worker REST/WS contract, including
+  DTO mapping, refresh-once retry, one-use tickets, and structured errors. Full
+  generated-client parity and pagination coverage remain.
+- `[x] [P0][AND]` EncryptedSharedPreferences backed by Android Keystore stores
+  access/refresh tokens; logout clears them and request logs exclude token values.
+  Process-death, clock-skew, refresh-rotation, and logout-all device tests remain.
+- `[x] [P0][AND]` Build-time endpoint selection is provided through the Gradle
+  `IM_LIVE_API_BASE_URL` property; release rejects the documented placeholder and
+  uses HTTPS outside debug.
 - `[ ] [P1][AND]` Add shared analytics/error event names and release metadata so
   web/Android funnels can be compared without collecting unnecessary data.
 
 ### 8.2 Android UX foundation and navigation
 
-- `[ ] [P0][AND/UX]` Translate the design tokens into Compose theme, typography,
-  colours, live states, spacing, shapes, dark mode, reduced motion, and dynamic
-  colour policy.
-- `[ ] [P0][AND/UX]` Define navigation graph for auth, browse, search, profile,
-  watch, broadcast, library, schedule, notifications, moderation, and settings.
-- `[ ] [P0][AND]` Implement loading/error/empty/offline/retry states and state
-  restoration for every screen; ensure a killed process returns to a safe route.
-- `[ ] [P0][AND/UX]` Meet TalkBack semantics, focus order, content descriptions,
-  scalable text, minimum touch targets, contrast, haptic restraint, and
-  landscape/fullscreen video behaviour.
-- `[ ] [P1][AND]` Add deep links/App Links for `/watch/:id`, `/profile/:username`,
-  `/library/:recordingId`, verify domain association, and protect against
-  untrusted redirect parameters.
+- `[~] [P0][AND/UX]` A dark Compose theme and basic login/browse/watch/broadcast
+  surfaces exist; full design-token parity, dynamic colour, reduced-motion, and
+  responsive video treatment remain.
+- `[~] [P0][AND/UX]` The starter navigation covers auth, browse, watch, and
+  broadcast; search/profile/library/schedule/notifications/moderation/settings
+  destinations are still missing.
+- `[~] [P0][AND]` Basic loading/error/empty states and cancellation cleanup exist.
+  Offline caching, process-death restoration, and every-screen retry contract
+  require implementation and instrumentation tests.
+- `[ ] [P0][AND/UX]` Complete TalkBack semantics, focus order, content
+  descriptions, scalable text, touch targets, contrast, haptics, landscape, and
+  fullscreen video validation on real devices.
+- `[~] [P1][AND]` App Links are scaffolded with a placeholder host and guarded
+  intent parsing; replace the host, publish `assetlinks.json`, and verify
+  `/watch/:id`, profiles, and recordings in staging.
 - `[ ] [P1][AND]` Add share sheet integration for streams/profiles/recordings and
   a clipboard fallback with privacy-safe preview text.
 
 ### 8.3 Android auth, profile, and discovery
 
-- `[ ] [P0][AND]` Build sign-up, login, password reset, email verification,
-  session expiry, account deletion, and banned/unverified states using the same
-  Worker routes and copy rules.
-- `[ ] [P0][AND]` Build browse/live/search/category/profile/follow flows with
-  paging, pull-to-refresh, offline cache policy, stale live labels, and no-result
-  recovery.
-- `[ ] [P1][AND]` Build settings for profile, privacy, notifications, quality,
-  data saver, security/session management, and legal documents.
+- `[~] [P0][AND]` Login and logout use the shared Worker auth contract; sign-up,
+  password reset, email verification, session-expiry copy, account deletion,
+  and banned/unverified states remain.
+- `[~] [P0][AND]` Live browse and watch loading exist; paging, search,
+  categories, profiles, pull-to-refresh, offline cache, stale labels, and
+  no-result recovery remain. Native watch now has a follow action, history-backed
+  chat, and message send.
+- `[~] [P1][AND]` Library and settings navigation placeholders exist; implement
+  recording playback/management plus persisted profile, privacy, notifications,
+  quality, data-saver, security/session, and legal controls.
 - `[ ] [P1][AND]` Add local cache invalidation when following, blocking, logging
   out, deleting an account, or receiving a server-side ban.
 
 ### 8.4 Android viewer/media
 
-- `[ ] [P0][AND]` Integrate native WebRTC (`PeerConnectionFactory`, audio/video
-  tracks, SDP/ICE, data/signalling WebSocket) with the same Worker signalling
-  protocol. Do not fork the protocol silently.
-- `[ ] [P0][AND/API]` Fetch short-lived ICE/TURN config, apply transport policy,
-  redact credentials in logs, and expose direct/relay diagnostics.
+- `[~] [P0][AND]` Native `PeerConnectionFactory`, recv-only audio/video tracks,
+  SDP/ICE, ticket-authenticated signalling, server ICE/TURN parsing,
+  `SurfaceViewRenderer`, and speaker routing are implemented in
+  `WebRtcViewerSession`/`SignallingClient`. Real interoperability and lifecycle
+  tests remain.
+- `[~] [P0][AND/API]` The viewer consumes the Worker ICE server response and keeps
+  credentials out of UI copy/logs; direct-vs-relay diagnostics and TURN policy
+  still need to be surfaced and tested.
 - `[ ] [P0][AND]` Implement player lifecycle for foreground/background, rotation,
   Bluetooth route, speaker/earpiece, mute, autoplay/user gesture, reconnect,
   stream ended, and fallback transport.
-- `[ ] [P0][AND]` Implement native chat WebSocket with reconnect, history merge,
-  dedupe by message ID, typing/unread behaviour, moderation error handling, and
-  offline send policy (never silently queue a live chat message unless product
-  explicitly says so).
+- `[~] [P0][AND]` Native chat now loads REST history, opens a ticket-authenticated
+  ChatRoom socket, deduplicates by message ID, and sends signed-in messages.
+  Reconnect/backoff, typing/unread, moderation error states, and offline policy
+  remain.
 - `[ ] [P1][AND]` Add captions/transcript surface if the chosen media path
   supports it, quality selector/data saver, player stats, and watch analytics
   heartbeat/end on lifecycle-safe hooks.
@@ -759,18 +786,21 @@ interoperability verified.
 
 ### 8.5 Android creator and foreground streaming
 
-- `[ ] [P0][AND]` Implement camera/mic preflight with runtime permissions,
-  rationale, denial/permanent-denial recovery, device selection where supported,
-  front/back camera, torch/orientation, audio focus, and Bluetooth.
-- `[ ] [P0][AND]` Use a foreground service with persistent notification for an
-  active broadcast; handle Android background limits, screen off, app switch,
-  notification action to stop, and process recreation.
-- `[ ] [P0][AND]` Implement capture → WebRTC sender, bitrate/quality presets,
-  adaptive network response, mute/camera toggle, screen share via MediaProjection,
-  and safe teardown of every track/socket/service.
-- `[ ] [P0][AND/API]` Implement atomic create/start/heartbeat/stop, reconnect and
-  ICE restart, host ownership, viewer count/presence, and “you are live” status
-  from the Worker rather than local UI optimism.
+- `[~] [P0][AND]` Runtime camera/mic permission declarations, rationale copy, and
+  denial handling are scaffolded. Device selection, front/back camera, torch,
+  orientation, audio focus, Bluetooth, and permanent-denial settings recovery
+  remain.
+- `[~] [P0][AND]` A foreground service with a persistent notification and stop
+  action exists. It does not yet own a real capture session or survive/recover
+  process recreation with a published stream.
+- `[~] [P0][AND]` Native camera/microphone capture → WebRTC sender, mute/camera
+  toggle, front/rear switch, ICE/SDP handling, and teardown are implemented for
+  the initial path. Bitrate/quality adaptation, screen share via MediaProjection,
+  thermal response, and device validation remain.
+- `[~] [P0][AND/API]` Native create/start/heartbeat/stop and host ticket flows
+  are wired, and the service UI uses server-created stream state. Reconnect/ICE
+  restart, viewer presence reporting, two-tab ownership races, and server-
+  authoritative end-state validation remain.
 - `[ ] [P0][AND]` Display battery, data-use, relay/direct, connection, and
   recording warnings with user controls; pause/stop gracefully on critical
   battery/thermal or permission changes.
@@ -809,15 +839,16 @@ review, failure handling, and a tested rollback. **Depends on:** Phases 2–5.
 - `[ ] [P0][OPS]` Create separate Cloudflare accounts/resources or clearly
   separated environments for local, staging, and production D1, R2, DO, KV,
   Worker routes, custom domains, logs, and secrets.
-- `[ ] [P0][OPS]` Replace the hard-coded health URL in
-  `.github/workflows/deploy-worker.yml` with an environment secret/config and
-  verify the deployed commit/version, not just a generic database response.
+- `[x] [P0][OPS]` Deployment health verification is now driven by the
+  `WORKER_URL` secret/input, checks `/api/health`, and verifies the reported
+  environment/commit when configured. GitHub execution is still pending.
 - `[ ] [P0][OPS]` Provision remote D1/R2/DO/KV, apply migrations with a backup and
   approval, verify bindings, configure custom domain/TLS, and test WebSocket
   upgrade through the real proxy/CDN.
-- `[ ] [P0][OPS/SEC]` Set `JWT_SECRET`, cleanup token, exact origins, app URL,
-  legal versions, limits, feature flags, log level, and release version. Store
-  secrets only in the provider secret manager.
+- `[~] [P0][OPS/SEC]` Production validation rejects wildcard origins,
+  development secrets, insecure APP_URL, and missing required values; exact
+  production secrets, legal versions, provider keys, limits, flags, log level,
+  and release version still require provider-side configuration.
 - `[ ] [P0][OPS]` Add staging smoke script: health/config, signup/login,
   verify/reset test email, create/start/heartbeat/stop, real browser host/viewer,
   chat/moderation, upload/private playback, push test, and cleanup.
@@ -853,25 +884,26 @@ attached evidence and the release owner signs the go/no-go checklist.
 
 ### 10.1 Automated tests
 
-- `[ ] [P0][QA]` Unit-test validation, mappers, error classification, auth/token
-  helpers, pagination, retry/backoff, date/time/currency, permissions, media
-  state machine, and Android reducers/use cases.
-- `[ ] [P0][QA/API]` Expand API contract tests for every route’s positive,
-  unauthenticated, wrong-owner, banned, malformed, rate-limited, duplicate,
-  expired, and provider-disabled states.
-- `[ ] [P0][QA/API]` Test D1 migration from empty database and from representative
-  legacy data; check indexes and foreign-key/delete behaviour.
+- `[~] [P0][QA]` TypeScript/Worker typechecks, mapper/auth helpers, API error
+  handling, media limits, and a Kotlin contract test exist. Expand unit coverage
+  for retry/backoff, pagination, permissions, media state, and Android use cases.
+- `[~] [P0][QA/API]` The local API suite covers 100+ positive/negative/privacy
+  journeys, including malformed/auth/owner/token/media cases. Continue expanding
+  every route's banned, rate-limited, duplicate, expired, and provider-disabled
+  states.
+- `[x] [P0][QA/API]` Fresh local D1 migration from empty state passes through
+  `0005`; representative legacy-data/index/restore testing remains.
 - `[ ] [P0][QA/WEB]` Add Playwright/Cypress-style browser E2E for auth, browse,
   watch, real chat, follow, report, creator go-live, end, recording, schedule,
   dashboard, settings, and admin permission boundaries.
 - `[ ] [P0][QA/WEB/AND]` Add real WebRTC tests with two browser/device clients,
   real media tracks, ICE candidates, connection recovery, stream end, and TURN.
-- `[ ] [P0][QA]` Add WebSocket tests for ticket/auth, role, frame validation,
-  reconnect, dedupe, presence, host replacement, fan-out limits, moderation, and
-  cleanup after abnormal disconnect.
-- `[ ] [P0][QA/SEC]` Add automated dependency, secret, SAST, DAST/API abuse,
-  SSRF, IDOR, XSS/HTML rendering, CSRF/cors, upload, and privacy regression
-  checks. Never put production secrets in test fixtures.
+- `[~] [P0][QA]` Local WebSocket tests cover ticket/auth, role, frame validation,
+  host disconnect, capacity, and fake-SDP relay. Reconnect, dedupe, presence,
+  moderation, and full abnormal-disconnect coverage remain.
+- `[~] [P0][QA/SEC]` Exact-origin/security-header, media privacy, ticket replay,
+  traversal, and auth negative checks exist. Add dependency, secret, SAST, DAST/
+  API abuse, SSRF, XSS/HTML, upload, and deployed-proxy privacy scans.
 - `[ ] [P1][QA]` Add visual regression for public home, browse, watch/player,
   creator studio, chat, profile, dashboard, auth, and Android screenshots if
   the chosen test stack supports them.
@@ -1010,16 +1042,19 @@ linked to evidence:
 
 - `[ ]` Product promise, audience, privacy mode, P2P ceiling, fallback, and
   OBS/ingest scope are documented.
-- `[ ]` Web typecheck, lint, build, accessibility, browser E2E, and bundle
-  budgets pass.
+- `[~]` Web typecheck, lint, build, and local migration/API/realtime checks pass;
+  accessibility, browser E2E, real WebRTC, and production bundle budgets remain.
 - `[ ]` Android unit/instrumentation/UI tests, signed AAB, device matrix, store
   disclosures, and staged rollout are ready.
-- `[ ]` Worker typecheck, migration checks, 96+ REST contract journeys, realtime
-  tests, real WebRTC tests, and negative authorization tests pass.
-- `[ ]` Viewer signalling uses viewer role; host liveness heartbeat and abnormal
-  disconnect cleanup are proven.
-- `[ ]` Private recording/avatar/media access is tested with an unprivileged
-  account and a guessed/expired URL.
+- `[~]` Worker typecheck, migration checks, 100+ REST contract journeys,
+  realtime ticket/capacity tests, and negative authorization tests pass; real
+  WebRTC and remote-environment tests remain.
+- `[x]` Viewer signalling uses the authenticated viewer role; host liveness
+  heartbeat, stop cleanup, ticket replay rejection, and stale cleanup paths are
+  implemented. Abnormal browser/device disconnect evidence remains.
+- `[x]` Private recording/avatar/media access is tested with an unprivileged
+  account, invalid token, traversal, owner playback, and deletion cases; repeat
+  at the deployed proxy with expiring URLs.
 - `[ ]` Auth recovery, session revocation, deletion/export, provider-disabled
   states, rate limits, and audit logging pass.
 - `[ ]` Email, TURN/SFU/ingest, push, analytics, error tracking, and payments
@@ -1031,7 +1066,10 @@ linked to evidence:
 - `[ ]` Go/no-go owner, on-call owner, rollback command, feature kill switches,
   and post-release review date are recorded.
 
-**Next execution order:** close the seven blockers in §2.3, then complete the
-Phase 0 decisions and Phase 1 CI/security gate before adding more feature
-surface. The Android build should start only after the API/media/session
-contracts are stable enough to be shared.
+**Next execution order:** (1) run the committed CI and production validation
+on GitHub with real staging values, (2) finish browser E2E and real WebRTC/ICE/
+TURN evidence, (3) complete Android renderer/audio and native creator capture,
+then device-test the shared contract, (4) choose and integrate the above-ceiling
+SFU/fallback or keep public discovery capped, and (5) close provider, legal,
+backup/restore, accessibility, load, support, and staged-rollout gates. Do not
+claim a public launch until the remaining `[!]`/`[~]` items have evidence.

@@ -121,7 +121,7 @@ export interface StreamError {
   timestamp: Date;
   code: string;
   message: string;
-  details?: any;
+  details?: unknown;
 }
 
 export interface StreamSettings {
@@ -181,7 +181,7 @@ export interface ChatMessage {
   timestamp: Date;
   isModerated?: boolean;
   type: 'text' | 'emote' | 'donation' | 'system';
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }
 
 /* ------------------------------- notifications ------------------------------- */
@@ -340,6 +340,7 @@ export interface PlatformConfig {
     chatHistoryPageSize: number;
     maxStreamsPerUser: number;
     maxScheduledPerUser: number;
+    maxP2pViewers: number;
     defaultTipPresets: number[];
   };
   features: {

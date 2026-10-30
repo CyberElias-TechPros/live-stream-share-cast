@@ -91,7 +91,8 @@ class AmbientAudio {
 
   private async start() {
     if (!this.ctx) {
-      const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+      const audioWindow = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+      const Ctor = audioWindow.AudioContext ?? audioWindow.webkitAudioContext;
       if (!Ctor) return;
       this.ctx = new Ctor();
       this.buildGraph();

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 import {
   Form,
   FormControl,
@@ -25,9 +26,13 @@ import { useStream } from "@/contexts/StreamContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Stream } from "@/types";
 import { liveStreamService } from "@/services/liveStreamService";
+import { streamService } from "@/services/streamService";
 import { LanStreamer } from "@/lib/lanStream";
+import { platformService } from "@/services/platformService";
 import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
+
+const MAX_BROWSER_CLOUD_RECORDING_BYTES = 500 * 1024 * 1024;
 
 const streamFormSchema = z.object({
   title: z
@@ -53,6 +58,7 @@ interface StreamCreatorProps {
 const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const [videoEnabled, setVideoEnabled] = useState(true);
   const [audioEnabled, setAudioEnabled] = useState(true);
+  const [recordToCloud, setRecordToCloud] = useState(false);
   const [streamKey, setStreamKey] = useState<string | null>(null);
   const [revealKey, setRevealKey] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -65,6 +71,9 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const isStreamingRef = useRef(false);
+  const cloudRecorderRef = useRef<MediaRecorder | null>(null);
+  const cloudChunksRef = useRef<Blob[]>([]);
   const { toast } = useToast();
   const { user, isAuthenticated } = useAuth();
   const navigate = useNavigate();
@@ -89,6 +98,13 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const [p2pActive, setP2pActive] = useState(false);
   const [liveSince, setLiveSince] = useState<number | null>(null);
   const [capture, setCapture] = useState<string | null>(null);
+  const [maxP2pViewers, setMaxP2pViewers] = useState(8);
+
+  useEffect(() => {
+    void platformService.getConfig().then((config) => {
+      if (config?.limits.maxP2pViewers) setMaxP2pViewers(config.limits.maxP2pViewers);
+    });
+  }, []);
 
   /* Uptime, from the true air time — never a frozen 00:00:00. */
   const uptime = (() => {
@@ -135,8 +151,12 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     }
     
     return () => {
-      if (streamRef.current && step !== 3) { // Don't stop stream when we're live
+      // The cleanup for the configure render runs when step changes to live;
+      // use the ref so that transition does not accidentally kill the tracks
+      // that WebRTC and cloud recording are already using.
+      if (streamRef.current && !isStreamingRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
       }
     };
   }, [videoEnabled, audioEnabled, step, toast]);
@@ -206,7 +226,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     if (!currentStream) return;
     const media = streamRef.current;
     if (!media || lanStreamerRef.current) return;
-    const streamer = new LanStreamer(currentStream.id, media, streamTypeRef.current);
+    const streamer = new LanStreamer(currentStream.id, media, streamTypeRef.current, maxP2pViewers);
     streamer.onViewerCount = (n) => {
       setLanViewerCount(n);
       if (n > 0) {
@@ -226,7 +246,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     lanStreamerRef.current = streamer;
     setP2pActive(true);
     setLiveSince(Date.now());
-  }, [currentStream, toast]);
+  }, [currentStream, maxP2pViewers, toast]);
 
   const stopLan = useCallback(() => {
     lanStreamerRef.current?.stop();
@@ -235,6 +255,75 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
     setP2pActive(false);
     setLiveSince(null);
   }, []);
+
+  const startCloudRecording = useCallback(() => {
+    const media = streamRef.current;
+    if (!recordToCloud || !currentStream || !media || typeof MediaRecorder === "undefined") return;
+
+    const mimeType = [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm",
+    ].find((candidate) => MediaRecorder.isTypeSupported(candidate));
+    if (!mimeType) {
+      toast({ title: "Cloud recording is not supported", description: "Use a browser with WebM MediaRecorder support.", variant: "destructive" });
+      return;
+    }
+
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(media, { mimeType });
+    } catch {
+      toast({ title: "Cloud recording could not start", description: "The browser rejected this media format. You can still stream without a replay.", variant: "destructive" });
+      return;
+    }
+    cloudChunksRef.current = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) cloudChunksRef.current.push(event.data);
+    };
+    recorder.onerror = () => {
+      toast({ title: "Recording interrupted", description: "The broadcast is still live, but this replay may be incomplete.", variant: "destructive" });
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(cloudChunksRef.current, { type: mimeType });
+      cloudChunksRef.current = [];
+      cloudRecorderRef.current = null;
+      if (!blob.size || !currentStream) return;
+      if (blob.size > MAX_BROWSER_CLOUD_RECORDING_BYTES) {
+        toast({
+          title: "Replay is too large to upload",
+          description: "This browser keeps the replay in memory. End shorter broadcasts or use a server-assisted recorder.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      void liveStreamService.saveRecording(
+        currentStream.id,
+        blob,
+        `${currentStream.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase() || "broadcast"}.webm`,
+      ).then((result) => {
+        toast({
+          title: result ? "Replay saved" : "Replay upload failed",
+          description: result ? "Your replay is now in the library." : "Keep the local recording and retry from the library when online.",
+          variant: result ? "default" : "destructive",
+        });
+      });
+    };
+    try {
+      recorder.start(1000);
+      cloudRecorderRef.current = recorder;
+    } catch {
+      toast({ title: "Cloud recording could not start", description: "The browser could not capture this stream.", variant: "destructive" });
+    }
+  }, [currentStream, recordToCloud, toast]);
+
+  const stopCloudRecording = useCallback(() => {
+    const recorder = cloudRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+  }, []);
+
+  useEffect(() => () => stopCloudRecording(), [stopCloudRecording]);
 
   // Keep the server's live state aligned with the real creator lifecycle. The
   // cleanup cron is intentionally a last-resort safety net, not the normal
@@ -332,15 +421,21 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
   const startStreamMutation = useMutation({
     mutationFn: async () => {
       if (!currentStream) throw new Error("No stream created");
-      const started = await liveStreamService.startStream(currentStream.id);
+      const support = streamService.checkBrowserSupport();
+      const requiredFeatures = ['secureContext', 'webRTC', 'getUserMedia', 'webSockets', ...(recordToCloud ? ['mediaRecorder'] : [])];
+      const missing = requiredFeatures.filter((feature) => !support.features[feature]).join(', ');
+      if (missing) throw new Error(`This browser cannot broadcast here. Missing: ${missing}.`);
+      const started = await liveStreamService.startStream(currentStream.id, recordToCloud);
       if (!started) throw new Error("The server could not start this broadcast");
       return started;
     },
     onSuccess: () => {
+      isStreamingRef.current = true;
       setIsStreaming(true);
       setStep(3); // Move to live step
 
       startLan();
+      startCloudRecording();
 
       if (ambientAudio.enabled) ambientAudio.blip("success");
 
@@ -369,6 +464,8 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
       return stopped;
     },
     onSuccess: () => {
+      stopCloudRecording();
+      isStreamingRef.current = false;
       setIsStreaming(false);
       stopLan();
       
@@ -536,6 +633,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
         streamUrl={stageStreamUrl}
         isLan={isLan}
         viewerTotal={p2pActive ? lanViewerCount : currentStream?.viewerCount}
+        p2pLimit={maxP2pViewers}
       />
     );
   }
@@ -1016,6 +1114,25 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
                       </button>
                     </div>
                   </div>
+
+                  <div className="rounded-xl border border-amber-300/20 bg-amber-300/5 p-3 text-xs text-muted-foreground">
+                    Peer-to-peer delivery supports up to <strong className="text-foreground">{maxP2pViewers} viewers</strong> per broadcast.
+                    Use a server-assisted delivery path before sharing with a larger audience.
+                  </div>
+
+                  <div className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <div className="space-y-0.5">
+                      <label htmlFor="record-to-cloud" className="text-sm font-medium">Save replay to cloud</label>
+                      <p className="text-xs text-muted-foreground">Uploads a replay after you end the broadcast.</p>
+                    </div>
+                    <Switch
+                      id="record-to-cloud"
+                      checked={recordToCloud}
+                      onCheckedChange={setRecordToCloud}
+                      disabled={isStreaming}
+                      aria-label="Save replay to cloud"
+                    />
+                  </div>
                 </div>
               </TabsContent>
             </Tabs>
@@ -1071,6 +1188,7 @@ interface StageViewProps {
   streamUrl: string;
   isLan: boolean;
   viewerTotal?: number;
+  p2pLimit: number;
 }
 
 function formatClock(ms: number): string {
@@ -1143,6 +1261,7 @@ function StageView({
   streamUrl,
   isLan,
   viewerTotal,
+  p2pLimit,
 }: StageViewProps) {
   const startedAt = currentStream?.startedAt
     ? new Date(currentStream.startedAt).getTime()
@@ -1265,6 +1384,9 @@ function StageView({
                           LAN
                         </span>
                       )}
+                      <span className="ml-1 text-white/50" title="Configured peer-to-peer audience ceiling">
+                        / {p2pLimit} max
+                      </span>
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 rounded-md bg-black/55 px-2.5 py-1 font-mono text-[11px] tracking-wider text-white/80 backdrop-blur-md">

@@ -24,6 +24,7 @@ import { parseJson } from '../lib/serialize';
 import { nowIso } from '../lib/time';
 import { uuid } from '../lib/ids';
 import { startWatchSession } from '../lib/analytics';
+import { createMediaToken } from '../lib/mediaToken';
 
 export const recordingRoutes = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -73,7 +74,9 @@ export function recordingDto(row: RecordingRow, viewerId?: string | null) {
     id: row.id,
     title: row.title,
     description: row.description,
-    url: row.status === 'ready' ? row.url : null,
+    // Private and unlisted objects require the short-lived playback endpoint;
+    // never expose a reusable byte-serving URL in a library response.
+    url: row.status === 'ready' && row.visibility === 'public' ? row.url : null,
     thumbnail: row.thumbnail_url,
     durationSeconds: row.duration_seconds,
     sizeBytes: row.size_bytes,
@@ -171,6 +174,31 @@ recordingRoutes.get('/mine', authGuard, async (c) => {
     .all<RecordingRow>();
 
   return c.json({ recordings: (results ?? []).map((row) => recordingDto(row, auth.id)) });
+});
+
+recordingRoutes.get('/:id/playback-url', optionalAuth, async (c) => {
+  const viewerId = c.get('authUser')?.id ?? null;
+  const row = await c.env.DB.prepare(`SELECT ${RECORDING_SELECT} ${RECORDING_FROM} WHERE r.id = ?`)
+    .bind(c.req.param('id'))
+    .first<RecordingRow>();
+  if (!row || row.status !== 'ready') throw notFound('Recording not found');
+
+  const isOwner = viewerId === row.user_id;
+  const isAdmin = !!c.get('authUser')?.isAdmin;
+  if (!isOwner && !isAdmin && row.visibility !== 'public') {
+    throw forbidden('This recording is not public');
+  }
+
+  if (row.retention_expires_at && new Date(row.retention_expires_at).getTime() <= Date.now()) {
+    throw notFound('Recording has expired');
+  }
+
+  const expiresAt = new Date(Date.now() + limitsConfig(c.env).signedUrlTtl * 1000).toISOString();
+  const url = row.visibility === 'public'
+    ? row.url
+    : `${row.url}?token=${encodeURIComponent(await createMediaToken(c.env, row.r2_key, viewerId ?? 'admin', limitsConfig(c.env).signedUrlTtl))}`;
+
+  return c.json({ url, expiresAt, visibility: row.visibility });
 });
 
 recordingRoutes.get('/:id', optionalAuth, async (c) => {

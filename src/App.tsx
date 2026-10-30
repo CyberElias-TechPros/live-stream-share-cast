@@ -1,33 +1,36 @@
 
+import { lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
+import { useEffect } from "react";
+import { ApiRequestError } from "@/integrations/api/client";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { StreamProvider } from "@/contexts/StreamContext";
 import { usePageTracking } from "@/hooks/useAnalytics";
 import { SoundCues } from "@/components/SoundToggle";
 import ErrorBoundary from "@/components/ErrorBoundary";
-import Index from "./pages/Index";
-import CreateStream from "./pages/CreateStream";
-import WatchStream from "./pages/WatchStream";
-import Browse from "./pages/Browse";
-import Login from "./pages/Login";
-import Signup from "./pages/Signup";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import Profile from "./pages/Profile"; 
-import Dashboard from "./pages/Dashboard";
-import Notifications from "./pages/Notifications";
-import Library from "./pages/Library";
-import Schedule from "./pages/Schedule";
-import Moderation from "./pages/Moderation";
-import Admin from "./pages/Admin";
-import VerifyEmail from "./pages/VerifyEmail";
-import Legal from "./pages/Legal";
-import Settings from "./pages/Settings";
-import NotFound from "./pages/NotFound";
+const Index = lazy(() => import("./pages/Index"));
+const CreateStream = lazy(() => import("./pages/CreateStream"));
+const WatchStream = lazy(() => import("./pages/WatchStream"));
+const Browse = lazy(() => import("./pages/Browse"));
+const Login = lazy(() => import("./pages/Login"));
+const Signup = lazy(() => import("./pages/Signup"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const Profile = lazy(() => import("./pages/Profile"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Notifications = lazy(() => import("./pages/Notifications"));
+const Library = lazy(() => import("./pages/Library"));
+const Schedule = lazy(() => import("./pages/Schedule"));
+const Moderation = lazy(() => import("./pages/Moderation"));
+const Admin = lazy(() => import("./pages/Admin"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
+const Legal = lazy(() => import("./pages/Legal"));
+const Settings = lazy(() => import("./pages/Settings"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 import ProtectedRoute from "./components/ProtectedRoute";
 
 const queryClient = new QueryClient({
@@ -36,7 +39,7 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       retry: (failureCount, error) => {
         // Don't retry on 4xx errors
-        if ((error as any)?.status >= 400 && (error as any)?.status < 500) {
+        if (error instanceof ApiRequestError && error.status >= 400 && error.status < 500) {
           return false;
         }
         return failureCount < 2;
@@ -60,11 +63,62 @@ const AnalyticsTracker = () => {
   return null;
 };
 
+const RouteFallback = () => (
+  <div className="flex min-h-[40vh] items-center justify-center px-6 text-sm text-muted-foreground" role="status" aria-live="polite">
+    Loading page…
+  </div>
+);
+
+/** Keeps shared links canonical even when static hosting serves a deep route. */
+const DocumentMeta = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    const path = location.pathname;
+    const isWatch = path.startsWith('/watch/');
+    const isProfile = path.startsWith('/profile/');
+    const isLibrary = path.startsWith('/library');
+    const title = isWatch
+      ? "Watch live — I'm Live"
+      : isProfile
+        ? "Creator profile — I'm Live"
+        : isLibrary
+          ? "Library — I'm Live"
+          : "I'm Live — Go live in a click. Watch in real time.";
+    const description = isWatch
+      ? 'Join a live broadcast on I\'m Live.'
+      : "Turn your camera into a broadcast. Share one link, and anyone can tune in instantly.";
+    document.title = title;
+    const setMeta = (name: string, content: string) => {
+      const element = document.querySelector<HTMLMetaElement>(`meta[name="${name}"]`);
+      if (element) element.content = content;
+    };
+    setMeta('description', description);
+    const canonicalUrl = new URL(path || '/', window.location.origin).toString();
+    let canonical = document.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.rel = 'canonical';
+      document.head.appendChild(canonical);
+    }
+    canonical.href = canonicalUrl;
+    const ogTitle = document.querySelector<HTMLMetaElement>('meta[property="og:title"]');
+    if (ogTitle) ogTitle.content = title;
+    const ogDescription = document.querySelector<HTMLMetaElement>('meta[property="og:description"]');
+    if (ogDescription) ogDescription.content = description;
+  }, [location.pathname]);
+
+  return null;
+};
+
 const AppContent = () => (
+  <>
+    <DocumentMeta />
   <ErrorBoundary>
     <AnalyticsTracker />
     <SoundCues />
-    <Routes>
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
       <Route path="/" element={<Index />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
@@ -122,8 +176,10 @@ const AppContent = () => (
       
       {/* 404 route */}
       <Route path="*" element={<NotFound />} />
-    </Routes>
+      </Routes>
+    </Suspense>
   </ErrorBoundary>
+  </>
 );
 
 const App = () => (

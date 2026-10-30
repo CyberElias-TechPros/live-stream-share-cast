@@ -68,6 +68,11 @@ export class SignalRoom extends DurableObject<Env> {
       return new Response('Expected WebSocket upgrade', { status: 426 });
     }
 
+    const parsedMaxViewers = Number(url.searchParams.get('maxViewers') ?? 8);
+    const maxViewers = Number.isFinite(parsedMaxViewers) ? Math.max(1, Math.min(Math.floor(parsedMaxViewers), 100)) : 8;
+    const sockets = this.ctx.getWebSockets();
+    const viewerCount = sockets.filter((ws) => ((ws.deserializeAttachment() ?? {}) as Attachment).role === 'viewer').length;
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
 
@@ -76,6 +81,21 @@ export class SignalRoom extends DurableObject<Env> {
       role,
       userId: url.searchParams.get('userId') || 'anonymous',
     };
+
+    if (role === 'viewer' && viewerCount >= maxViewers) {
+      // Accept long enough to deliver a structured product error instead of
+      // making the browser spin through reconnect attempts forever.
+      this.ctx.acceptWebSocket(server);
+      server.serializeAttachment(attachment);
+      this.send(server, {
+        type: 'error',
+        code: 'p2p_capacity',
+        error: `This broadcast has reached its ${maxViewers}-viewer peer-to-peer limit`,
+        maxViewers,
+      });
+      server.close(1013, 'P2P audience capacity reached');
+      return new Response(null, { status: 101, webSocket: client });
+    }
 
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(attachment);
@@ -100,7 +120,7 @@ export class SignalRoom extends DurableObject<Env> {
       return this.send(ws, { type: 'error', error: 'Signalling frame too large' });
     }
 
-    let frame: Record<string, any>;
+    let frame: Record<string, unknown>;
     try {
       frame = JSON.parse(raw);
     } catch {

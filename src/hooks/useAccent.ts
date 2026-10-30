@@ -65,17 +65,17 @@ export function bootAccent() {
 export function useAccent() {
   const [accent, setAccentState] = useState<AccentId>(getAccent);
 
+  // applyAccent dispatches the event; the listener below syncs state.
+  const setAccent = useCallback((id: AccentId) => {
+    applyAccent(id);
+  }, []);
+
   useEffect(() => {
     const onChange = (e: Event) => {
-      setAccent((e as CustomEvent<AccentId>).detail);
+      setAccentState((e as CustomEvent<AccentId>).detail);
     };
     window.addEventListener(EVENT, onChange);
     return () => window.removeEventListener(EVENT, onChange);
-  }, []);
-
-  // applyAccent dispatches the event; the listener above syncs state.
-  const setAccent = useCallback((id: AccentId) => {
-    applyAccent(id);
   }, []);
 
   return [accent, setAccent] as const;

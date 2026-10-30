@@ -52,6 +52,15 @@ export const recordingService = {
     }
   },
 
+  async playbackUrl(id: string): Promise<{ url: string; expiresAt: string } | null> {
+    try {
+      return await api.get<{ url: string; expiresAt: string }>(`/recordings/${id}/playback-url`);
+    } catch (error) {
+      console.error('Error creating playback URL:', error);
+      return null;
+    }
+  },
+
   async update(
     id: string,
     updates: { title?: string; description?: string; visibility?: 'public' | 'unlisted' | 'private'; tags?: string[]; category?: string; isMature?: boolean },

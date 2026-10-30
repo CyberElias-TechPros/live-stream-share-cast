@@ -35,6 +35,20 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env; Variables: AppV
   headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   headers.set('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(self)');
   headers.set('Cross-Origin-Resource-Policy', 'cross-origin'); // media is fetched cross-origin by design
+  headers.set('Content-Security-Policy', [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "connect-src 'self' https: wss:",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "font-src 'self' data: https:",
+    "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://js.hcaptcha.com",
+    "frame-src 'self' https://challenges.cloudflare.com https://*.hcaptcha.com",
+    "worker-src 'self' blob:",
+  ].join('; '));
   headers.set('X-Robots-Tag', 'noindex'); // API responses are never indexed
 
   if (new URL(c.req.url).protocol === 'https:') {

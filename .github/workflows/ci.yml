@@ -1,0 +1,79 @@
+name: Verify web and Worker
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'arena/**']
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  worker:
+    name: Worker quality gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run db:migrate:local
+
+  api:
+    name: API and realtime smoke
+    needs: worker
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm ci
+      - run: npm run db:migrate:local
+      - name: Start local Worker
+        run: |
+          npm run dev > "$RUNNER_TEMP/worker.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/worker.pid"
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8787/api/health > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/worker.log"
+          exit 1
+      - run: npm run test:api
+      - run: npm run test:realtime
+      - if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/worker.pid" ]; then kill "$(cat "$RUNNER_TEMP/worker.pid")" || true; fi
+          cat "$RUNNER_TEMP/worker.log" || true
