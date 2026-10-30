@@ -668,7 +668,7 @@ private fun BroadcastScreen(repository: LiveRepository, initialLanOnly: Boolean 
         }
     }
 
-    val start = {
+    val start: () -> Unit = {
         if (!permissionsGranted) {
             permissions.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS))
         } else {
@@ -759,6 +759,7 @@ private fun BroadcastScreen(repository: LiveRepository, initialLanOnly: Boolean 
                     onFailure = { error = it.message ?: "Could not create the live room" },
                 )
             }
+            Unit
         }
     }
 
