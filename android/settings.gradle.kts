@@ -13,6 +13,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // The legacy org.webrtc AAR is published from this official WebRTC Maven repo.
+        maven { url = uri("https://webrtc.github.io/maven") }
     }
 }
 
