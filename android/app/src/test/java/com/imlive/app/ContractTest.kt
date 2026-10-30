@@ -1,17 +1,18 @@
 package com.imlive.app
 
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ContractTest {
     @Test
     fun signallingErrorKeepsStableMachineCode() {
-        val frame = JSONObject()
-            .put("type", "error")
-            .put("code", "p2p_capacity")
-            .put("maxViewers", 8)
-        assertEquals("p2p_capacity", frame.getString("code"))
-        assertEquals(8, frame.getInt("maxViewers"))
+        // Keep this JVM test independent of Android's unmocked org.json stubs.
+        val frame = mapOf<String, Any>(
+            "type" to "error",
+            "code" to "p2p_capacity",
+            "maxViewers" to 8,
+        )
+        assertEquals("p2p_capacity", frame["code"])
+        assertEquals(8, frame["maxViewers"])
     }
 }
