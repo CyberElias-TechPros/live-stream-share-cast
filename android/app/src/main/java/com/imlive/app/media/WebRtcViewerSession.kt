@@ -59,9 +59,11 @@ class WebRtcViewerSession(
         override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) = Unit
         override fun onAddStream(stream: org.webrtc.MediaStream) = Unit
         override fun onRemoveStream(stream: org.webrtc.MediaStream) = Unit
+        override fun onAddTrack(receiver: org.webrtc.RtpReceiver?, mediaStreams: Array<out org.webrtc.MediaStream>?) = Unit
         override fun onDataChannel(channel: org.webrtc.DataChannel) = Unit
         override fun onRenegotiationNeeded() = Unit
-        override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) = Unit
+        override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
+        override fun onSelectedCandidatePairChanged(event: org.webrtc.CandidatePairChangeEvent) = Unit
     }
 
     init {
@@ -69,7 +71,9 @@ class WebRtcViewerSession(
             PeerConnectionFactory.InitializationOptions.builder(context.applicationContext).createInitializationOptions(),
         )
         factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
-        val configuration = PeerConnection.RTCConfiguration(iceServers)
+        val configuration = PeerConnection.RTCConfiguration(iceServers).apply {
+            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+        }
         connection = requireNotNull(factory.createPeerConnection(configuration, observer))
         connection.addTransceiver(
             org.webrtc.MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,

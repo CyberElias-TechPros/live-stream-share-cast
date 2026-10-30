@@ -63,10 +63,14 @@ The Android app now has a genuine local-only Android-to-Android path:
 
 Both devices must be on the same non-isolated Wi-Fi/LAN. Guest Wi-Fi, AP/client
 isolation, VPN routing, and different subnets can prevent the direct connection.
-This offline mode intentionally does not provide cloud chat, follows, stream
-history, analytics, or public discovery. It is an Android-to-Android LAN path;
-Android↔web interoperability still needs a local WebSocket bridge or manual
-browser signalling and physical-device verification.
+The local protocol is newline-delimited JSON with a 64 KiB frame limit: the
+viewer sends `hello-viewer` with the room code, the host sends `welcome` and
+`streamer-ready`, and the peers exchange `offer`, `answer`, and `ice` frames;
+`close`/`peer-left` tear down a viewer. The host accepts at most eight local
+viewers. This offline mode intentionally does not provide cloud chat, follows,
+stream history, analytics, or public discovery. It is an Android-to-Android LAN
+path; Android↔web interoperability still needs a local WebSocket bridge or
+manual browser signalling and physical-device verification.
 
 Remaining release-gate work is deliberately visible rather than hidden: build
 and compile in an Android/JDK environment, typing/unread chat UI, native in-app

@@ -445,6 +445,11 @@ export default function StreamPlayer({
                         <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.25em] text-white/35">
                           Peer-to-peer · media stays on this LAN
                         </p>
+                        {transportMode === "local" && (
+                          <p className="mt-2 max-w-xs text-[11px] text-amber-100/60">
+                            Browser local mode still uses the Worker for signalling and stream discovery; Android LAN mode is the fully offline option.
+                          </p>
+                        )}
                       </>
                     ) : lanState === "connecting" ? (
                       <>

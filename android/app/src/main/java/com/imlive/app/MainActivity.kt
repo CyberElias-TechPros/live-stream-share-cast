@@ -703,6 +703,7 @@ private fun BroadcastScreen(repository: LiveRepository, initialLanOnly: Boolean 
                         status = "LAN-only broadcast ready"
                     } catch (failure: Exception) {
                         localServer?.stop()
+                        localSession?.close()
                         localSession = null
                         session = null
                         lanSignal = null

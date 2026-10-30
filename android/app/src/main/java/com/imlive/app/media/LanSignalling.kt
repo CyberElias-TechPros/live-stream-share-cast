@@ -114,10 +114,11 @@ class LanSignalServer(
 
     private fun handlePeer(socket: Socket) {
         socket.use { client ->
-            client.soTimeout = 0
+            client.soTimeout = 10_000
             val reader = BufferedReader(InputStreamReader(client.getInputStream(), Charsets.UTF_8))
             val writer = BufferedWriter(OutputStreamWriter(client.getOutputStream(), Charsets.UTF_8))
             val hello = readFrame(reader) ?: return
+            client.soTimeout = 0
             if (hello.optString("type") != "hello-viewer" || hello.optString("roomCode") != roomCode) {
                 sendRaw(writer, JSONObject().put("type", "error").put("code", "lan_room_rejected").put("error", "Invalid LAN room code"))
                 return
@@ -169,12 +170,6 @@ class LanSignalServer(
                 onStatus("LAN viewer disconnected")
             }
         }
-    }
-
-    private fun readFrame(reader: BufferedReader): JSONObject? {
-        val line = reader.readLine() ?: return null
-        if (line.toByteArray(Charsets.UTF_8).size > MAX_LAN_FRAME_BYTES) return null
-        return runCatching { JSONObject(line) }.getOrNull()
     }
 
     private fun localIpv4Address(): String? {
@@ -242,10 +237,8 @@ class LanSignalClient(
                 )
                 val reader = BufferedReader(InputStreamReader(client.getInputStream(), Charsets.UTF_8))
                 while (!stopped) {
-                    val line = reader.readLine() ?: break
-                    if (line.toByteArray(Charsets.UTF_8).size > MAX_LAN_FRAME_BYTES) throw IllegalStateException("LAN signalling frame is too large")
-                    runCatching { onFrame(JSONObject(line)) }
-                        .onFailure { onError("LAN signalling returned an invalid frame") }
+                    val frame = readFrame(reader) ?: break
+                    onFrame(frame)
                 }
                 if (!stopped) onError("The LAN broadcaster disconnected")
             } catch (error: Exception) {
@@ -279,6 +272,26 @@ class LanSignalClient(
         writer = null
         scope.cancel()
     }
+}
+
+private fun readFrame(reader: BufferedReader): JSONObject? {
+    val line = StringBuilder()
+    var terminatedByNewline = false
+    while (true) {
+        val next = reader.read()
+        if (next == -1) break
+        if (next == '\n'.code) {
+            terminatedByNewline = true
+            break
+        }
+        if (next != '\r'.code) {
+            if (line.length >= MAX_LAN_FRAME_BYTES) return null
+            line.append(next.toChar())
+        }
+    }
+    if (!terminatedByNewline) return null
+    if (line.toString().toByteArray(Charsets.UTF_8).size > MAX_LAN_FRAME_BYTES) return null
+    return runCatching { JSONObject(line.toString()) }.getOrNull()
 }
 
 private fun isPrivateLanAddress(address: String): Boolean {

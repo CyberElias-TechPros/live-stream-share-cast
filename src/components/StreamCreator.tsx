@@ -1089,7 +1089,7 @@ const StreamCreator = ({ resumeStreamId }: StreamCreatorProps = {}) => {
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
                       <label className="text-sm font-medium">Network</label>
-                      <p className="text-xs text-muted-foreground">Stay on the local network, or allow relay for remote viewers</p>
+                      <p className="text-xs text-muted-foreground">Browser LAN keeps media on this network but still needs Worker signalling; Android LAN mode can run fully offline</p>
                     </div>
                     <div className="flex rounded-full border border-white/10 bg-white/[0.04] p-1">
                       <button
