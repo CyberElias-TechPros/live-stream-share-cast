@@ -11,6 +11,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.net.URLEncoder
 import java.util.Collections
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -21,19 +22,23 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-/** Connection details that can be shared manually with another device on the LAN. */
+/** Connection details that can be shared manually, via deep link, or mDNS discovery on the LAN. */
 data class LanRoomInfo(
     val hostAddress: String,
     val port: Int,
     val roomCode: String,
     val title: String = "LAN broadcast",
-)
+) {
+    fun toDeepLinkUri(): String =
+        "imlive://lan?host=${URLEncoder.encode(hostAddress, "UTF-8")}&port=$port&code=${URLEncoder.encode(roomCode, "UTF-8")}&title=${URLEncoder.encode(title, "UTF-8")}"
+}
 
 /** Stable machine-readable values shared by the Android local UI and tests. */
 object LanSignallingContract {
     const val ERROR_TYPE = "error"
     const val P2P_CAPACITY = "p2p_capacity"
     const val MAX_VIEWERS = 8
+    const val LAN_CHAT_TYPE = "lan-chat"
 }
 
 private const val MAX_LAN_FRAME_BYTES = 64 * 1024
@@ -44,22 +49,23 @@ private const val LAN_HOST_PEER_ID = "lan-host"
 private val PEER_ID_PATTERN = Regex("^[A-Za-z0-9._:-]{1,$MAX_PEER_ID_LENGTH}$")
 
 /**
- * Minimal local signalling transport for Android-to-Android LAN broadcasts.
+ * Local signalling & LAN-chat transport for Android-to-Android LAN broadcasts.
  *
- * This is deliberately a newline-delimited JSON protocol rather than a second
- * WebRTC implementation. The existing WebRtcBroadcasterSession and
- * WebRtcViewerSession continue to own SDP/ICE; this class only moves those
- * bounded signalling frames over a TCP socket on the same WLAN.
+ * Moves bounded newline-delimited JSON SDP/ICE and local chat frames over a
+ * direct TCP socket on the same WLAN without any internet, STUN, TURN, or Worker.
  */
 class LanSignalServer(
     private val roomCode: String,
     private val onFrame: (JSONObject) -> Unit,
     private val onStatus: (String) -> Unit = {},
+    private val bindAddressOverride: String? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val peers = ConcurrentHashMap<String, LanPeer>()
     private var serverSocket: ServerSocket? = null
     @Volatile private var stopped = false
+
+    val connectedViewerCount: Int get() = peers.size
 
     fun start(title: String = "LAN broadcast"): LanRoomInfo {
         require(roomCode.length in 4..MAX_ROOM_CODE_LENGTH) { "Invalid LAN room code" }
@@ -67,13 +73,14 @@ class LanSignalServer(
 
         val socket = ServerSocket()
         socket.reuseAddress = true
-        socket.bind(InetSocketAddress("0.0.0.0", 0))
+        socket.bind(InetSocketAddress(bindAddressOverride ?: "0.0.0.0", 0))
         serverSocket = socket
         stopped = false
         scope.launch { acceptLoop(socket) }
 
-        val address = localIpv4Address()
-            ?: throw IllegalStateException("This device has no usable IPv4 LAN address")
+        val address = bindAddressOverride
+            ?: localIpv4Address()
+            ?: throw IllegalStateException("This device has no usable IPv4 LAN address. Connect to Wi-Fi or enable Hotspot.")
         onStatus("LAN room ready at $address:${socket.localPort}")
         return LanRoomInfo(address, socket.localPort, roomCode, title)
     }
@@ -91,13 +98,28 @@ class LanSignalServer(
         }
     }
 
+    fun sendHostChat(sender: String, message: String) {
+        val clean = message.trim().take(500)
+        if (clean.isEmpty() || stopped) return
+        val chatFrame = JSONObject()
+            .put("type", LanSignallingContract.LAN_CHAT_TYPE)
+            .put("id", UUID.randomUUID().toString())
+            .put("username", sender.ifBlank { "Host" })
+            .put("message", clean)
+            .put("role", "host")
+        peers.values.forEach { it.send(chatFrame) }
+        onFrame(chatFrame)
+    }
+
     fun stop() {
         if (stopped) return
         stopped = true
+        peers.values.forEach { peer ->
+            peer.send(JSONObject().put("type", "close").put("from", LAN_HOST_PEER_ID).put("role", "host"))
+        }
         try {
             serverSocket?.close()
         } catch (_: Exception) {
-            // The accept loop will exit after the close.
         }
         serverSocket = null
         peers.values.forEach { it.close() }
@@ -127,7 +149,13 @@ class LanSignalServer(
             val hello = readFrame(reader) ?: return
             client.soTimeout = 0
             if (hello.optString("type") != "hello-viewer" || hello.optString("roomCode") != roomCode) {
-                sendRaw(writer, JSONObject().put("type", "error").put("code", "lan_room_rejected").put("error", "Invalid LAN room code"))
+                sendRaw(
+                    writer,
+                    JSONObject()
+                        .put("type", LanSignallingContract.ERROR_TYPE)
+                        .put("code", "lan_room_rejected")
+                        .put("error", "Invalid LAN room code"),
+                )
                 return
             }
 
@@ -135,11 +163,22 @@ class LanSignalServer(
                 ?: "viewer-${UUID.randomUUID()}"
             val peer = LanPeer(peerId, client, writer)
             if (peers.size >= MAX_LAN_VIEWERS && !peers.containsKey(peerId)) {
-                peer.send(JSONObject().put("type", LanSignallingContract.ERROR_TYPE).put("code", LanSignallingContract.P2P_CAPACITY).put("maxViewers", MAX_LAN_VIEWERS).put("error", "This LAN broadcast has reached its $MAX_LAN_VIEWERS-viewer limit"))
+                peer.send(
+                    JSONObject()
+                        .put("type", LanSignallingContract.ERROR_TYPE)
+                        .put("code", LanSignallingContract.P2P_CAPACITY)
+                        .put("maxViewers", MAX_LAN_VIEWERS)
+                        .put("error", "This LAN broadcast has reached its $MAX_LAN_VIEWERS-viewer limit"),
+                )
                 return
             }
             if (peers.putIfAbsent(peerId, peer) != null) {
-                peer.send(JSONObject().put("type", "error").put("code", "lan_peer_exists").put("error", "That viewer is already connected"))
+                peer.send(
+                    JSONObject()
+                        .put("type", LanSignallingContract.ERROR_TYPE)
+                        .put("code", "lan_peer_exists")
+                        .put("error", "That viewer is already connected"),
+                )
                 return
             }
 
@@ -150,7 +189,7 @@ class LanSignalServer(
                     .put("role", "host")
                     .put("roomCode", roomCode),
             )
-            onStatus("LAN viewer connected")
+            onStatus("LAN viewer connected (${peers.size}/$MAX_LAN_VIEWERS)")
             onFrame(
                 JSONObject(hello.toString())
                     .put("from", peerId)
@@ -162,8 +201,32 @@ class LanSignalServer(
                     val frame = readFrame(reader) ?: break
                     val type = frame.optString("type")
                     if (type == "close") break
+                    if (type == LanSignallingContract.LAN_CHAT_TYPE) {
+                        val text = frame.optString("message").trim().take(500)
+                        if (text.isNotEmpty()) {
+                            val broadcastChat = JSONObject()
+                                .put("type", LanSignallingContract.LAN_CHAT_TYPE)
+                                .put("id", frame.optString("id").ifBlank { UUID.randomUUID().toString() })
+                                .put("username", frame.optString("username").trim().take(40).ifBlank { "Viewer" })
+                                .put("message", text)
+                                .put("from", peerId)
+                                .put("role", "viewer")
+                            peers.values.forEach { it.send(broadcastChat) }
+                            onFrame(broadcastChat)
+                        }
+                        continue
+                    }
                     if (type !in setOf("offer", "ice", "quality", "hello-viewer", "ping")) {
-                        peer.send(JSONObject().put("type", "error").put("code", "invalid_frame_type").put("error", "Unsupported LAN signalling frame"))
+                        peer.send(
+                            JSONObject()
+                                .put("type", LanSignallingContract.ERROR_TYPE)
+                                .put("code", "invalid_frame_type")
+                                .put("error", "Unsupported LAN signalling frame"),
+                        )
+                        continue
+                    }
+                    if (type == "ping") {
+                        peer.send(JSONObject().put("type", "pong"))
                         continue
                     }
                     val stamped = JSONObject(frame.toString())
@@ -174,7 +237,7 @@ class LanSignalServer(
             } finally {
                 peers.remove(peerId, peer)
                 onFrame(JSONObject().put("type", "peer-left").put("from", peerId).put("role", "viewer"))
-                onStatus("LAN viewer disconnected")
+                onStatus("LAN viewers connected: ${peers.size}/$MAX_LAN_VIEWERS")
             }
         }
     }
@@ -266,6 +329,19 @@ class LanSignalClient(
             .put("role", "viewer")
         runCatching { sendRaw(output, outgoing) }
             .onFailure { if (!stopped) onError("LAN signalling send failed") }
+    }
+
+    fun sendChat(username: String, message: String): Boolean {
+        val clean = message.trim().take(500)
+        if (clean.isEmpty() || stopped || writer == null) return false
+        send(
+            JSONObject()
+                .put("type", LanSignallingContract.LAN_CHAT_TYPE)
+                .put("id", UUID.randomUUID().toString())
+                .put("username", username.ifBlank { "Viewer" })
+                .put("message", clean),
+        )
+        return true
     }
 
     fun close() {

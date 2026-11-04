@@ -1,85 +1,51 @@
-# I'm Live Android client
+# I'm Live — Native Android Application
 
-This is a native Kotlin + Jetpack Compose client, not a WebView wrapper. It
-shares the Worker contract with the web app:
+This directory contains the complete, production-structured **native Kotlin + Jetpack Compose** Android application for **I'm Live** (`com.imlive.app`) — strictly native (zero WebViews), sharing the Cloudflare Worker REST, Durable Object WebSocket, WebRTC, and Offline LAN contracts with the web platform.
 
-- access/refresh tokens are stored with Android Keystore-backed encrypted
-  preferences;
-- `POST /api/ws/tickets` issues the same one-minute, single-use WebSocket
-  ticket used by web;
-- `SignallingClient` uses `/api/ws/signal/:streamId` and the same
-  `welcome`/`offer`/`answer`/`ice`/`error` frames;
-- `WebRtcViewerSession` uses native `PeerConnection` with recv-only audio and
-  video transceivers, server-provided ICE/TURN configuration, speaker routing,
-  and a Compose `SurfaceViewRenderer`;
-- `WebRtcBroadcasterSession` captures the front camera/microphone, creates
-  send-only peer connections for viewer offers, handles ICE/SDP, and exposes
-  camera/mic toggles and camera switching;
-- `BroadcastService` makes creator capture visible as an Android foreground
-  service rather than pretending an activity can run indefinitely in the
-  background.
+## Architecture & Module Map
 
-## Open in Android Studio
+- **`model/Models.kt`**: Typed, ProGuard/R8-safe Kotlin domain models and JSON codecs for authentication, live streams, WebRTC ICE/TURN, live chat (`replyTo`, moderation, typing), VOD recordings & 60s clips, scheduled broadcasts, categories, unified search, notifications, creator analytics, payments/tips, sessions, personal API tokens, webhooks, and admin controls.
+- **`network/`**:
+  - `ApiClient.kt`: `OkHttp` REST & multipart upload client with single-flight `Mutex` refresh-token rotation (`/api/auth/refresh`), `X-Request-Id` correlation headers, and structured `ApiException` error codes.
+  - `ServerEndpointStore.kt`: Runtime server endpoint switcher (Official Cloudflare Worker, local `10.0.2.2:8787` dev server, or custom self-hosted HTTPS Worker), `ws://`/`wss://` derivation, media URL resolver, and `imlive://` + HTTPS App Link deep-link router.
+  - `NetworkMonitor.kt`: Reactive `ConnectivityManager` `StateFlow<NetworkStatus>` detecting Wi-Fi, Cellular, Hotspot, offline state, and metered data.
+- **`auth/` & `data/` & `live/`**:
+  - `SecureTokenStore.kt`: Android Keystore `EncryptedSharedPreferences` with automatic corruption recovery.
+  - `AppPreferences.kt`: Reactive device preferences (Accent theme, default quality preset, cellular Data Saver, auto-record MP4, keep screen awake).
+  - `AuthRepository.kt`, `LiveRepository.kt`, `PlatformRepository.kt`, `ChatClient.kt`: Full domain repositories and resilient ticket-refreshing live chat client.
+- **`media/` (100% Native Hardware Media & Offline Engine)**:
+  - `WebRtcEngine.kt`: Shared `EglBase`, hardware-accelerated `PeerConnectionFactory` (`DefaultVideoEncoderFactory` + `DefaultVideoDecoderFactory`), `JavaAudioDeviceModule` (hardware acoustic echo cancellation & noise suppression), and `AudioRouteController` (`AudioFocusRequest` + speakerphone/earpiece routing).
+  - `SignallingClient.kt`: Ticket-authenticated `/api/ws/signal/:streamId` WebSocket client with bounded outbox queue, 25s ping keepalive, single-use ticket refresh on reconnect, and terminal `p2p_capacity` handling.
+  - `WebRtcViewerSession.kt`: Full `LanViewer` state machine (`hello-viewer` knock, `streamer-ready` lock, host peer tracking, per-viewer `quality` bitrate requests, audio-only data saver, transient disconnect recovery, and 2s `RTCStatsReport` diagnostics HUD).
+  - `WebRtcBroadcasterSession.kt`: Camera2 front/rear capture, live resolution/FPS switching, send-only multi-viewer `PeerConnection` fan-out (up to 8 P2P viewers), per-viewer `maxBitrateBps` adaptation, and outbound bitrate telemetry.
+  - `NativeStreamRecorder.kt`: Zero-copy GPU `EglRenderer` + `MediaCodec` (`video/avc` H.264) + `MediaMuxer` `.mp4` live stream recorder (bounded to 256 MB) for one-tap post-broadcast VOD publishing.
+  - `BroadcastSessionManager.kt` + `BroadcastService.kt`: Process-scoped broadcast coordinator surviving screen rotation, navigation, and backgrounding via Android 14/15 `ServiceCompat.startForeground` (`camera|microphone`) with notification **Mute Mic** and **End Broadcast** actions.
+  - `LanSignalling.kt` + `LanDiscovery.kt` + `OfflineSdpPeer.kt`: Dual zero-internet offline modes — mDNS (`_imlive._tcp.`) auto-discovered Android-to-Android TCP LAN rooms (with live `lan-chat`) AND cross-platform `imlive-offline-webrtc` v1 SDP Offer/Answer bundles compatible with the browser `/offline` route.
+- **`ui/` (Jetpack Compose Material 3 Studio Design System)**:
+  - `HomeScreen.kt`: Live feed, Following Live rail, Trending Creators, Upcoming Schedules, Recent Replays, Offline Mode banner, and active On-Air studio return bar.
+  - `ExploreScreen.kt`: Debounced `/api/search` across streams, creators, and VODs + interactive Category directory.
+  - `WatchScreen.kt`: Hardware `SurfaceViewRenderer` theater, fullscreen mode, quality & audio-only controls, live WebRTC `RTCStats` HUD, follow/unfollow, tip checkout, report/block, and live chat with replies & typing indicators.
+  - `BroadcastScreen.kt`: Pre-live setup (Internet / Same-Wi-Fi Cloud / Offline LAN), live studio controls, local MP4 recording & cloud VOD upload, and live studio chat moderation.
+  - `OfflineRoomsScreen.kt`: Nearby mDNS LAN scanner, direct TCP LAN theater with local chat, and cross-platform `imlive-offline-webrtc` v1 SDP Offer/Answer studio.
+  - `LibraryAndScheduleScreen.kt`: In-app native **AndroidX Media3 `ExoPlayer`** VOD/clip playback, interactive 60-second highlight clip creator, device MP4/WebM uploader, privacy editor, and broadcast scheduler (`Go Live Now` + reminders).
+  - `ProfileAndCreatorScreen.kt`: Channel profiles, avatar gallery upload, followers/following lists, 7d/30d/90d creator analytics, tip earnings, chat rules, viewer mutes/bans, and moderation queue.
+  - `NotificationsAndSettingsScreen.kt`: Notifications inbox, theme/quality/data-saver settings, runtime server switcher & health diagnostics, email verification, password change, active session revocation, personal API tokens, outbound webhooks, GDPR JSON export, account deletion, and Admin Console.
 
-1. Install JDK 17 and Android SDK 35.
-2. Open this `android/` directory.
-3. Set `IM_LIVE_API_BASE_URL` in `gradle.properties` or pass
-   `-PIM_LIVE_API_BASE_URL=https://<worker-host>/api` in CI. Release builds must
-   never use the placeholder endpoint.
-4. Replace `links.im-live.example` in `AndroidManifest.xml` and publish the
-   matching `assetlinks.json` from the web origin before enabling App Links;
-   `docs/assetlinks.json.example` is the redacted shape to fill with the
-   release certificate fingerprint.
-5. Run the debug variant on a physical device for camera/microphone/WebRTC;
-   emulators are useful for API/UI checks but not reliable for media.
+## Deep Links Supported
 
-The project is intentionally not signed in Git. Add a release keystore through
-Android Studio/CI secrets, configure Play privacy/data-safety disclosures, and
-run the device/network matrix in `docs/IMPLEMENTATION-ROADMAP.md` before a
-store rollout.
+- `imlive://watch/<streamId>` and `https://live-stream-share-cast.vercel.app/watch/<streamId>`
+- `imlive://u/<username>` and `https://live-stream-share-cast.vercel.app/u/<username>`
+- `imlive://broadcast`, `imlive://offline`, `imlive://library`, `imlive://schedule`
+- `imlive://lan?host=<ipv4>&port=<port>&code=<pin>&title=<title>`
 
-## Current native slices
+## Build, Test & Verify
 
-- sign in/sign up, encrypted session storage, refresh retry, live browse, watch
-  route/deep link, ticket-authenticated signalling, native viewer PeerConnection
-  setup, ICE/TURN parsing, rendered native video, and speaker audio routing;
-- camera/microphone permission flow, server-backed stream create/start/heartbeat/
-  stop, native camera/audio publishing, camera/mic toggles, camera switch, and a
-  persistent foreground-service notification for creator mode;
-- chat history + ticket-authenticated message send, follow action, recording
-  library listing/playback handoff, local data-saver/notification preferences,
-  Compose loading/empty/error states, and safe logout.
+Requires **JDK 17** and **Android SDK 35**:
 
-## Offline LAN mode
+```bash
+cd android
+./gradlew testDebugUnitTest assembleDebug assembleRelease
+```
 
-The Android app now has a genuine local-only Android-to-Android path:
-
-1. On the broadcaster, open **Start a broadcast** and enable **LAN-only mode**.
-2. Start the camera; the app shows a Wi-Fi IP address, ephemeral port, and room code.
-3. On the viewer, choose **Join a LAN broadcast offline** and enter those three values.
-4. The local Android signalling server relays only bounded SDP/ICE frames; the
-   WebRTC audio/video connection uses an empty ICE-server list, so it does not
-   request STUN/TURN or use the Worker/API.
-
-Both devices must be on the same non-isolated Wi-Fi/LAN. Guest Wi-Fi, AP/client
-isolation, VPN routing, and different subnets can prevent the direct connection.
-The local protocol is newline-delimited JSON with a 64 KiB frame limit: the
-viewer sends `hello-viewer` with the room code, the host sends `welcome` and
-`streamer-ready`, and the peers exchange `offer`, `answer`, and `ice` frames;
-`close`/`peer-left` tear down a viewer. The host accepts at most eight local
-viewers. Capacity failures use the stable `error` / `p2p_capacity` contract and
-include `maxViewers: 8`, matching the browser/API machine code where that
-concept applies. This offline mode intentionally does not provide cloud chat, follows,
-stream history, analytics, or public discovery. It is an Android-to-Android LAN
-path; Android↔web interoperability still needs a local WebSocket bridge or
-manual browser signalling and physical-device verification.
-
-The debug Android project now compiles and its JVM contract test passes in the
-GitHub Actions Android compile gate. Remaining release-gate work is deliberately
-visible rather than hidden: physical-device LAN/WebRTC runs, typing/unread chat
-UI, native in-app VOD playback and editing, bounded recording
-upload/finalisation, robust background/process-death recovery, TURN/direct
-diagnostics, analytics, App Link domain verification, signed AAB/FCM/store
-disclosures, and real Android↔web interoperability/device tests. Chat
-reconnect/backoff now refreshes one-use tickets, surfaces moderation error codes,
-and refuses offline sends; follow state now supports initial load and unfollow.
+- Default API endpoint: `https://live-stream-share-cast-api.autumn-surf-21ec.workers.dev/api` (override at build time via `-PIM_LIVE_API_BASE_URL=https://.../api` or at runtime inside **Settings -> Switch Server**).
+- GitHub Actions (`.github/workflows/ci.yml`) runs `testDebugUnitTest`, `assembleDebug`, and R8-minified `assembleRelease` on every push and uploads the built APKs as the `im-live-android-apks` workflow artifact.

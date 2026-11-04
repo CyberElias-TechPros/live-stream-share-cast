@@ -42,20 +42,21 @@ services/*                        /api/ws/signal ──► Durable Object (offer
 | Integrations        | creator webhooks (8 events, HMAC-signed), product analytics, Sentry, captcha, Stripe or custom payment provider |
 | Operations          | hourly cron (retention, stale streams, rollups, digest emails), health endpoint reporting pending configuration |
 
-The repository contains the verified web/API foundation and a native Android
-starter slice. Android now also includes an offline LAN-only Android-to-Android
-mode: one device hosts a local signalling socket and the other joins with a
-Wi-Fi IP, port, and room code; the media PeerConnection uses no STUN/TURN or
-Worker API. Browsers can use `/offline` for a fully offline browser-to-browser
-room: the app shell is cacheable, signalling is a manually exchanged SDP bundle,
-and the media path uses no Worker, API, STUN, TURN, CDN, or internet traffic.
-The normal browser `LAN` setting remains a Worker-signalled local-media mode;
-it is not fully offline. Production readiness still depends on real
-camera/WebRTC device runs, TURN/provider credentials for internet mode, exact
-production origins, moderation/legal policy, and the Android release gate; the
-roadmap records those boundaries. Optional integrations activate through
-`GET /api/config` once their keys are configured, but credentials alone do not
-replace provider validation.
+The repository contains both the web/API stack and a full-featured **native
+Android application** (`android/`, Kotlin + Jetpack Compose + native WebRTC +
+AndroidX Media3 ExoPlayer — zero WebViews). Android supports cloud internet
+broadcasting & viewing (hardware video codecs, single-flight token refresh,
+Android 14/15 camera/microphone foreground service, GPU H.264 `.mp4` replay
+recording & cloud upload, in-app Media3 VOD/60s-clip studio, unified search,
+scheduled broadcasts, creator analytics, chat moderation, notifications,
+sessions/API tokens/webhooks, and admin controls) as well as **two zero-internet
+offline modes**:
+1. **Wi-Fi LAN Discovery (`_imlive._tcp.`) + Direct TCP Room**: automatic nearby
+   broadcaster discovery, 6-digit PIN verification, zero-ICE P2P media, and
+   local LAN chat.
+2. **Cross-Platform Offline SDP Bundle (`imlive-offline-webrtc` v1)**: seamless
+   offline interoperability between Android phones and browsers using `/offline`
+   with zero Worker, STUN, TURN, or internet traffic.
 
 ## Running the full stack locally
 
