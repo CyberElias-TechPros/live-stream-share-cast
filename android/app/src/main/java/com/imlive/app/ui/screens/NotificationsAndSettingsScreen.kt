@@ -53,6 +53,7 @@ import com.imlive.app.model.AdminOverviewData
 import com.imlive.app.model.AdminUserRow
 import com.imlive.app.model.AppNotification
 import com.imlive.app.model.AuthSessionItem
+import com.imlive.app.model.FeatureFlagRow
 import com.imlive.app.model.PersonalApiTokenItem
 import com.imlive.app.model.RuntimePlatformConfig
 import com.imlive.app.model.ServerHealthInfo
@@ -133,27 +134,28 @@ fun NotificationsScreen(
         }
 
         items(items, key = { it.id }) { notif ->
+            val isRead = !notif.isUnread
             Card(
                 onClick = {
-                    if (!notif.isRead) {
+                    if (notif.isUnread) {
                         scope.launch {
                             container.platformRepository.markNotificationRead(notif.id).onSuccess { load() }
                         }
                     }
                 },
                 colors = CardDefaults.cardColors(
-                    containerColor = if (notif.isRead) ImLivePalette.CardDark else ImLivePalette.CardElevated,
+                    containerColor = if (isRead) ImLivePalette.CardDark else ImLivePalette.CardElevated,
                 ),
                 border = BorderStroke(
                     1.dp,
-                    if (notif.isRead) ImLivePalette.BorderSubtle else MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                    if (isRead) ImLivePalette.BorderSubtle else MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
                 ),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                         Text(notif.title, style = MaterialTheme.typography.titleMedium)
-                        if (!notif.isRead) BadgePill("NEW", MaterialTheme.colorScheme.primary)
+                        if (notif.isUnread) BadgePill("NEW", MaterialTheme.colorScheme.primary)
                     }
                     notif.body?.takeIf(String::isNotBlank)?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -181,7 +183,7 @@ fun SettingsAndAdminScreen(
     val netStatus by container.networkMonitor.status.collectAsState()
     val currentUser by container.authRepository.currentUser.collectAsState()
 
-    var section by remember { mutableStateOf("preferences") } // preferences | security | developers | admin
+    var section by remember { mutableStateOf("preferences") }
     var health by remember { mutableStateOf<ServerHealthInfo?>(null) }
     var runtimeConfig by remember { mutableStateOf<RuntimePlatformConfig?>(null) }
     var sessions by remember { mutableStateOf<List<AuthSessionItem>>(emptyList()) }
@@ -190,6 +192,7 @@ fun SettingsAndAdminScreen(
 
     var adminOverview by remember { mutableStateOf<AdminOverviewData?>(null) }
     var adminUsers by remember { mutableStateOf<List<AdminUserRow>>(emptyList()) }
+    var adminFlags by remember { mutableStateOf<List<FeatureFlagRow>>(emptyList()) }
 
     var showServerDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
@@ -205,6 +208,7 @@ fun SettingsAndAdminScreen(
             if (currentUser?.isAdmin == true) {
                 container.platformRepository.adminOverview().onSuccess { adminOverview = it }
                 container.platformRepository.adminUsers().onSuccess { adminUsers = it }
+                container.platformRepository.adminFlags().onSuccess { adminFlags = it }
             }
         }
     }
@@ -272,8 +276,8 @@ fun SettingsAndAdminScreen(
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 VideoQualityPreset.entries.forEach { preset ->
                                     FilterChip(
-                                        selected = prefs.defaultVideoQuality == preset,
-                                        onClick = { container.preferences.setDefaultVideoQuality(preset) },
+                                        selected = prefs.defaultQuality == preset,
+                                        onClick = { container.preferences.setDefaultQuality(preset) },
                                         label = { Text(preset.label.substringBefore(" ")) },
                                     )
                                 }
@@ -285,7 +289,7 @@ fun SettingsAndAdminScreen(
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text("Auto-record local MP4 when broadcasting")
-                                Switch(checked = prefs.autoRecordBroadcasts, onCheckedChange = { container.preferences.setAutoRecordBroadcasts(it) })
+                                Switch(checked = prefs.autoRecordLocal, onCheckedChange = { container.preferences.setAutoRecordLocal(it) })
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text("Keep screen awake while watching/live")
@@ -309,14 +313,15 @@ fun SettingsAndAdminScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            val healthy = health?.status == "ok" || health?.status == "healthy"
                             Text(
-                                "Worker Health: ${if (health?.ok == true) "Healthy (${health?.service})" else "Unreachable / Offline"}",
+                                "Worker Health: ${health?.let { "${it.status} (DB: ${it.database}, TURN: ${it.turnConfigured})" } ?: "Unreachable / Offline"}",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = if (health?.ok == true) ImLivePalette.OnlineEmerald else ImLivePalette.WarningAmber,
+                                color = if (healthy) ImLivePalette.OnlineEmerald else ImLivePalette.WarningAmber,
                             )
                             runtimeConfig?.let { cfg ->
                                 Text(
-                                    "Platform Limits: max P2P viewers=${cfg.p2pMaxViewers} · max upload=${cfg.maxRecordingUploadMb}MB · maintenance=${cfg.maintenanceMode}",
+                                    "Platform Limits: max P2P viewers=${cfg.maxP2pViewers} · retention=${cfg.recordingRetentionHours}h · TURN=${cfg.turnConfigured}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -333,8 +338,10 @@ fun SettingsAndAdminScreen(
                     item {
                         OutlinedButton(
                             onClick = {
-                                container.authRepository.logout()
-                                onSignedOut()
+                                scope.launch {
+                                    container.authRepository.logoutRemoteAndClear()
+                                    onSignedOut()
+                                }
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Sign Out (@${currentUser?.username})") }
@@ -360,12 +367,11 @@ fun SettingsAndAdminScreen(
                         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             SectionHeader(
                                 title = "Active Device Sessions (${sessions.size})",
-                                actionLabel = "Revoke Others",
+                                actionLabel = "Revoke All",
                                 onAction = {
                                     scope.launch {
-                                        container.authRepository.revokeOtherSessions().onSuccess { count ->
-                                            banner = "Revoked $count other session(s)."
-                                            loadDiagnosticsAndSecurity()
+                                        container.authRepository.revokeAllSessions().onSuccess {
+                                            onSignedOut()
                                         }
                                     }
                                 },
@@ -381,7 +387,7 @@ fun SettingsAndAdminScreen(
                                             (sess.userAgent ?: "Session").take(42) + if (sess.current) " (This device)" else "",
                                             style = MaterialTheme.typography.bodyMedium,
                                         )
-                                        Text(sess.lastUsedAt ?: sess.createdAt, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(sess.createdAt, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     if (!sess.current) {
                                         TextButton(onClick = {
@@ -441,30 +447,32 @@ fun SettingsAndAdminScreen(
                 adminOverview?.let { ov ->
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                            StatMetricTile("Users", "${ov.totalUsers}", "Registered", Modifier.weight(1f))
+                            StatMetricTile("Users", "${ov.totalUsers}", "New today: ${ov.newUsersToday}", Modifier.weight(1f))
                             StatMetricTile("Live Now", "${ov.liveStreams}", "Active rooms", Modifier.weight(1f))
                             StatMetricTile("Open Reports", "${ov.openReports}", "Moderation", Modifier.weight(1f))
                         }
                     }
                 }
 
-                runtimeConfig?.let { cfg ->
+                if (adminFlags.isNotEmpty()) {
                     item {
                         Card(colors = CardDefaults.cardColors(containerColor = ImLivePalette.CardDark), modifier = Modifier.fillMaxWidth()) {
                             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Runtime Platform Controls", style = MaterialTheme.typography.titleMedium)
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Maintenance Mode")
-                                    Switch(
-                                        checked = cfg.maintenanceMode,
-                                        onCheckedChange = { next ->
-                                            scope.launch {
-                                                container.platformRepository.updateAdminRuntimeConfig(maintenanceMode = next).onSuccess {
-                                                    loadDiagnosticsAndSecurity()
+                                Text("Runtime Feature Flags", style = MaterialTheme.typography.titleMedium)
+                                adminFlags.forEach { flag ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(flag.key, style = MaterialTheme.typography.bodyMedium)
+                                        Switch(
+                                            checked = flag.enabled,
+                                            onCheckedChange = { next ->
+                                                scope.launch {
+                                                    container.platformRepository.adminToggleFlag(flag.key, next).onSuccess {
+                                                        loadDiagnosticsAndSecurity()
+                                                    }
                                                 }
-                                            }
-                                        },
-                                    )
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -481,15 +489,27 @@ fun SettingsAndAdminScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("@${row.username} (${row.email})", style = MaterialTheme.typography.bodyMedium)
-                                Text("Roles: ${row.roles.joinToString()}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    buildString {
+                                        append(if (row.isAdmin) "admin" else "user")
+                                        if (row.isStreamer) append(", streamer")
+                                        if (row.isBanned) append(" · BANNED")
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             TextButton(onClick = {
                                 scope.launch {
-                                    container.platformRepository.setAdminUserSuspended(row.id, !row.isSuspended, "Updated from Android Admin")
-                                        .onSuccess { loadDiagnosticsAndSecurity() }
+                                    val res = if (row.isBanned) {
+                                        container.platformRepository.adminUnbanUser(row.id)
+                                    } else {
+                                        container.platformRepository.adminBanUser(row.id, "Banned from Android Admin")
+                                    }
+                                    if (res.isSuccess) loadDiagnosticsAndSecurity()
                                 }
                             }) {
-                                Text(if (row.isSuspended) "Unsuspend" else "Suspend")
+                                Text(if (row.isBanned) "Unban" else "Ban")
                             }
                         }
                     }
@@ -503,7 +523,7 @@ fun SettingsAndAdminScreen(
             currentUrl = apiBase,
             onDismiss = { showServerDialog = false },
             onSave = { next ->
-                container.endpointStore.setCustomApiBaseUrl(next)
+                container.endpointStore.updateCustomUrl(next).getOrThrow()
                 showServerDialog = false
             },
             onResetDefault = {
@@ -520,7 +540,7 @@ fun SettingsAndAdminScreen(
             title = { Text("Delete Account?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("This permanently deletes your profile, streams, recordings, and tokens.")
+                    Text("This schedules permanent deletion of your profile, streams, recordings, and tokens.")
                     OutlinedTextField(
                         value = confirmPassword,
                         onValueChange = { confirmPassword = it },
@@ -537,7 +557,7 @@ fun SettingsAndAdminScreen(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     onClick = {
                         scope.launch {
-                            container.authRepository.deleteAccount(confirmPassword).fold(
+                            container.authRepository.deleteAccount(confirmPassword, "DELETE").fold(
                                 onSuccess = {
                                     showDeleteAccountDialog = false
                                     onSignedOut()
@@ -581,12 +601,11 @@ private fun EmailAndPasswordSecurityCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     OutlinedButton(onClick = {
                         scope.launch {
-                            container.authRepository.requestEmailVerification().onSuccess { preview ->
-                                if (!preview.isNullOrBlank()) verifyToken = preview
-                                onFeedback("Verification token requested.")
+                            container.authRepository.resendVerification().onSuccess {
+                                onFeedback("Verification email requested.")
                             }
                         }
-                    }) { Text("Request Token") }
+                    }) { Text("Resend") }
                     OutlinedTextField(
                         value = verifyToken,
                         onValueChange = { verifyToken = it },
@@ -598,7 +617,7 @@ private fun EmailAndPasswordSecurityCard(
                         enabled = verifyToken.length >= 12,
                         onClick = {
                             scope.launch {
-                                container.authRepository.confirmEmailVerification(verifyToken).fold(
+                                container.authRepository.verifyEmail(verifyToken).fold(
                                     onSuccess = { onFeedback("Email verified!") },
                                     onFailure = { onFeedback(it.message ?: "Verification failed") },
                                 )
@@ -631,7 +650,7 @@ private fun EmailAndPasswordSecurityCard(
                         container.authRepository.changePassword(currentPass, nextPass).fold(
                             onSuccess = {
                                 currentPass = ""; nextPass = ""
-                                onFeedback("Password updated and other sessions revoked.")
+                                onFeedback("Password updated.")
                             },
                             onFailure = { onFeedback(it.message ?: "Password change failed") },
                         )
@@ -673,9 +692,9 @@ private fun DeveloperTokensAndWebhooksCard(
                         onClick = {
                             scope.launch {
                                 container.authRepository.createApiToken(tokenName.trim()).fold(
-                                    onSuccess = { (_, raw) ->
+                                    onSuccess = { created ->
                                         tokenName = ""
-                                        newlyMintedSecret = raw
+                                        newlyMintedSecret = created.tokenPlaintext
                                         onReload()
                                     },
                                     onFailure = { onFeedback(it.message ?: "Token creation failed") },
@@ -689,7 +708,7 @@ private fun DeveloperTokensAndWebhooksCard(
                 }
                 tokens.forEach { tok ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("${tok.name} (${tok.tokenPrefix}…)", style = MaterialTheme.typography.bodyMedium)
+                        Text("${tok.name} (${tok.prefix}…)", style = MaterialTheme.typography.bodyMedium)
                         TextButton(onClick = {
                             scope.launch { container.authRepository.revokeApiToken(tok.id).onSuccess { onReload() } }
                         }) { Text("Revoke") }
@@ -713,10 +732,13 @@ private fun DeveloperTokensAndWebhooksCard(
                         enabled = webhookUrl.startsWith("https://"),
                         onClick = {
                             scope.launch {
-                                container.platformRepository.createWebhook(webhookUrl.trim()).fold(
-                                    onSuccess = { secret ->
+                                container.platformRepository.createWebhook(
+                                    url = webhookUrl.trim(),
+                                    events = listOf("stream.started", "stream.ended", "tip.received"),
+                                ).fold(
+                                    onSuccess = { created ->
                                         webhookUrl = ""
-                                        onFeedback("Webhook added! Secret: ${secret ?: "saved"}")
+                                        onFeedback("Webhook added! Secret: ${created.secret}")
                                         onReload()
                                     },
                                     onFailure = { onFeedback(it.message ?: "Webhook error") },

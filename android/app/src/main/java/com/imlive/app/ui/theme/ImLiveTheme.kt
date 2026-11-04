@@ -27,17 +27,15 @@ object ImLivePalette {
     val DangerRed = Color(0xFFEF4444)
 
     fun primaryFor(accent: AccentTheme): Color = when (accent) {
-        AccentTheme.VIOLET -> Color(0xFFA78BFA)
-        AccentTheme.EMERALD -> Color(0xFF34D399)
-        AccentTheme.CORAL -> Color(0xFFFB7185)
-        AccentTheme.AMBER -> Color(0xFFFBBF24)
+        AccentTheme.MAGENTA -> Color(0xFFC084FC)
+        AccentTheme.AURORA -> Color(0xFF38BDF8)
+        AccentTheme.EMBER -> Color(0xFFFB923C)
     }
 
     fun containerFor(accent: AccentTheme): Color = when (accent) {
-        AccentTheme.VIOLET -> Color(0xFF2E2252)
-        AccentTheme.EMERALD -> Color(0xFF133B2E)
-        AccentTheme.CORAL -> Color(0xFF471B26)
-        AccentTheme.AMBER -> Color(0xFF42300E)
+        AccentTheme.MAGENTA -> Color(0xFF332056)
+        AccentTheme.AURORA -> Color(0xFF13334C)
+        AccentTheme.EMBER -> Color(0xFF462310)
     }
 }
 
@@ -94,7 +92,7 @@ private val StudioShapes = Shapes(
 
 @Composable
 fun ImLiveTheme(
-    accent: AccentTheme = AccentTheme.VIOLET,
+    accent: AccentTheme = AccentTheme.MAGENTA,
     content: @Composable () -> Unit,
 ) {
     val primary = ImLivePalette.primaryFor(accent)

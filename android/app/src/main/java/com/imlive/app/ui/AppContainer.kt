@@ -2,7 +2,6 @@ package com.imlive.app.ui
 
 import android.content.Context
 import com.imlive.app.auth.AuthRepository
-import com.imlive.app.auth.SecureTokenStore
 import com.imlive.app.data.AppPreferences
 import com.imlive.app.data.PlatformRepository
 import com.imlive.app.live.LiveRepository
@@ -21,12 +20,11 @@ import com.imlive.app.network.ServerEndpointStore
 class ImLiveContainer(context: Context) {
     private val appContext = context.applicationContext
 
-    val tokenStore = SecureTokenStore(appContext)
     val preferences = AppPreferences(appContext)
     val endpointStore = ServerEndpointStore(appContext)
     val networkMonitor = NetworkMonitor(appContext)
-    val apiClient = ApiClient(appContext, tokenStore, endpointStore)
-    val authRepository = AuthRepository(appContext, apiClient, tokenStore)
+    val apiClient = ApiClient(appContext, endpointStore)
+    val authRepository = AuthRepository(appContext, apiClient)
     val liveRepository = LiveRepository(apiClient)
     val platformRepository = PlatformRepository(apiClient)
     val broadcastManager = BroadcastSessionManager(

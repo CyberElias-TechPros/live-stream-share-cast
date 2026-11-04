@@ -49,10 +49,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.imlive.app.model.CreatorSummary
 import com.imlive.app.model.LiveStream
 import com.imlive.app.model.Recording
 import com.imlive.app.model.ScheduledBroadcast
+import com.imlive.app.model.UserProfile
 import com.imlive.app.network.EndpointUrlRules
 import com.imlive.app.ui.ImLiveContainer
 import com.imlive.app.ui.components.AvatarCircle
@@ -91,10 +91,10 @@ fun HomeScreen(
 
     var streams by remember { mutableStateOf<List<LiveStream>>(emptyList()) }
     var followingStreams by remember { mutableStateOf<List<LiveStream>>(emptyList()) }
-    var trendingCreators by remember { mutableStateOf<List<CreatorSummary>>(emptyList()) }
+    var trendingCreators by remember { mutableStateOf<List<UserProfile>>(emptyList()) }
     var upcoming by remember { mutableStateOf<List<ScheduledBroadcast>>(emptyList()) }
     var latestRecordings by remember { mutableStateOf<List<Recording>>(emptyList()) }
-    var filterMode by remember { mutableStateOf("all") } // all | internet | local
+    var filterMode by remember { mutableStateOf("all") }
     var loading by remember { mutableStateOf(true) }
     var errorText by remember { mutableStateOf<String?>(null) }
 
@@ -102,9 +102,10 @@ fun HomeScreen(
         if (!silent) loading = true
         val liveDef = scope.async { container.liveRepository.liveStreams() }
         val trendDef = scope.async { container.liveRepository.trending() }
-        val schedDef = scope.async { container.platformRepository.scheduledBroadcasts() }
+        val schedDef = scope.async { container.platformRepository.upcomingSchedule() }
         val recDef = scope.async { container.platformRepository.publicRecordings() }
-        val followDef = if (currentUser != null) scope.async { container.liveRepository.followingStreams() } else null
+        val meId = currentUser?.id
+        val followUsersDef = if (!meId.isNullOrBlank()) scope.async { container.platformRepository.following(meId) } else null
 
         val liveRes = liveDef.await()
         liveRes.fold(
@@ -116,10 +117,11 @@ fun HomeScreen(
                 if (!silent) errorText = err.message ?: "Could not load live streams"
             },
         )
-        trendDef.await().onSuccess { trendingCreators = it.creators }
+        trendDef.await().onSuccess { trendingCreators = it.rising }
         schedDef.await().onSuccess { upcoming = it.take(4) }
         recDef.await().onSuccess { latestRecordings = it.take(4) }
-        followDef?.await()?.onSuccess { followingStreams = it.filter { s -> s.isLive } }
+        val followedIds = followUsersDef?.await()?.getOrNull()?.map { it.id }?.toSet().orEmpty()
+        followingStreams = if (followedIds.isEmpty()) emptyList() else streams.filter { it.ownerId in followedIds }
         loading = false
     }
 
@@ -199,24 +201,21 @@ fun HomeScreen(
                     Row(
                         modifier = Modifier.padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            LivePulseBadge("ON AIR")
-                            Spacer(Modifier.width(10.dp))
-                            Column {
-                                Text(
-                                    studioState.activeStream?.title ?: studioState.lanRoom?.title ?: "Active Broadcast",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    "${formatDurationClock(studioState.elapsedSeconds)} · ${studioState.viewerCount} watching · Tap to open studio",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                        LivePulseBadge("ON AIR")
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(
+                                studioState.activeStream?.title ?: studioState.lanRoom?.title ?: "Active Broadcast",
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "${formatDurationClock(studioState.elapsedSeconds)} · ${studioState.viewerCount} watching · Tap to open studio",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
@@ -277,7 +276,7 @@ fun HomeScreen(
                             ) {
                                 AvatarCircle(
                                     name = item.hostDisplay,
-                                    avatarUrl = item.streamerAvatar,
+                                    avatarUrl = item.userAvatar,
                                     apiBaseUrl = apiBase,
                                     size = 38.dp,
                                     isLive = true,
@@ -285,7 +284,7 @@ fun HomeScreen(
                                 Spacer(Modifier.width(10.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(item.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${item.hostDisplay} · ${item.viewerCount} watching", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("${item.hostDisplay} · ${item.viewers} watching", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -353,7 +352,7 @@ fun HomeScreen(
             }
         } else {
             items(filteredStreams, key = { it.id }) { stream ->
-                val shareWebRoot = EndpointUrlRules.toOriginRootUrl(apiBase)
+                val shareWebRoot = EndpointUrlRules.toOriginUrl(apiBase)
                 StreamFeedCard(
                     stream = stream,
                     apiBaseUrl = apiBase,
@@ -390,16 +389,16 @@ fun HomeScreen(
                             ) {
                                 AvatarCircle(
                                     name = creator.bestName,
-                                    avatarUrl = creator.avatarUrl,
+                                    avatarUrl = creator.avatar,
                                     apiBaseUrl = apiBase,
                                     size = 52.dp,
-                                    isLive = creator.isLive,
+                                    isLive = false,
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 Text(creator.bestName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("@${creator.username}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                                 Spacer(Modifier.height(4.dp))
-                                Text("${creator.followerCount} followers", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                                Text("${creator.followers} followers", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
@@ -435,7 +434,7 @@ fun HomeScreen(
                                     )
                                 }
                                 Text(
-                                    "${sched.reminderCount}提醒".replace("提醒", " reminders"),
+                                    "${sched.reminderCount} reminders",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                 )

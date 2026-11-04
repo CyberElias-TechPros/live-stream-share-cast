@@ -5,7 +5,6 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -101,11 +100,14 @@ fun BroadcastScreen(
     var category by remember { mutableStateOf("Just Chatting") }
     var tagsRaw by remember { mutableStateOf("mobile, live") }
     var isMature by remember { mutableStateOf(false) }
-    var autoRecord by remember { mutableStateOf(prefs.autoRecordBroadcasts) }
+    var autoRecord by remember { mutableStateOf(prefs.autoRecordLocal) }
     var selectedQuality by remember {
         mutableStateOf(
-            if (prefs.defaultVideoQuality == VideoQualityPreset.AUTO) VideoQualityPreset.HD_720P
-            else prefs.defaultVideoQuality,
+            if (prefs.defaultQuality == VideoQualityPreset.AUTO || prefs.defaultQuality == VideoQualityPreset.AUDIO_ONLY) {
+                VideoQualityPreset.HD_720P
+            } else {
+                prefs.defaultQuality
+            },
         )
     }
     var selectedTransport by remember(initialLanOnly, currentUser) {
@@ -164,7 +166,6 @@ fun BroadcastScreen(
             }
         }
 
-        // Camera Viewfinder / Live Studio Monitor
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.Black),
@@ -204,20 +205,16 @@ fun BroadcastScreen(
 
                     if (studio.isLive) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                BadgePill("${studio.viewerCount} watching (peak ${studio.peakViewers})", ImLivePalette.OnlineEmerald)
-                                if (studio.outboundKbps > 0) {
-                                    BadgePill("${studio.outboundKbps} kbps", MaterialTheme.colorScheme.primary)
-                                }
-                                if (studio.isRecordingLocal) {
-                                    BadgePill("REC MP4", ImLivePalette.LiveRose)
-                                }
+                            BadgePill("${studio.viewerCount} watching (peak ${studio.peakViewers})", ImLivePalette.OnlineEmerald)
+                            if (studio.outboundKbps > 0) {
+                                BadgePill("${studio.outboundKbps} kbps", MaterialTheme.colorScheme.primary)
+                            }
+                            if (studio.isRecordingLocal) {
+                                BadgePill("REC MP4", ImLivePalette.LiveRose)
                             }
                         }
                     }
@@ -237,7 +234,6 @@ fun BroadcastScreen(
             }
         }
 
-        // Post-stream Local MP4 Replay Card
         studio.lastCompletedRecording?.let { rec ->
             item {
                 Card(
@@ -274,7 +270,6 @@ fun BroadcastScreen(
         }
 
         if (studio.isLive) {
-            // Live Control Deck
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = ImLivePalette.CardDark),
@@ -345,7 +340,7 @@ fun BroadcastScreen(
                                             "Join ${lan.title} on the same Wi-Fi!\nHost: ${lan.hostAddress}\nPort: ${lan.port}\nCode: ${lan.roomCode}\nDeep link: ${lan.toDeepLinkUri()}",
                                         )
                                     } else if (active != null) {
-                                        val root = EndpointUrlRules.toOriginRootUrl(apiBase)
+                                        val root = EndpointUrlRules.toOriginUrl(apiBase)
                                         sharePlainText(
                                             context,
                                             "Watch ${active.title} live!",
@@ -384,7 +379,6 @@ fun BroadcastScreen(
                 }
             }
 
-            // Live Studio Chat & One-Tap Moderation
             item { SectionHeader("Studio Live Chat (${studio.chatMessages.size})") }
             items(studio.chatMessages.takeLast(30), key = { "host-chat-${it.id}" }) { msg ->
                 Surface(
@@ -438,7 +432,6 @@ fun BroadcastScreen(
                 }
             }
         } else {
-            // Pre-Live Setup Form
             if (!permissionsGranted) {
                 item {
                     Card(

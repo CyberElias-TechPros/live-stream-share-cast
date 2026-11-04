@@ -54,14 +54,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.imlive.app.data.PublicProfileDetail
+import com.imlive.app.model.BlockedUserItem
+import com.imlive.app.model.ChatRestrictionItem
 import com.imlive.app.model.ChatRules
 import com.imlive.app.model.CreatorAnalyticsOverview
 import com.imlive.app.model.CreatorEarningsInfo
 import com.imlive.app.model.LiveStream
 import com.imlive.app.model.ModerationReportItem
-import com.imlive.app.model.ProfileDetail
 import com.imlive.app.model.Recording
-import com.imlive.app.model.StreamRestrictionItem
 import com.imlive.app.model.UserProfile
 import com.imlive.app.ui.ImLiveContainer
 import com.imlive.app.ui.components.AvatarCircle
@@ -120,37 +121,49 @@ fun ProfileAndCreatorScreen(
     }
 
     val isSelf = currentUser?.username?.equals(targetUsername, ignoreCase = true) == true
-    var tab by remember(isSelf) { mutableStateOf("channel") } // channel | analytics | moderation | connections
-    var detail by remember { mutableStateOf<ProfileDetail?>(null) }
+    var tab by remember(isSelf) { mutableStateOf("channel") }
+    var detail by remember { mutableStateOf<PublicProfileDetail?>(null) }
     var followers by remember { mutableStateOf<List<UserProfile>>(emptyList()) }
     var following by remember { mutableStateOf<List<UserProfile>>(emptyList()) }
+    var isFollowingOther by remember { mutableStateOf(false) }
 
     var analyticsDays by remember { mutableStateOf(30) }
     var analytics by remember { mutableStateOf<CreatorAnalyticsOverview?>(null) }
     var earnings by remember { mutableStateOf<CreatorEarningsInfo?>(null) }
 
+    var primaryStreamId by remember { mutableStateOf<String?>(null) }
     var chatRules by remember { mutableStateOf(ChatRules()) }
-    var restrictions by remember { mutableStateOf<List<StreamRestrictionItem>>(emptyList()) }
-    var blockedUsers by remember { mutableStateOf<List<UserProfile>>(emptyList()) }
+    var restrictions by remember { mutableStateOf<List<ChatRestrictionItem>>(emptyList()) }
+    var blockedUsers by remember { mutableStateOf<List<BlockedUserItem>>(emptyList()) }
     var modReports by remember { mutableStateOf<List<ModerationReportItem>>(emptyList()) }
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var statusBanner by remember { mutableStateOf<String?>(null) }
 
     suspend fun loadProfile() {
-        container.platformRepository.profile(targetUsername).onSuccess { loaded ->
+        container.platformRepository.profileByUsername(targetUsername).onSuccess { loaded ->
             detail = loaded
-            container.platformRepository.followers(loaded.profile.id).onSuccess { followers = it }
-            container.platformRepository.following(loaded.profile.id).onSuccess { following = it }
+            container.platformRepository.followers(loaded.user.id).onSuccess { followers = it }
+            container.platformRepository.following(loaded.user.id).onSuccess { following = it }
+            if (!isSelf && currentUser != null) {
+                container.liveRepository.followState(loaded.user.id).onSuccess { isFollowingOther = it }
+                container.platformRepository.blockedUsers().onSuccess { blockedUsers = it }
+            }
         }
         if (isSelf) {
-            container.platformRepository.creatorAnalytics(analyticsDays).onSuccess { analytics = it }
+            container.platformRepository.analyticsOverview(analyticsDays).onSuccess { analytics = it }
             container.platformRepository.creatorEarnings().onSuccess { earnings = it }
-            container.platformRepository.chatRules().onSuccess { chatRules = it }
-            container.platformRepository.restrictions().onSuccess { restrictions = it }
             container.platformRepository.blockedUsers().onSuccess { blockedUsers = it }
-            if (currentUser?.isModeratorOrAdmin == true) {
-                container.platformRepository.moderationReports("open").onSuccess { modReports = it }
+            container.liveRepository.myStreams().onSuccess { mine ->
+                val latestId = mine.firstOrNull()?.id
+                primaryStreamId = latestId
+                if (!latestId.isNullOrBlank()) {
+                    container.platformRepository.streamChatSettings(latestId).onSuccess { chatRules = it }
+                    container.platformRepository.streamChatRestrictions(latestId).onSuccess { restrictions = it }
+                }
+            }
+            if (currentUser?.isAdmin == true) {
+                container.platformRepository.adminReports("open").onSuccess { modReports = it }
             }
         }
     }
@@ -167,13 +180,12 @@ fun ProfileAndCreatorScreen(
                     val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
                     val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                         ?: error("Could not read image")
-                    val ext = if (mime.contains("png")) "png" else "jpg"
-                    container.platformRepository.uploadAvatarBytes(bytes, "avatar.$ext", mime).getOrThrow()
+                    container.platformRepository.uploadAvatar(bytes, mime).getOrThrow()
                 }
             }
             res.fold(
-                onSuccess = {
-                    container.authRepository.me()
+                onSuccess = { updated ->
+                    container.authRepository.updateCachedUser(updated)
                     loadProfile()
                     statusBanner = "Avatar updated!"
                 },
@@ -182,7 +194,8 @@ fun ProfileAndCreatorScreen(
         }
     }
 
-    val prof = detail?.profile
+    val prof = detail?.user
+    val activeLiveStream = detail?.recentStreams?.firstOrNull { it.isLive }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -227,7 +240,6 @@ fun ProfileAndCreatorScreen(
             }
         }
 
-        // Channel Header Card
         if (prof != null) {
             item {
                 Card(
@@ -239,20 +251,21 @@ fun ProfileAndCreatorScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AvatarCircle(
                                 name = prof.bestName,
-                                avatarUrl = prof.avatarUrl,
+                                avatarUrl = prof.avatar,
                                 apiBaseUrl = apiBase,
                                 size = 64.dp,
-                                isLive = detail?.liveStream != null,
+                                isLive = activeLiveStream != null,
                             )
                             Spacer(Modifier.width(14.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(prof.bestName, style = MaterialTheme.typography.titleLarge)
-                                    if (prof.isVerified) BadgePill("VERIFIED", ImLivePalette.OnlineEmerald)
+                                    if (prof.emailVerified) BadgePill("VERIFIED", ImLivePalette.OnlineEmerald)
+                                    if (prof.isStreamer) BadgePill("CREATOR", MaterialTheme.colorScheme.primary)
                                 }
                                 Text("@${prof.username}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
-                                    "${detail?.followerCount ?: prof.followerCount} followers · ${detail?.followingCount ?: prof.followingCount} following",
+                                    "${prof.followers} followers · ${prof.following} following",
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
@@ -279,17 +292,19 @@ fun ProfileAndCreatorScreen(
                                     Text("Avatar")
                                 }
                             } else if (currentUser != null) {
-                                val followingNow = detail?.isFollowing == true
                                 Button(onClick = {
                                     scope.launch {
-                                        val r = if (followingNow) container.platformRepository.unfollowUser(prof.id)
-                                        else container.platformRepository.followUser(prof.id)
-                                        if (r.isSuccess) loadProfile()
+                                        val r = if (isFollowingOther) container.liveRepository.unfollow(prof.id)
+                                        else container.liveRepository.follow(prof.id)
+                                        r.onSuccess {
+                                            isFollowingOther = it
+                                            loadProfile()
+                                        }
                                     }
                                 }) {
-                                    Text(if (followingNow) "Following" else "Follow")
+                                    Text(if (isFollowingOther) "Following" else "Follow")
                                 }
-                                val blockedNow = detail?.isBlocked == true
+                                val blockedNow = blockedUsers.any { it.id == prof.id }
                                 OutlinedButton(onClick = {
                                     scope.launch {
                                         if (blockedNow) container.platformRepository.unblockUser(prof.id)
@@ -319,14 +334,14 @@ fun ProfileAndCreatorScreen(
 
         when (tab) {
             "channel" -> {
-                detail?.liveStream?.let { live ->
+                activeLiveStream?.let { live ->
                     item {
                         SectionHeader("Live Right Now")
                         Spacer(Modifier.height(6.dp))
                         StreamFeedCard(stream = live, apiBaseUrl = apiBase, onClick = { onWatchStream(live) })
                     }
                 }
-                val recs = detail?.recordings.orEmpty()
+                val recs = detail?.publicRecordings.orEmpty()
                 item { SectionHeader("Published Replays & Clips (${recs.size})") }
                 if (recs.isEmpty()) {
                     item {
@@ -348,7 +363,7 @@ fun ProfileAndCreatorScreen(
                         modifier = Modifier.fillMaxWidth().clickable { onOpenCreator(u.username) },
                     ) {
                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            AvatarCircle(name = u.bestName, avatarUrl = u.avatarUrl, apiBaseUrl = apiBase, size = 38.dp)
+                            AvatarCircle(name = u.bestName, avatarUrl = u.avatar, apiBaseUrl = apiBase, size = 38.dp)
                             Spacer(Modifier.width(10.dp))
                             Column {
                                 Text(u.bestName, style = MaterialTheme.typography.titleMedium)
@@ -365,7 +380,7 @@ fun ProfileAndCreatorScreen(
                         modifier = Modifier.fillMaxWidth().clickable { onOpenCreator(u.username) },
                     ) {
                         Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            AvatarCircle(name = u.bestName, avatarUrl = u.avatarUrl, apiBaseUrl = apiBase, size = 38.dp)
+                            AvatarCircle(name = u.bestName, avatarUrl = u.avatar, apiBaseUrl = apiBase, size = 38.dp)
                             Spacer(Modifier.width(10.dp))
                             Column {
                                 Text(u.bestName, style = MaterialTheme.typography.titleMedium)
@@ -387,13 +402,13 @@ fun ProfileAndCreatorScreen(
                 analytics?.let { a ->
                     item {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                            StatMetricTile("Broadcasts", "${a.totalStreams}", "Last ${a.days} days", Modifier.weight(1f))
-                            StatMetricTile("Live Minutes", "${a.liveMinutes}", "On-air time", Modifier.weight(1f))
+                            StatMetricTile("Broadcasts", "${a.streams}", "Last ${a.days} days", Modifier.weight(1f))
+                            StatMetricTile("Live Minutes", "${a.minutesStreamed}", "On-air time", Modifier.weight(1f))
                         }
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             StatMetricTile("Watch Minutes", "${a.watchMinutes}", "${a.uniqueViewers} viewers", Modifier.weight(1f))
-                            StatMetricTile("VOD Views", "${a.vodViews}", "${a.totalRecordings} replays", Modifier.weight(1f))
+                            StatMetricTile("Peak Viewers", "${a.peakViewers}", "${a.totalFollowers} followers", Modifier.weight(1f))
                         }
                     }
                 }
@@ -406,9 +421,12 @@ fun ProfileAndCreatorScreen(
                         ) {
                             Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Text("Creator Tips & Earnings", style = MaterialTheme.typography.titleMedium)
-                                val netUsd = "%.2f".format(e.totalNetCents / 100.0)
-                                val grossUsd = "%.2f".format(e.totalGrossCents / 100.0)
-                                Text("Net Earned: $$netUsd  (Gross $$grossUsd across ${e.tipCount} tips)", style = MaterialTheme.typography.bodyLarge, color = ImLivePalette.OnlineEmerald)
+                                val pendingUsd = "%.2f".format(e.pendingCents / 100.0)
+                                Text(
+                                    "Paid: ${e.paidDisplay} · Pending: $$pendingUsd (${e.count} tips)",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = ImLivePalette.OnlineEmerald,
+                                )
                             }
                         }
                     }
@@ -416,34 +434,53 @@ fun ProfileAndCreatorScreen(
             }
 
             "moderation" -> {
-                item {
-                    ChatRulesCard(
-                        initial = chatRules,
-                        onSave = { updated ->
-                            scope.launch {
-                                container.platformRepository.updateChatRules(updated).onSuccess {
-                                    chatRules = it
-                                    statusBanner = "Chat moderation rules saved!"
+                if (primaryStreamId != null) {
+                    val streamId = primaryStreamId!!
+                    item {
+                        ChatRulesCard(
+                            initial = chatRules,
+                            onSave = { updated ->
+                                scope.launch {
+                                    container.platformRepository.saveStreamChatSettings(streamId, updated).onSuccess {
+                                        chatRules = it
+                                        statusBanner = "Chat moderation rules saved!"
+                                    }
                                 }
-                            }
-                        },
-                    )
-                }
+                            },
+                        )
+                    }
 
-                item {
-                    ViewerRestrictionsCard(
-                        restrictions = restrictions,
-                        onAdd = { username, kind ->
-                            scope.launch {
-                                container.platformRepository.addRestriction(username, kind).onSuccess { loadProfile() }
-                            }
-                        },
-                        onRemove = { id ->
-                            scope.launch {
-                                container.platformRepository.removeRestriction(id).onSuccess { loadProfile() }
-                            }
-                        },
-                    )
+                    item {
+                        ViewerRestrictionsCard(
+                            restrictions = restrictions,
+                            onAdd = { targetUserIdOrHandle, kind ->
+                                scope.launch {
+                                    val resolvedUserId = container.platformRepository
+                                        .profileByUsername(targetUserIdOrHandle)
+                                        .map { it.user.id }
+                                        .getOrDefault(targetUserIdOrHandle)
+                                    container.platformRepository.restrictChatter(
+                                        streamId = streamId,
+                                        userId = resolvedUserId,
+                                        kind = kind,
+                                    ).onSuccess { loadProfile() }
+                                }
+                            },
+                            onRemove = { userId ->
+                                scope.launch {
+                                    container.platformRepository.liftChatRestriction(streamId, userId).onSuccess { loadProfile() }
+                                }
+                            },
+                        )
+                    }
+                } else {
+                    item {
+                        Text(
+                            "Start at least one cloud broadcast to configure per-stream chat rules and viewer timeouts.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
 
                 if (blockedUsers.isNotEmpty()) {
@@ -466,7 +503,7 @@ fun ProfileAndCreatorScreen(
                     }
                 }
 
-                if (currentUser?.isModeratorOrAdmin == true) {
+                if (currentUser?.isAdmin == true) {
                     item { SectionHeader("Open Moderation Queue (${modReports.size})") }
                     items(modReports, key = { "rep-${it.id}" }) { rep ->
                         Card(colors = CardDefaults.cardColors(containerColor = ImLivePalette.CardDark), modifier = Modifier.fillMaxWidth()) {
@@ -476,13 +513,13 @@ fun ProfileAndCreatorScreen(
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = {
                                         scope.launch {
-                                            container.platformRepository.resolveModerationReport(rep.id, "resolved", "Reviewed on Android")
+                                            container.platformRepository.adminResolveReport(rep.id, "resolved", "Reviewed on Android")
                                             loadProfile()
                                         }
                                     }) { Text("Resolve") }
                                     OutlinedButton(onClick = {
                                         scope.launch {
-                                            container.platformRepository.resolveModerationReport(rep.id, "dismissed", "Dismissed")
+                                            container.platformRepository.adminResolveReport(rep.id, "dismissed", "Dismissed")
                                             loadProfile()
                                         }
                                     }) { Text("Dismiss") }
@@ -496,9 +533,11 @@ fun ProfileAndCreatorScreen(
     }
 
     if (showEditProfileDialog && prof != null) {
-        var displayName by remember(prof.id) { mutableStateOf(prof.displayName ?: "") }
+        var displayName by remember(prof.id) { mutableStateOf(prof.displayName) }
         var bio by remember(prof.id) { mutableStateOf(prof.bio ?: "") }
+        var pronouns by remember(prof.id) { mutableStateOf(prof.pronouns ?: "") }
         var website by remember(prof.id) { mutableStateOf(prof.websiteUrl ?: "") }
+        var donationUrl by remember(prof.id) { mutableStateOf(prof.donationUrl ?: "") }
 
         AlertDialog(
             onDismissRequest = { showEditProfileDialog = false },
@@ -506,16 +545,24 @@ fun ProfileAndCreatorScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value = displayName, onValueChange = { displayName = it }, label = { Text("Display name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pronouns, onValueChange = { pronouns = it }, label = { Text("Pronouns (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = bio, onValueChange = { bio = it }, label = { Text("Bio") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = website, onValueChange = { website = it }, label = { Text("Website URL (https://…)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = donationUrl, onValueChange = { donationUrl = it }, label = { Text("Donation link (https://…)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
             },
             confirmButton = {
                 Button(onClick = {
                     scope.launch {
-                        container.platformRepository.updateProfile(displayName, bio, website).onSuccess {
+                        container.platformRepository.updateMyProfile(
+                            displayName = displayName,
+                            bio = bio,
+                            pronouns = pronouns,
+                            websiteUrl = website,
+                            donationUrl = donationUrl,
+                        ).onSuccess { updated ->
                             showEditProfileDialog = false
-                            container.authRepository.me()
+                            container.authRepository.updateCachedUser(updated)
                             loadProfile()
                         }
                     }
@@ -531,7 +578,7 @@ private fun ChatRulesCard(initial: ChatRules, onSave: (ChatRules) -> Unit) {
     var slowSec by remember(initial) { mutableStateOf(initial.slowModeSeconds.toString()) }
     var followersOnly by remember(initial) { mutableStateOf(initial.followersOnly) }
     var linksAllowed by remember(initial) { mutableStateOf(initial.linksAllowed) }
-    var bannedWordsText by remember(initial) { mutableStateOf(initial.bannedWords.joinToString(", ")) }
+    var blockedWordsText by remember(initial) { mutableStateOf(initial.blockedWords.joinToString(", ")) }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = ImLivePalette.CardDark),
@@ -556,19 +603,21 @@ private fun ChatRulesCard(initial: ChatRules, onSave: (ChatRules) -> Unit) {
                 Switch(checked = linksAllowed, onCheckedChange = { linksAllowed = it })
             }
             OutlinedTextField(
-                value = bannedWordsText,
-                onValueChange = { bannedWordsText = it },
+                value = blockedWordsText,
+                onValueChange = { blockedWordsText = it },
                 label = { Text("Blocked words (comma separated)") },
                 modifier = Modifier.fillMaxWidth(),
             )
             Button(
                 onClick = {
+                    val words = blockedWordsText.split(',').map { it.trim() }.filter { it.isNotBlank() }
                     onSave(
                         initial.copy(
                             slowModeSeconds = (slowSec.toIntOrNull() ?: 0).coerceIn(0, 600),
                             followersOnly = followersOnly,
                             linksAllowed = linksAllowed,
-                            bannedWords = bannedWordsText.split(',').map { it.trim() }.filter { it.isNotBlank() },
+                            blockedWords = words,
+                            blockedWordCount = words.size,
                         ),
                     )
                 },
@@ -580,12 +629,12 @@ private fun ChatRulesCard(initial: ChatRules, onSave: (ChatRules) -> Unit) {
 
 @Composable
 private fun ViewerRestrictionsCard(
-    restrictions: List<StreamRestrictionItem>,
+    restrictions: List<ChatRestrictionItem>,
     onAdd: (username: String, kind: String) -> Unit,
-    onRemove: (String) -> Unit,
+    onRemove: (userId: String) -> Unit,
 ) {
     var targetUsername by remember { mutableStateOf("") }
-    var kind by remember { mutableStateOf("mute") }
+    var kind by remember { mutableStateOf("timeout") }
 
     Card(
         colors = CardDefaults.cardColors(containerColor = ImLivePalette.CardDark),
@@ -593,10 +642,10 @@ private fun ViewerRestrictionsCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Channel Mutes & Bans (${restrictions.size})", style = MaterialTheme.typography.titleMedium)
+            Text("Channel Timeouts & Bans (${restrictions.size})", style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = kind == "mute", onClick = { kind = "mute" }, label = { Text("Mute") })
-                FilterChip(selected = kind == "ban", onClick = { kind = "ban" }, label = { Text("Ban") })
+                FilterChip(selected = kind == "timeout", onClick = { kind = "timeout" }, label = { Text("10m Timeout") })
+                FilterChip(selected = kind == "ban", onClick = { kind = "ban" }, label = { Text("Permanent Ban") })
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
@@ -620,8 +669,8 @@ private fun ViewerRestrictionsCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("@${item.username ?: item.restrictedUserId} · ${item.restrictionType.uppercase()}", style = MaterialTheme.typography.bodyMedium)
-                    TextButton(onClick = { onRemove(item.id) }) { Text("Remove") }
+                    Text("@${item.username} · ${item.kind.uppercase()}", style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = { onRemove(item.userId) }) { Text("Lift") }
                 }
             }
         }

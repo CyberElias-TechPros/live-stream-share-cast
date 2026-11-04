@@ -40,13 +40,10 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -81,12 +78,13 @@ import com.imlive.app.model.VideoQualityPreset
 import com.imlive.app.network.EndpointUrlRules
 import com.imlive.app.ui.ImLiveContainer
 import com.imlive.app.ui.components.AvatarCircle
-import com.imlive.app.ui.components.BadgePill
 import com.imlive.app.ui.components.KeepScreenAwakeEffect
 import com.imlive.app.ui.components.LivePulseBadge
 import com.imlive.app.ui.components.WebRtcVideoSurface
 import com.imlive.app.ui.components.sharePlainText
 import com.imlive.app.ui.theme.ImLivePalette
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.webrtc.VideoTrack
@@ -120,12 +118,12 @@ fun WatchScreen(
 
     var audioMuted by remember { mutableStateOf(false) }
     var speakerphone by remember { mutableStateOf(true) }
-    var audioOnly by remember { mutableStateOf(false) }
+    var audioOnly by remember { mutableStateOf(prefs.defaultQuality == VideoQualityPreset.AUDIO_ONLY) }
     var selectedQuality by remember {
-        mutableStateOf(if (prefs.dataSaver) VideoQualityPreset.SAVER_360P else prefs.defaultVideoQuality)
+        mutableStateOf(if (prefs.dataSaver) VideoQualityPreset.SAVER_360P else prefs.defaultQuality)
     }
 
-    var viewerCount by remember { mutableIntStateOf(initialStream.viewerCount) }
+    var viewerCount by remember { mutableIntStateOf(initialStream.viewers) }
     var isFollowing by remember { mutableStateOf(false) }
     var messages by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     var chatDraft by remember { mutableStateOf("") }
@@ -136,6 +134,7 @@ fun WatchScreen(
 
     var viewerSessionRef by remember { mutableStateOf<WebRtcViewerSession?>(null) }
     var chatClientRef by remember { mutableStateOf<ChatClient?>(null) }
+    var watchSessionId by remember { mutableStateOf<String?>(null) }
 
     var showTipDialog by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
@@ -143,7 +142,6 @@ fun WatchScreen(
     val watchStartedMs = remember { mutableLongStateOf(System.currentTimeMillis()) }
     val chatListState = rememberLazyListState()
 
-    // Clear typing indicator after 3 seconds
     LaunchedEffect(typingUser) {
         if (typingUser != null) {
             delay(3_000L)
@@ -151,160 +149,159 @@ fun WatchScreen(
         }
     }
 
-    // Auto-scroll chat on new message
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             runCatching { chatListState.animateScrollToItem(messages.lastIndex) }
         }
     }
 
-    // Fetch public metadata, chat history, follow state & payment config
     LaunchedEffect(stream.id, currentUser?.id) {
-        container.liveRepository.stream(stream.id).onSuccess { stream = it; viewerCount = it.viewerCount }
-        container.liveRepository.streamPresence(stream.id).onSuccess { viewerCount = maxOf(viewerCount, it.viewerCount) }
+        container.liveRepository.stream(stream.id).onSuccess { stream = it; viewerCount = it.viewers }
+        container.liveRepository.presence(stream.id).onSuccess { viewerCount = maxOf(viewerCount, it.viewers) }
         container.liveRepository.chatHistory(stream.id).onSuccess { messages = it }
         container.platformRepository.paymentConfig().onSuccess { paymentConfig = it }
-        val creatorUsername = stream.streamerUsername
-        if (currentUser != null && !creatorUsername.isNullOrBlank()) {
-            container.platformRepository.profile(creatorUsername).onSuccess { isFollowing = it.isFollowing }
+        container.liveRepository.startWatch(streamId = stream.id).onSuccess { sid ->
+            if (sid.isNotBlank()) watchSessionId = sid
+        }
+        val ownerId = stream.ownerId
+        if (currentUser != null && !ownerId.isNullOrBlank()) {
+            container.liveRepository.followState(ownerId).onSuccess { isFollowing = it }
         }
     }
 
-    // Active WebRTC + Signalling + Chat lifecycle (requires authenticated session for WS tickets)
     DisposableEffect(stream.id, currentUser?.id, apiBase) {
-        if (currentUser == null) {
-            statusText = "Sign in to connect live peer-to-peer video & chat"
-            onDispose {}
-        } else {
-            val sessionJob = scope.launch {
-                val ice = if (stream.streamType == "local") {
-                    emptyList()
+        val sessionJob = scope.launch {
+            val ice = if (stream.streamType == "local") {
+                emptyList()
+            } else {
+                container.liveRepository.iceServers().getOrDefault(emptyList()).toNativeIceServers()
+            }
+
+            val sigTicket = container.liveRepository.ticket(stream.id, "viewer").getOrElse { err ->
+                statusText = if (currentUser == null) {
+                    "Sign in to watch live or wait for public stream"
                 } else {
-                    container.liveRepository.iceServers().getOrDefault(emptyList()).toNativeIceServers()
+                    err.message ?: "Stream is offline or unavailable"
                 }
+                return@launch
+            }
 
-                val sigTicket = container.liveRepository.ticket(stream.id, "viewer").getOrElse { err ->
-                    statusText = err.message ?: "Stream is offline or unavailable"
-                    return@launch
-                }
-
-                val peerId = "android-viewer-${UUID.randomUUID().toString().take(8)}"
-                var signalRef: SignallingClient? = null
-                val rtc = WebRtcViewerSession(
-                    context = context,
-                    iceServers = ice,
-                    sendSignal = { frame -> signalRef?.send(frame) },
-                    onVideo = { track -> scope.launch { videoTrack = track } },
-                    onAudio = {},
-                    onState = { pcState ->
-                        scope.launch {
-                            statusText = when (pcState.name) {
-                                "CONNECTED" -> "LIVE"
-                                "CONNECTING" -> "Negotiating P2P media…"
-                                "DISCONNECTED" -> "Reconnecting media…"
-                                "FAILED" -> "Media interrupted — retrying…"
-                                else -> pcState.name.lowercase()
-                            }
+            val peerId = "android-viewer-${UUID.randomUUID().toString().take(8)}"
+            var signalRef: SignallingClient? = null
+            val rtc = WebRtcViewerSession(
+                context = context,
+                iceServers = ice,
+                sendSignal = { frame -> signalRef?.send(frame) },
+                onVideo = { track -> scope.launch { videoTrack = track } },
+                onAudio = {},
+                onState = { pcState ->
+                    scope.launch {
+                        statusText = when (pcState.name) {
+                            "CONNECTED" -> "LIVE"
+                            "CONNECTING" -> "Negotiating P2P media…"
+                            "DISCONNECTED" -> "Reconnecting media…"
+                            "FAILED" -> "Media interrupted — retrying…"
+                            else -> pcState.name.lowercase()
                         }
-                    },
-                    onDiagnostics = { diag -> scope.launch { diagnostics = diag } },
-                )
-                viewerSessionRef = rtc
+                    }
+                },
+                onDiagnostics = { diag -> scope.launch { diagnostics = diag } },
+            )
+            viewerSessionRef = rtc
 
-                val sig = SignallingClient(
-                    streamId = stream.id,
-                    initialTicket = sigTicket,
-                    role = "viewer",
-                    peerId = peerId,
-                    apiBaseUrl = apiBase,
-                    refreshTicket = { container.liveRepository.ticket(stream.id, "viewer").getOrNull() },
-                    onFrame = { frame ->
-                        when (frame.optString("type")) {
-                            "welcome" -> {
-                                scope.launch { statusText = "Signalling ready — waiting for broadcaster…" }
-                                rtc.startKnocking()
-                            }
-                            "ready", "streamer-ready" -> {
-                                val hostId = frame.optString("from").takeIf(String::isNotBlank)
-                                    ?: frame.optString("id").takeIf(String::isNotBlank)
-                                rtc.onHostReady(hostId)
-                                selectedQuality.maxBitrateKbps?.let { rtc.requestQuality(it) }
-                            }
-                            "peer-left" -> {
-                                val leftId = frame.optString("id").takeIf(String::isNotBlank)
-                                    ?: frame.optString("from").takeIf(String::isNotBlank)
-                                val role = frame.optString("role")
-                                if (role == "host" || (leftId != null && leftId == rtc.streamerPeerId)) {
-                                    scope.launch { statusText = "Broadcaster paused or disconnected — waiting…" }
-                                    rtc.onHostLeft()
-                                }
-                            }
-                            "close" -> {
-                                scope.launch { statusText = "Broadcaster ended the stream" }
+            val sig = SignallingClient(
+                streamId = stream.id,
+                initialTicket = sigTicket,
+                role = "viewer",
+                peerId = peerId,
+                apiBaseUrl = apiBase,
+                refreshTicket = { container.liveRepository.ticket(stream.id, "viewer").getOrNull() },
+                onFrame = { frame ->
+                    when (frame.optString("type")) {
+                        "welcome" -> {
+                            scope.launch { statusText = "Signalling ready — waiting for broadcaster…" }
+                            rtc.startKnocking()
+                        }
+                        "ready", "streamer-ready" -> {
+                            val hostId = frame.optString("from").takeIf(String::isNotBlank)
+                                ?: frame.optString("id").takeIf(String::isNotBlank)
+                            rtc.onHostReady(hostId)
+                            selectedQuality.viewerKbps?.let { rtc.requestQuality(it) }
+                        }
+                        "peer-left" -> {
+                            val leftId = frame.optString("id").takeIf(String::isNotBlank)
+                                ?: frame.optString("from").takeIf(String::isNotBlank)
+                            val role = frame.optString("role")
+                            if (role == "host" || (leftId != null && leftId == rtc.streamerPeerId)) {
+                                scope.launch { statusText = "Broadcaster paused or disconnected — waiting…" }
                                 rtc.onHostLeft()
                             }
-                            "error" -> {
-                                scope.launch {
-                                    statusText = frame.optString("error", "Broadcast unavailable")
-                                }
+                        }
+                        "close" -> {
+                            scope.launch { statusText = "Broadcaster ended the stream" }
+                            rtc.onHostLeft()
+                        }
+                        "error" -> {
+                            scope.launch {
+                                statusText = frame.optString("error", "Broadcast unavailable")
                             }
-                            else -> rtc.accept(frame)
+                        }
+                        else -> rtc.accept(frame)
+                    }
+                },
+                onClosed = { reason -> scope.launch { statusText = reason } },
+                onReconnected = { rtc.startKnocking() },
+            )
+            signalRef = sig
+            sig.connect()
+
+            container.liveRepository.ticket(stream.id, "viewer").onSuccess { chatTicket ->
+                val chat = ChatClient(
+                    streamId = stream.id,
+                    initialTicket = chatTicket,
+                    role = "viewer",
+                    apiBaseUrl = apiBase,
+                    refreshTicket = { container.liveRepository.ticket(stream.id, "viewer").getOrNull() },
+                    onState = { st -> scope.launch { chatState = st } },
+                    onMessage = { msg ->
+                        scope.launch {
+                            if (messages.none { it.id == msg.id }) {
+                                messages = (messages + msg).takeLast(150)
+                            }
                         }
                     },
-                    onClosed = { reason -> scope.launch { statusText = reason } },
-                    onReconnected = { rtc.startKnocking() },
+                    onPresence = { viewers, _ -> scope.launch { viewerCount = viewers } },
+                    onModeration = { id, hidden ->
+                        scope.launch {
+                            messages = messages.map { if (it.id == id) it.copy(isModerated = hidden) else it }
+                        }
+                    },
+                    onTyping = { who -> scope.launch { typingUser = who } },
+                    onStreamOffline = { scope.launch { statusText = "Broadcast has ended" } },
+                    onError = { err -> scope.launch { chatBanner = err } },
                 )
-                signalRef = sig
-                sig.connect()
+                chatClientRef = chat
+                chat.connect()
+            }
+        }
 
-                container.liveRepository.ticket(stream.id, "viewer").onSuccess { chatTicket ->
-                    val chat = ChatClient(
-                        streamId = stream.id,
-                        initialTicket = chatTicket,
-                        role = "viewer",
-                        apiBaseUrl = apiBase,
-                        refreshTicket = { container.liveRepository.ticket(stream.id, "viewer").getOrNull() },
-                        onState = { st -> scope.launch { chatState = st } },
-                        onMessage = { msg ->
-                            scope.launch {
-                                if (messages.none { it.id == msg.id }) {
-                                    messages = (messages + msg).takeLast(150)
-                                }
-                            }
-                        },
-                        onPresence = { viewers, _ -> scope.launch { viewerCount = viewers } },
-                        onModeration = { id, hidden ->
-                            scope.launch {
-                                messages = messages.map { if (it.id == id) it.copy(isModerated = hidden) else it }
-                            }
-                        },
-                        onTyping = { who -> scope.launch { typingUser = who } },
-                        onStreamOffline = { scope.launch { statusText = "Broadcast has ended" } },
-                        onError = { err -> scope.launch { chatBanner = err } },
-                    )
-                    chatClientRef = chat
-                    chat.connect()
+        onDispose {
+            val watchedSec = ((System.currentTimeMillis() - watchStartedMs.longValue) / 1000L).toInt()
+            val sid = watchSessionId
+            if (!sid.isNullOrBlank() && watchedSec >= 2) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    container.liveRepository.endWatch(sid, watchedSec)
                 }
             }
-
-            onDispose {
-                val watchedSec = ((System.currentTimeMillis() - watchStartedMs.longValue) / 1000L).toInt()
-                if (watchedSec >= 3) {
-                    kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                        container.liveRepository.recordWatchEvent(stream.id, watchedSec)
-                    }
-                }
-                sessionJob.cancel()
-                chatClientRef?.close()
-                chatClientRef = null
-                viewerSessionRef?.close()
-                viewerSessionRef = null
-            }
+            sessionJob.cancel()
+            chatClientRef?.close()
+            chatClientRef = null
+            viewerSessionRef?.close()
+            viewerSessionRef = null
         }
     }
 
     Column(modifier = Modifier.fillMaxSize().background(ImLivePalette.Obsidian)) {
-        // Video Theater Box
         Box(
             modifier = if (theaterFullscreen) {
                 Modifier.fillMaxSize().background(Color.Black)
@@ -332,13 +329,12 @@ fun WatchScreen(
                         Text(statusText, style = MaterialTheme.typography.titleMedium, color = Color.White)
                         if (currentUser == null) {
                             Spacer(Modifier.height(12.dp))
-                            Button(onClick = onRequireSignIn) { Text("Sign in to Watch Live") }
+                            Button(onClick = onRequireSignIn) { Text("Sign in for Chat & Follow") }
                         }
                     }
                 }
             }
 
-            // Top overlay controls
             Row(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -353,43 +349,41 @@ fun WatchScreen(
                     LivePulseBadge(if (statusText == "LIVE") "LIVE · $viewerCount" else statusText.take(22))
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Surface(color = Color.Black.copy(alpha = 0.55f), shape = RoundedCornerShape(50)) {
-                        Row {
-                            IconButton(onClick = {
-                                audioMuted = !audioMuted
-                                viewerSessionRef?.setAudioMuted(audioMuted)
-                            }) {
-                                Icon(
-                                    if (audioMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                                    contentDescription = "Mute audio",
-                                    tint = Color.White,
-                                )
-                            }
-                            IconButton(onClick = {
-                                speakerphone = !speakerphone
-                                viewerSessionRef?.setSpeakerphone(speakerphone)
-                            }) {
-                                Icon(
-                                    Icons.Default.Hearing,
-                                    contentDescription = "Toggle speaker/earpiece",
-                                    tint = if (speakerphone) MaterialTheme.colorScheme.primary else Color.White,
-                                )
-                            }
-                            IconButton(onClick = { showDiagnostics = !showDiagnostics }) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = "WebRTC stats",
-                                    tint = if (showDiagnostics) MaterialTheme.colorScheme.primary else Color.White,
-                                )
-                            }
-                            IconButton(onClick = { theaterFullscreen = !theaterFullscreen }) {
-                                Icon(
-                                    if (theaterFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                                    contentDescription = "Toggle fullscreen",
-                                    tint = Color.White,
-                                )
-                            }
+                Surface(color = Color.Black.copy(alpha = 0.55f), shape = RoundedCornerShape(50)) {
+                    Row {
+                        IconButton(onClick = {
+                            audioMuted = !audioMuted
+                            viewerSessionRef?.setAudioMuted(audioMuted)
+                        }) {
+                            Icon(
+                                if (audioMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = "Mute audio",
+                                tint = Color.White,
+                            )
+                        }
+                        IconButton(onClick = {
+                            speakerphone = !speakerphone
+                            viewerSessionRef?.setSpeakerphone(speakerphone)
+                        }) {
+                            Icon(
+                                Icons.Default.Hearing,
+                                contentDescription = "Toggle speaker/earpiece",
+                                tint = if (speakerphone) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                        IconButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = "WebRTC stats",
+                                tint = if (showDiagnostics) MaterialTheme.colorScheme.primary else Color.White,
+                            )
+                        }
+                        IconButton(onClick = { theaterFullscreen = !theaterFullscreen }) {
+                            Icon(
+                                if (theaterFullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                contentDescription = "Toggle fullscreen",
+                                tint = Color.White,
+                            )
                         }
                     }
                 }
@@ -399,9 +393,7 @@ fun WatchScreen(
                 Surface(
                     color = Color.Black.copy(alpha = 0.80f),
                     shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(10.dp),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         Text("Transport: ${diagnostics.transportType}", style = MaterialTheme.typography.labelSmall, color = ImLivePalette.OnlineEmerald)
@@ -421,7 +413,6 @@ fun WatchScreen(
         }
 
         if (!theaterFullscreen) {
-            // Stream info + quality + actions bar
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -431,13 +422,13 @@ fun WatchScreen(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
-                        modifier = Modifier.clickable(enabled = !stream.streamerUsername.isNullOrBlank()) {
-                            stream.streamerUsername?.let(onOpenCreatorProfile)
+                        modifier = Modifier.clickable(enabled = !stream.username.isNullOrBlank()) {
+                            stream.username?.let(onOpenCreatorProfile)
                         },
                     ) {
                         AvatarCircle(
                             name = stream.hostDisplay,
-                            avatarUrl = stream.streamerAvatar,
+                            avatarUrl = stream.userAvatar,
                             apiBaseUrl = apiBase,
                             size = 40.dp,
                             isLive = true,
@@ -453,17 +444,17 @@ fun WatchScreen(
                         )
                     }
 
-                    if (currentUser != null && stream.userId != currentUser?.id) {
+                    val ownerId = stream.ownerId
+                    if (currentUser != null && !ownerId.isNullOrBlank() && ownerId != currentUser?.id) {
                         Button(
                             onClick = {
                                 scope.launch {
-                                    val targetId = stream.userId
                                     val res = if (isFollowing) {
-                                        container.platformRepository.unfollowUser(targetId)
+                                        container.liveRepository.unfollow(ownerId)
                                     } else {
-                                        container.platformRepository.followUser(targetId)
+                                        container.liveRepository.follow(ownerId)
                                     }
-                                    if (res.isSuccess) isFollowing = !isFollowing
+                                    res.onSuccess { next -> isFollowing = next }
                                 }
                             },
                         ) {
@@ -476,14 +467,14 @@ fun WatchScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    VideoQualityPreset.entries.take(4).forEach { preset ->
+                    listOf(VideoQualityPreset.AUTO, VideoQualityPreset.HD_720P, VideoQualityPreset.SD_480P, VideoQualityPreset.SAVER_360P).forEach { preset ->
                         FilterChip(
                             selected = !audioOnly && selectedQuality == preset,
                             onClick = {
                                 audioOnly = false
                                 selectedQuality = preset
                                 viewerSessionRef?.setAudioOnly(false)
-                                viewerSessionRef?.requestQuality(preset.maxBitrateKbps)
+                                viewerSessionRef?.requestQuality(preset.viewerKbps)
                             },
                             label = { Text(preset.label.substringBefore(" ")) },
                         )
@@ -497,7 +488,7 @@ fun WatchScreen(
                         label = { Text("Audio only") },
                     )
                     IconButton(onClick = {
-                        val root = EndpointUrlRules.toOriginRootUrl(apiBase)
+                        val root = EndpointUrlRules.toOriginUrl(apiBase)
                         sharePlainText(
                             context = context,
                             subject = stream.title,
@@ -506,7 +497,7 @@ fun WatchScreen(
                     }) {
                         Icon(Icons.Default.Share, contentDescription = "Share")
                     }
-                    if (currentUser != null && stream.userId != currentUser?.id) {
+                    if (currentUser != null && stream.ownerId != null && stream.ownerId != currentUser?.id) {
                         IconButton(onClick = { showTipDialog = true }) {
                             Icon(Icons.Default.Favorite, contentDescription = "Tip creator", tint = ImLivePalette.LiveRose)
                         }
@@ -517,7 +508,6 @@ fun WatchScreen(
                 }
             }
 
-            // Live Chat list
             LazyColumn(
                 state = chatListState,
                 modifier = Modifier
@@ -535,15 +525,16 @@ fun WatchScreen(
                 items(messages.filterNot { it.isModerated }, key = { it.id }) { msg ->
                     Surface(
                         color = ImLivePalette.CardDark,
+                        border = BorderStroke(1.dp, ImLivePalette.BorderSubtle),
                         shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { replyTarget = msg },
                     ) {
                         Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp)) {
-                            msg.replyToSnippet?.takeIf(String::isNotBlank)?.let { snippet ->
+                            msg.replyTo?.let { reply ->
                                 Text(
-                                    "↳ ${msg.replyToUsername ?: "reply"}: $snippet",
+                                    "↳ @${reply.username}: ${reply.message}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -568,7 +559,6 @@ fun WatchScreen(
                 }
             }
 
-            // Chat composer
             Surface(color = ImLivePalette.SurfaceDark, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     replyTarget?.let { target ->
@@ -611,7 +601,7 @@ fun WatchScreen(
                                 val reply = replyTarget
                                 if (reply != null) {
                                     scope.launch {
-                                        container.liveRepository.sendChatRest(stream.id, text, reply.id).onSuccess { sent ->
+                                        container.liveRepository.sendRestChat(stream.id, text, reply.id).onSuccess { sent ->
                                             if (messages.none { it.id == sent.id }) messages = messages + sent
                                             chatDraft = ""
                                             replyTarget = null
@@ -621,7 +611,7 @@ fun WatchScreen(
                                     chatDraft = ""
                                 } else {
                                     scope.launch {
-                                        container.liveRepository.sendChatRest(stream.id, text, null).onSuccess { sent ->
+                                        container.liveRepository.sendRestChat(stream.id, text, null).onSuccess { sent ->
                                             if (messages.none { it.id == sent.id }) messages = messages + sent
                                             chatDraft = ""
                                         }
@@ -638,7 +628,7 @@ fun WatchScreen(
         }
     }
 
-    if (showTipDialog) {
+    if (showTipDialog && stream.ownerId != null) {
         var amountDollars by remember { mutableStateOf("5") }
         var tipMessage by remember { mutableStateOf("") }
         var tipFeedback by remember { mutableStateOf<String?>(null) }
@@ -666,7 +656,7 @@ fun WatchScreen(
                     )
                     if (paymentConfig?.enabled == false) {
                         Text(
-                            "Creator checkout is not enabled on this server yet.",
+                            "Creator checkout is not configured on this server yet.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = ImLivePalette.WarningAmber,
                         )
@@ -676,27 +666,27 @@ fun WatchScreen(
             },
             confirmButton = {
                 Button(
-                    enabled = paymentConfig?.enabled != false,
                     onClick = {
                         val cents = ((amountDollars.toDoubleOrNull() ?: 5.0) * 100).toInt().coerceAtLeast(100)
                         scope.launch {
-                            container.platformRepository.createTipCheckout(
-                                recipientId = stream.userId,
+                            container.platformRepository.createTip(
+                                streamerId = stream.ownerId!!,
                                 amountCents = cents,
                                 streamId = stream.id,
                                 message = tipMessage.takeIf(String::isNotBlank),
                             ).fold(
                                 onSuccess = { checkout ->
                                     showTipDialog = false
-                                    checkout.checkoutUrl?.let { url ->
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    val targetUrl = checkout.checkoutUrl ?: checkout.redirectUrl
+                                    if (!targetUrl.isNullOrBlank()) {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)))
                                     }
                                 },
                                 onFailure = { tipFeedback = it.message ?: "Tip checkout unavailable" },
                             )
                         }
                     },
-                ) { Text("Continue to Checkout") }
+                ) { Text("Continue") }
             },
             dismissButton = { TextButton(onClick = { showTipDialog = false }) { Text("Close") } },
         )
@@ -727,11 +717,13 @@ fun WatchScreen(
                         label = { Text("Additional context") },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    FilterChip(
-                        selected = blockAlso,
-                        onClick = { blockAlso = !blockAlso },
-                        label = { Text("Also block ${stream.hostDisplay}") },
-                    )
+                    if (stream.ownerId != null) {
+                        FilterChip(
+                            selected = blockAlso,
+                            onClick = { blockAlso = !blockAlso },
+                            label = { Text("Also block ${stream.hostDisplay}") },
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -742,9 +734,10 @@ fun WatchScreen(
                             targetId = stream.id,
                             reason = reason,
                             details = details,
+                            streamId = stream.id,
                         )
-                        if (blockAlso) {
-                            container.platformRepository.blockUser(stream.userId)
+                        if (blockAlso && stream.ownerId != null) {
+                            container.platformRepository.blockUser(stream.ownerId!!)
                         }
                         showReportDialog = false
                         if (blockAlso) onBack()

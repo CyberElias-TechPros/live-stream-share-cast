@@ -12,7 +12,14 @@ data class NetworkStatus(
     val isOnline: Boolean = true,
     val isWifi: Boolean = false,
     val isMetered: Boolean = false,
-)
+) {
+    val transportLabel: String
+        get() = when {
+            !isOnline -> "Offline"
+            isWifi -> "Wi-Fi / LAN"
+            else -> "Cellular"
+        }
+}
 
 class NetworkMonitor(context: Context) {
     private val connectivity = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager

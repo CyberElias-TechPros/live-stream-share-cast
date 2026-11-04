@@ -38,10 +38,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.imlive.app.model.CategoryItem
-import com.imlive.app.model.CreatorSummary
 import com.imlive.app.model.LiveStream
 import com.imlive.app.model.Recording
 import com.imlive.app.model.UnifiedSearchResults
+import com.imlive.app.model.UserProfile
 import com.imlive.app.ui.ImLiveContainer
 import com.imlive.app.ui.components.AvatarCircle
 import com.imlive.app.ui.components.BadgePill
@@ -63,10 +63,10 @@ fun ExploreScreen(
 
     var query by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
-    var activeSection by remember { mutableStateOf("all") } // all | streams | creators | vods
+    var activeSection by remember { mutableStateOf("all") }
     var categories by remember { mutableStateOf<List<CategoryItem>>(emptyList()) }
     var browseStreams by remember { mutableStateOf<List<LiveStream>>(emptyList()) }
-    var browseCreators by remember { mutableStateOf<List<CreatorSummary>>(emptyList()) }
+    var browseCreators by remember { mutableStateOf<List<UserProfile>>(emptyList()) }
     var browseRecordings by remember { mutableStateOf<List<Recording>>(emptyList()) }
     var searchResults by remember { mutableStateOf<UnifiedSearchResults?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -74,9 +74,9 @@ fun ExploreScreen(
     LaunchedEffect(apiBase, selectedCategory) {
         loading = true
         container.liveRepository.categories().onSuccess { categories = it }
-        container.liveRepository.browseStreams(status = "live", category = selectedCategory, sort = "viewers")
+        container.liveRepository.liveStreams(category = selectedCategory, sort = "viewers")
             .onSuccess { browseStreams = it }
-        container.liveRepository.trending().onSuccess { browseCreators = it.creators }
+        container.liveRepository.trending().onSuccess { browseCreators = it.rising }
         container.platformRepository.publicRecordings().onSuccess { browseRecordings = it }
         loading = false
     }
@@ -92,7 +92,7 @@ fun ExploreScreen(
     }
 
     val showingStreams = searchResults?.streams ?: browseStreams
-    val showingCreators = searchResults?.creators ?: browseCreators
+    val showingCreators = searchResults?.channels ?: browseCreators
     val showingRecordings = searchResults?.recordings ?: browseRecordings
 
     LazyColumn(
@@ -191,19 +191,19 @@ fun ExploreScreen(
                         ) {
                             AvatarCircle(
                                 name = creator.bestName,
-                                avatarUrl = creator.avatarUrl,
+                                avatarUrl = creator.avatar,
                                 apiBaseUrl = apiBase,
                                 size = 44.dp,
-                                isLive = creator.isLive,
+                                isLive = false,
                             )
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Text(creator.bestName, style = MaterialTheme.typography.titleMedium)
-                                    if (creator.isLive) BadgePill("LIVE", ImLivePalette.LiveRose)
+                                    if (creator.isStreamer) BadgePill("CREATOR", MaterialTheme.colorScheme.primary)
                                 }
                                 Text(
-                                    "@${creator.username} · ${creator.followerCount} followers",
+                                    "@${creator.username} · ${creator.followers} followers",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

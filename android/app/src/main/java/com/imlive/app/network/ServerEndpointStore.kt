@@ -7,22 +7,29 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.net.URI
+import java.net.URLDecoder
 
 sealed interface DeepLinkDestination {
     data class Watch(val streamId: String) : DeepLinkDestination
     data class Profile(val username: String) : DeepLinkDestination
-    data class LibraryRecording(val recordingId: String) : DeepLinkDestination
+    data class LibraryRecording(val recordingId: String?) : DeepLinkDestination
+    data object Broadcast : DeepLinkDestination
+    data object OfflineRooms : DeepLinkDestination
+    data object Schedule : DeepLinkDestination
     data class ResetPassword(val token: String) : DeepLinkDestination
     data class VerifyEmail(val token: String) : DeepLinkDestination
     data class JoinLan(val room: LanRoomInfo) : DeepLinkDestination
 }
 
 object EndpointUrlRules {
+    const val OFFICIAL_PRODUCTION_API_URL =
+        "https://live-stream-share-cast-api.autumn-surf-21ec.workers.dev/api"
+
     /**
      * Normalizes an API base URL so it always ends with `/api` without trailing slashes,
      * and validates scheme safety (HTTPS required in release builds; HTTP allowed in debug).
      */
-    fun normalizeApiBaseUrl(raw: String, allowInsecureHttp: Boolean): Result<String> = runCatching {
+    fun normalizeApiBaseUrl(raw: String, allowInsecureHttp: Boolean = true): Result<String> = runCatching {
         val trimmed = raw.trim().trimEnd('/')
         require(trimmed.isNotEmpty()) { "Enter the Worker API URL" }
         val parsed = URI(trimmed)
@@ -42,8 +49,9 @@ object EndpointUrlRules {
     fun toOriginUrl(apiBaseUrl: String): String =
         apiBaseUrl.trimEnd('/').removeSuffix("/api")
 
-    fun resolveMediaUrl(apiBaseUrl: String, mediaPathOrUrl: String): String {
-        val clean = mediaPathOrUrl.trim()
+    fun resolveMediaUrl(apiBaseUrl: String, mediaPathOrUrl: String?): String? {
+        val clean = mediaPathOrUrl?.trim().orEmpty()
+        if (clean.isEmpty()) return null
         if (clean.startsWith("http://") || clean.startsWith("https://")) return clean
         val origin = toOriginUrl(apiBaseUrl)
         return if (clean.startsWith("/")) "$origin$clean" else "$origin/$clean"
@@ -69,10 +77,12 @@ object EndpointUrlRules {
                         DeepLinkDestination.JoinLan(LanRoomInfo(ip, port, code, title))
                     } else null
                 }
-                "watch" -> segments.firstOrNull()?.let(DeepLinkDestination::Watch)
-                    ?: query["id"]?.let(DeepLinkDestination::Watch)
-                "profile" -> segments.firstOrNull()?.let(DeepLinkDestination::Profile)
-                "library" -> segments.firstOrNull()?.let(DeepLinkDestination::LibraryRecording)
+                "watch" -> (segments.firstOrNull() ?: query["id"])?.let(DeepLinkDestination::Watch)
+                "profile", "u" -> segments.firstOrNull()?.removePrefix("@")?.let(DeepLinkDestination::Profile)
+                "library" -> DeepLinkDestination.LibraryRecording(segments.firstOrNull())
+                "broadcast" -> DeepLinkDestination.Broadcast
+                "offline" -> DeepLinkDestination.OfflineRooms
+                "schedule" -> DeepLinkDestination.Schedule
                 else -> null
             }
         }
@@ -81,8 +91,11 @@ object EndpointUrlRules {
             val segments = (uri.path ?: "").split('/').filter(String::isNotBlank)
             return when (segments.firstOrNull()) {
                 "watch" -> segments.getOrNull(1)?.let(DeepLinkDestination::Watch)
-                "profile" -> segments.getOrNull(1)?.removePrefix("@")?.let(DeepLinkDestination::Profile)
-                "library" -> segments.getOrNull(1)?.let(DeepLinkDestination::LibraryRecording)
+                "profile", "u" -> segments.getOrNull(1)?.removePrefix("@")?.let(DeepLinkDestination::Profile)
+                "library" -> DeepLinkDestination.LibraryRecording(segments.getOrNull(1))
+                "broadcast" -> DeepLinkDestination.Broadcast
+                "offline" -> DeepLinkDestination.OfflineRooms
+                "schedule" -> DeepLinkDestination.Schedule
                 "reset-password" -> query["token"]?.takeIf(String::isNotBlank)?.let(DeepLinkDestination::ResetPassword)
                 "verify-email" -> query["token"]?.takeIf(String::isNotBlank)?.let(DeepLinkDestination::VerifyEmail)
                 else -> null
@@ -97,8 +110,8 @@ object EndpointUrlRules {
             val idx = pair.indexOf('=')
             if (idx <= 0) null
             else {
-                val key = java.net.URLDecoder.decode(pair.substring(0, idx), "UTF-8")
-                val value = java.net.URLDecoder.decode(pair.substring(idx + 1), "UTF-8")
+                val key = URLDecoder.decode(pair.substring(0, idx), "UTF-8")
+                val value = URLDecoder.decode(pair.substring(idx + 1), "UTF-8")
                 key to value
             }
         }.toMap()
@@ -126,6 +139,9 @@ class ServerEndpointStore(context: Context) {
         return defaultUrl
     }
 
+    fun resolveMediaUrl(rawPathOrUrl: String): String =
+        EndpointUrlRules.resolveMediaUrl(apiBaseUrl, rawPathOrUrl) ?: rawPathOrUrl
+
     fun updateCustomUrl(rawUrl: String): Result<String> {
         return EndpointUrlRules.normalizeApiBaseUrl(rawUrl, allowInsecureHttp = BuildConfig.DEBUG)
             .onSuccess { normalized ->
@@ -139,12 +155,7 @@ class ServerEndpointStore(context: Context) {
         _apiBaseUrl.value = defaultUrl
     }
 
-    fun isUsingCustomUrl(): Boolean = prefs.contains(KEY_CUSTOM_API_URL)
-
-    fun resolveMediaUrl(pathOrUrl: String): String =
-        EndpointUrlRules.resolveMediaUrl(apiBaseUrl, pathOrUrl)
-
     private companion object {
-        const val KEY_CUSTOM_API_URL = "custom_api_base_url"
+        const val KEY_CUSTOM_API_URL = "custom_api_url"
     }
 }

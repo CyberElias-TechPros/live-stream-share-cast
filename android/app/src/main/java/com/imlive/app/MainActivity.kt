@@ -106,12 +106,11 @@ private fun ImLiveRootApp(
     var selectedLibraryRecording by remember { mutableStateOf<Recording?>(null) }
     var unreadNotifications by remember { mutableIntStateOf(0) }
 
-    // Refresh profile & unread notification count while signed in
     LaunchedEffect(currentUser?.id) {
         if (container.authRepository.loggedIn()) {
             container.authRepository.me()
             while (isActive && container.authRepository.loggedIn()) {
-                container.platformRepository.notifications(unreadOnly = true).onSuccess { (_, unread) ->
+                container.platformRepository.unreadNotificationCount().onSuccess { unread ->
                     unreadNotifications = unread
                 }
                 delay(45_000L)
@@ -121,20 +120,19 @@ private fun ImLiveRootApp(
         }
     }
 
-    // Handle deep links (`imlive://` and HTTPS App Links)
     LaunchedEffect(incomingDeepLink) {
         val link = incomingDeepLink ?: return@LaunchedEffect
         when (link) {
-            is DeepLinkDestination.WatchStream -> {
+            is DeepLinkDestination.Watch -> {
                 container.liveRepository.stream(link.streamId).onSuccess { loaded ->
                     overlay = OverlayRoute.Watch(loaded)
                 }.onFailure {
                     overlay = OverlayRoute.Watch(
-                        LiveStream(id = link.streamId, userId = "", title = "Live Stream", isLive = true),
+                        LiveStream(id = link.streamId, title = "Live Stream", isLive = true),
                     )
                 }
             }
-            is DeepLinkDestination.UserProfile -> {
+            is DeepLinkDestination.Profile -> {
                 overlay = OverlayRoute.CreatorProfile(link.username)
             }
             is DeepLinkDestination.Broadcast -> {
@@ -145,19 +143,26 @@ private fun ImLiveRootApp(
             is DeepLinkDestination.OfflineRooms -> {
                 overlay = OverlayRoute.OfflineRooms(null)
             }
-            is DeepLinkDestination.LanDirect -> {
-                overlay = OverlayRoute.OfflineRooms(
-                    LanRoomInfo(
-                        hostAddress = link.hostAddress,
-                        port = link.port,
-                        roomCode = link.roomCode,
-                        title = link.title ?: "LAN Broadcast",
-                    ),
-                )
+            is DeepLinkDestination.JoinLan -> {
+                overlay = OverlayRoute.OfflineRooms(link.room)
             }
-            is DeepLinkDestination.Library, is DeepLinkDestination.Schedule -> {
+            is DeepLinkDestination.LibraryRecording -> {
+                val recId = link.recordingId
+                if (!recId.isNullOrBlank()) {
+                    container.platformRepository.recording(recId).onSuccess { rec ->
+                        selectedLibraryRecording = rec
+                    }
+                }
                 overlay = null
                 activeTab = PrimaryTab.LIBRARY
+            }
+            is DeepLinkDestination.Schedule -> {
+                overlay = null
+                activeTab = PrimaryTab.LIBRARY
+            }
+            is DeepLinkDestination.ResetPassword,
+            is DeepLinkDestination.VerifyEmail -> {
+                overlay = OverlayRoute.Auth
             }
         }
         onDeepLinkConsumed()

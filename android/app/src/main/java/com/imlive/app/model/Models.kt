@@ -140,6 +140,8 @@ data class UserProfile(
     val privacyPrefs: PrivacyPreferences = PrivacyPreferences(),
     val streamingPrefs: StreamingPreferences = StreamingPreferences(),
 ) {
+    val bestName: String get() = displayName.ifBlank { username }
+
     companion object {
         fun from(json: JSONObject): UserProfile {
             val prefs = json.optJSONObject("preferences")
@@ -202,6 +204,8 @@ data class LiveStream(
     val createdAt: String? = null,
     val hostConnected: Boolean = false,
 ) {
+    val hostDisplay: String get() = displayName?.takeIf(String::isNotBlank) ?: username?.takeIf(String::isNotBlank) ?: "Creator"
+
     companion object {
         fun from(json: JSONObject): LiveStream {
             val tagsArray = json.optJSONArray("tags")
@@ -271,7 +275,10 @@ data class RtcConnectionDiagnostics(
     val rttMs: Int? = null,
     val packetsLost: Long = 0,
     val reconnectCount: Int = 0,
-)
+) {
+    val resolutionLabel: String
+        get() = if (videoWidth > 0 && videoHeight > 0) "${videoWidth}x${videoHeight}" else "—"
+}
 
 data class ChatReplyPreview(
     val id: String,

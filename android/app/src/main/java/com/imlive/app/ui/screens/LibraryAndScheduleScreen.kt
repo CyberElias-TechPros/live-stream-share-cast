@@ -96,7 +96,7 @@ fun LibraryAndScheduleScreen(
     val apiBase by container.endpointStore.apiBaseUrlFlow.collectAsState()
     val currentUser by container.authRepository.currentUser.collectAsState()
 
-    var section by remember { mutableStateOf("public_vods") } // public_vods | my_vods | schedule
+    var section by remember { mutableStateOf("public_vods") }
     var publicRecordings by remember { mutableStateOf<List<Recording>>(emptyList()) }
     var myRecordings by remember { mutableStateOf<List<Recording>>(emptyList()) }
     var schedules by remember { mutableStateOf<List<ScheduledBroadcast>>(emptyList()) }
@@ -112,7 +112,7 @@ fun LibraryAndScheduleScreen(
     suspend fun reloadAll() {
         loading = true
         container.platformRepository.publicRecordings().onSuccess { publicRecordings = it }
-        container.platformRepository.scheduledBroadcasts().onSuccess { schedules = it }
+        container.platformRepository.upcomingSchedule().onSuccess { schedules = it }
         if (currentUser != null) {
             container.platformRepository.myRecordings().onSuccess { myRecordings = it }
         }
@@ -123,7 +123,6 @@ fun LibraryAndScheduleScreen(
         reloadAll()
     }
 
-    // Native video picker -> uploads MP4/WebM directly to cloud VOD library
     val videoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
@@ -205,15 +204,15 @@ fun LibraryAndScheduleScreen(
             }
         }
 
-        // In-App Native Media3 ExoPlayer Theater when a recording is selected
         activeRecording?.let { playing ->
             item {
                 NativeVodPlayerCard(
+                    container = container,
                     recording = playing,
                     apiBaseUrl = apiBase,
                     canClip = currentUser != null,
                     onViewed = {
-                        scope.launch { container.platformRepository.incrementRecordingView(playing.id) }
+                        scope.launch { container.platformRepository.registerRecordingView(playing.id) }
                     },
                     onOpenClipCreator = { showClipDialog = true },
                     onClose = { activeRecording = null },
@@ -332,7 +331,7 @@ fun LibraryAndScheduleScreen(
                     }
                 }
                 items(schedules, key = { "sched-${it.id}" }) { item ->
-                    val isMine = currentUser?.id == item.userId
+                    val isMine = item.isOwner || (currentUser != null && currentUser?.id == item.userId)
                     Card(
                         colors = CardDefaults.cardColors(containerColor = ImLivePalette.CardDark),
                         border = BorderStroke(1.dp, ImLivePalette.BorderSubtle),
@@ -379,14 +378,14 @@ fun LibraryAndScheduleScreen(
                                             onRequireSignIn()
                                         } else {
                                             scope.launch {
-                                                container.platformRepository.toggleScheduleReminder(item.id, !item.reminded)
+                                                container.platformRepository.toggleScheduleReminder(item.id)
                                                     .onSuccess { reloadAll() }
                                             }
                                         }
                                     }) {
                                         Icon(Icons.Default.NotificationsActive, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(6.dp))
-                                        Text(if (item.reminded) "Reminder On" else "Remind Me")
+                                        Text(if (item.isReminded) "Reminder On" else "Remind Me")
                                     }
                                 }
                             }
@@ -440,8 +439,8 @@ fun LibraryAndScheduleScreen(
                         container.platformRepository.createClip(
                             recordingId = target.id,
                             title = clipTitle,
-                            clipStartSeconds = startSec.toInt(),
-                            clipEndSeconds = endSec.toInt().coerceAtLeast(startSec.toInt() + 1),
+                            startSeconds = startSec.toInt(),
+                            endSeconds = endSec.toInt().coerceAtLeast(startSec.toInt() + 1),
                         ).fold(
                             onSuccess = {
                                 showClipDialog = false
@@ -490,7 +489,9 @@ fun LibraryAndScheduleScreen(
                         container.platformRepository.updateRecording(
                             recordingId = rec.id,
                             title = editTitle,
+                            description = rec.description,
                             visibility = editVisibility,
+                            tags = rec.tags,
                         ).onSuccess {
                             editingRecording = null
                             reloadAll()
@@ -551,11 +552,13 @@ fun LibraryAndScheduleScreen(
                         val hrs = hoursAhead.toLongOrNull()?.coerceIn(1L, 720L) ?: 2L
                         val iso = Instant.now().plus(hrs, ChronoUnit.HOURS).toString()
                         scope.launch {
-                            container.platformRepository.createScheduledBroadcast(
+                            container.platformRepository.createSchedule(
                                 title = schedTitle,
-                                scheduledForIso = iso,
                                 description = schedDesc,
                                 category = schedCategory,
+                                scheduledForIso = iso,
+                                durationMinutes = 60,
+                                timezone = "UTC",
                             ).onSuccess {
                                 showScheduleDialog = false
                                 reloadAll()
@@ -575,6 +578,7 @@ fun LibraryAndScheduleScreen(
 
 @Composable
 private fun NativeVodPlayerCard(
+    container: ImLiveContainer,
     recording: Recording,
     apiBaseUrl: String,
     canClip: Boolean,
@@ -584,22 +588,25 @@ private fun NativeVodPlayerCard(
 ) {
     KeepScreenAwakeEffect(enabled = true)
     val context = LocalContext.current
-    val resolvedUrl = remember(recording.fileUrl, apiBaseUrl) {
-        EndpointUrlRules.resolveMediaUrl(apiBaseUrl, recording.fileUrl)
+    var resolvedUrl by remember(recording.id, apiBaseUrl) {
+        mutableStateOf(EndpointUrlRules.resolveMediaUrl(apiBaseUrl, recording.url))
+    }
+
+    LaunchedEffect(recording.id) {
+        onViewed()
+        if (resolvedUrl.isNullOrBlank()) {
+            container.platformRepository.playbackUrl(recording.id).onSuccess { resolvedUrl = it }
+        }
     }
 
     val exoPlayer = remember(resolvedUrl) {
         ExoPlayer.Builder(context).build().apply {
             if (!resolvedUrl.isNullOrBlank()) {
-                setMediaItem(MediaItem.fromUri(resolvedUrl))
+                setMediaItem(MediaItem.fromUri(resolvedUrl!!))
                 prepare()
                 playWhenReady = true
             }
         }
-    }
-
-    LaunchedEffect(recording.id) {
-        onViewed()
     }
 
     DisposableEffect(exoPlayer) {
@@ -627,7 +634,7 @@ private fun NativeVodPlayerCard(
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Media file URL unavailable", color = Color.White)
+                        Text("Loading media stream…", color = Color.White)
                     }
                 }
                 Surface(
@@ -652,11 +659,11 @@ private fun NativeVodPlayerCard(
                         }
                     }
                     OutlinedButton(onClick = {
-                        val root = EndpointUrlRules.toOriginRootUrl(apiBaseUrl)
+                        val root = EndpointUrlRules.toOriginUrl(apiBaseUrl)
                         sharePlainText(
                             context,
                             recording.title,
-                            "${recording.title}\nApp: imlive://library\nWeb: ${resolvedUrl ?: "$root/library"}",
+                            "${recording.title}\nApp: imlive://library/${recording.id}\nWeb: ${resolvedUrl ?: "$root/library"}",
                         )
                     }) {
                         Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -665,7 +672,7 @@ private fun NativeVodPlayerCard(
                     }
                     if (!resolvedUrl.isNullOrBlank()) {
                         IconButton(onClick = {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(resolvedUrl)))
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(resolvedUrl!!)))
                         }) {
                             Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open external")
                         }

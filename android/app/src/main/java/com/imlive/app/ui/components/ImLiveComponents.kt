@@ -186,10 +186,6 @@ fun AvatarCircle(
     }
 }
 
-/**
- * Hardware-accelerated WebRTC video surface that manages track binding, mirror
- * orientation, and clean disposal without leaking EGL resources.
- */
 @Composable
 fun WebRtcVideoSurface(
     videoTrack: VideoTrack?,
@@ -202,12 +198,10 @@ fun WebRtcVideoSurface(
 
     DisposableEffect(videoTrack) {
         val view = rendererRef
-        if (view != null) {
-            if (boundTrack !== videoTrack) {
-                boundTrack?.let { old -> runCatching { old.removeSink(view) } }
-                videoTrack?.let { next -> runCatching { next.addSink(view) } }
-                boundTrack = videoTrack
-            }
+        if (view != null && boundTrack !== videoTrack) {
+            boundTrack?.let { old -> runCatching { old.removeSink(view) } }
+            videoTrack?.let { next -> runCatching { next.addSink(view) } }
+            boundTrack = videoTrack
         }
         onDispose {
             val currentView = rendererRef
@@ -331,15 +325,12 @@ fun OfflineModeBanner(
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Default.WifiOff, contentDescription = null, tint = ImLivePalette.WarningAmber)
-                Spacer(Modifier.width(10.dp))
-                Column {
-                    Text("No internet connection", style = MaterialTheme.typography.titleMedium, color = ImLivePalette.WarningAmber)
-                    Text("Tap to open Offline Wi-Fi LAN & Hotspot streaming", style = MaterialTheme.typography.bodyMedium)
-                }
+            Icon(Icons.Default.WifiOff, contentDescription = null, tint = ImLivePalette.WarningAmber)
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("No internet connection", style = MaterialTheme.typography.titleMedium, color = ImLivePalette.WarningAmber)
+                Text("Tap to open Offline Wi-Fi LAN & Hotspot streaming", style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -372,7 +363,7 @@ fun StreamFeedCard(
                     ),
             ) {
                 NetworkImage(
-                    rawUrl = stream.thumbnailUrl,
+                    rawUrl = stream.thumbnail,
                     apiBaseUrl = apiBaseUrl,
                     contentDescription = stream.title,
                     modifier = Modifier.fillMaxSize(),
@@ -414,7 +405,7 @@ fun StreamFeedCard(
                         ) {
                             Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(13.dp), tint = Color.White)
                             Spacer(Modifier.width(4.dp))
-                            Text("${stream.viewerCount}", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                            Text("${stream.viewers}", style = MaterialTheme.typography.labelSmall, color = Color.White)
                         }
                     }
                 }
@@ -427,13 +418,13 @@ fun StreamFeedCard(
                 verticalAlignment = Alignment.Top,
             ) {
                 Box(
-                    modifier = Modifier.clickable(enabled = onCreatorClick != null && !stream.streamerUsername.isNullOrBlank()) {
-                        stream.streamerUsername?.let { onCreatorClick?.invoke(it) }
+                    modifier = Modifier.clickable(enabled = onCreatorClick != null && !stream.username.isNullOrBlank()) {
+                        stream.username?.let { onCreatorClick?.invoke(it) }
                     },
                 ) {
                     AvatarCircle(
                         name = stream.hostDisplay,
-                        avatarUrl = stream.streamerAvatar,
+                        avatarUrl = stream.userAvatar,
                         apiBaseUrl = apiBaseUrl,
                         size = 40.dp,
                         isLive = stream.isLive,
@@ -515,7 +506,7 @@ fun RecordingFeedCard(
                 contentAlignment = Alignment.Center,
             ) {
                 NetworkImage(
-                    rawUrl = recording.thumbnailUrl,
+                    rawUrl = recording.thumbnail,
                     apiBaseUrl = apiBaseUrl,
                     contentDescription = recording.title,
                     modifier = Modifier.fillMaxSize(),
@@ -554,11 +545,11 @@ fun RecordingFeedCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
-                val creator = recording.streamerDisplayName ?: recording.streamerUsername
+                val creator = recording.displayName ?: recording.username
                 Text(
                     buildString {
                         if (!creator.isNullOrBlank()) append("$creator · ")
-                        append("${recording.viewsCount} views")
+                        append("${recording.views} views")
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

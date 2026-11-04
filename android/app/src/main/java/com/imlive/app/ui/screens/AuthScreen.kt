@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -207,7 +206,7 @@ fun AuthScreen(
                                             username = username,
                                             email = email,
                                             password = password,
-                                            displayName = displayName.takeIf { it.isNotBlank() },
+                                            displayName = displayName.ifBlank { username },
                                         )
                                     } else {
                                         container.authRepository.login(email, password)
@@ -250,17 +249,10 @@ fun AuthScreen(
                                 errorMessage = null
                                 infoMessage = null
                                 scope.launch {
-                                    val res = container.authRepository.requestPasswordReset(email)
+                                    val res = container.authRepository.forgotPassword(email)
                                     busy = false
                                     res.fold(
-                                        onSuccess = { previewToken ->
-                                            if (!previewToken.isNullOrBlank()) resetToken = previewToken
-                                            infoMessage = if (!previewToken.isNullOrBlank()) {
-                                                "Dev reset token auto-filled below."
-                                            } else {
-                                                "If that account exists, a reset link/token has been sent."
-                                            }
-                                        },
+                                        onSuccess = { msg -> infoMessage = msg },
                                         onFailure = { errorMessage = it.message ?: "Could not request reset" },
                                     )
                                 }
@@ -292,7 +284,7 @@ fun AuthScreen(
                                 errorMessage = null
                                 infoMessage = null
                                 scope.launch {
-                                    val res = container.authRepository.confirmPasswordReset(resetToken, newPassword)
+                                    val res = container.authRepository.resetPassword(resetToken, newPassword)
                                     busy = false
                                     res.fold(
                                         onSuccess = {
@@ -397,7 +389,7 @@ fun AuthScreen(
             currentUrl = apiBase,
             onDismiss = { showServerDialog = false },
             onSave = { next ->
-                container.endpointStore.setCustomApiBaseUrl(next)
+                container.endpointStore.updateCustomUrl(next).getOrThrow()
                 showServerDialog = false
             },
             onResetDefault = {

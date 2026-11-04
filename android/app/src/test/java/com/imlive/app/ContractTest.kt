@@ -41,14 +41,16 @@ class ContractTest {
 
     @Test
     fun endpointRulesNormalizeApiAndWebSocketAndMediaUrls() {
-        val normalized = EndpointUrlRules.normalizeApiBaseUrl("https://live.example.com/")
+        val normalized = EndpointUrlRules.normalizeApiBaseUrl("https://live.example.com/").getOrThrow()
         assertEquals("https://live.example.com/api", normalized)
         assertEquals("wss://live.example.com/api", EndpointUrlRules.toWebSocketBaseUrl(normalized))
-        assertEquals("https://live.example.com", EndpointUrlRules.toOriginRootUrl(normalized))
+        assertEquals("https://live.example.com", EndpointUrlRules.toOriginUrl(normalized))
 
-        val localDev = EndpointUrlRules.normalizeApiBaseUrl("http://10.0.2.2:8787/api/")
+        val localDev = EndpointUrlRules.normalizeApiBaseUrl("http://10.0.2.2:8787/api/", allowInsecureHttp = true).getOrThrow()
         assertEquals("http://10.0.2.2:8787/api", localDev)
         assertEquals("ws://10.0.2.2:8787/api", EndpointUrlRules.toWebSocketBaseUrl(localDev))
+
+        assertTrue(EndpointUrlRules.normalizeApiBaseUrl("http://insecure.example.com", allowInsecureHttp = false).isFailure)
 
         assertEquals(
             "https://live.example.com/api/media/recordings/rec-1",
@@ -64,15 +66,15 @@ class ContractTest {
     @Test
     fun deepLinkParserRoutesWatchProfilesOfflineAndDirectLan() {
         assertEquals(
-            DeepLinkDestination.WatchStream("stream-42"),
+            DeepLinkDestination.Watch("stream-42"),
             EndpointUrlRules.parseDeepLink("https://live-stream-share-cast.vercel.app/watch/stream-42"),
         )
         assertEquals(
-            DeepLinkDestination.WatchStream("abc-99"),
+            DeepLinkDestination.Watch("abc-99"),
             EndpointUrlRules.parseDeepLink("imlive://watch/abc-99"),
         )
         assertEquals(
-            DeepLinkDestination.UserProfile("cyber_elias"),
+            DeepLinkDestination.Profile("cyber_elias"),
             EndpointUrlRules.parseDeepLink("imlive://u/@cyber_elias"),
         )
         assertEquals(
@@ -80,7 +82,7 @@ class ContractTest {
             EndpointUrlRules.parseDeepLink("imlive://offline"),
         )
         assertEquals(
-            DeepLinkDestination.LanDirect("192.168.1.24", 49152, "654321", "Kitchen Live"),
+            DeepLinkDestination.JoinLan(LanRoomInfo("192.168.1.24", 49152, "654321", "Kitchen Live")),
             EndpointUrlRules.parseDeepLink("imlive://lan?host=192.168.1.24&port=49152&code=654321&title=Kitchen+Live"),
         )
     }
@@ -176,27 +178,29 @@ class ContractTest {
                 .put("username", "creator_one")
                 .put("displayName", "Creator One")
                 .put("email", "one@example.com")
-                .put("emailVerified", 1)
-                .put("roles", JSONArray().put("user").put("admin"))
-                .put("followerCount", 42),
+                .put("emailVerified", true)
+                .put("isAdmin", true)
+                .put("isStreamer", true)
+                .put("followers", 42),
         )
         assertTrue(user.emailVerified)
         assertTrue(user.isAdmin)
-        assertTrue(user.isModeratorOrAdmin)
+        assertTrue(user.isStreamer)
+        assertEquals(42, user.followers)
         assertEquals("Creator One", user.bestName)
 
         val stream = LiveStream.from(
             JSONObject()
                 .put("id", "s-1")
-                .put("user_id", "u-1")
+                .put("userId", "u-1")
                 .put("title", "Coding on Android")
-                .put("is_live", 1)
-                .put("viewer_count", 19)
-                .put("tags", "[\"kotlin\",\"webrtc\"]")
-                .put("stream_type", "internet"),
+                .put("isLive", true)
+                .put("viewerCount", 19)
+                .put("tags", JSONArray().put("kotlin").put("webrtc"))
+                .put("streamType", "internet"),
         )
         assertTrue(stream.isLive)
-        assertEquals(19, stream.viewerCount)
+        assertEquals(19, stream.viewers)
         assertEquals(listOf("kotlin", "webrtc"), stream.tags)
 
         val chat = ChatMessage.from(
@@ -204,29 +208,30 @@ class ContractTest {
                 .put("id", "m-1")
                 .put("username", "ada")
                 .put("message", "Loud and clear!")
-                .put("replyTo", JSONObject().put("id", "m-0").put("username", "host").put("snippet", "How is audio?")),
+                .put("replyTo", JSONObject().put("id", "m-0").put("username", "host").put("message", "How is audio?")),
         )
-        assertEquals("m-0", chat.replyToId)
-        assertEquals("host", chat.replyToUsername)
-        assertEquals("How is audio?", chat.replyToSnippet)
+        assertNotNull(chat.replyTo)
+        assertEquals("m-0", chat.replyTo?.id)
+        assertEquals("host", chat.replyTo?.username)
+        assertEquals("How is audio?", chat.replyTo?.message)
 
         val clip = Recording.from(
             JSONObject()
                 .put("id", "r-1")
                 .put("title", "Best Moment")
-                .put("file_url", "/api/media/recordings/r-1")
-                .put("clip_start_seconds", 12)
-                .put("clip_end_seconds", 40)
-                .put("duration_seconds", 28),
+                .put("url", "/api/media/recordings/r-1")
+                .put("isClip", true)
+                .put("clipStart", 12)
+                .put("clipEnd", 40)
+                .put("durationSeconds", 28),
         )
         assertTrue(clip.isClip)
         assertEquals(28, clip.durationSeconds)
 
-        val ice = IceServerConfig.from(
-            JSONObject()
-                .put("urls", JSONArray().put("stun:stun.cloudflare.com:3478").put("turns:turn.cloudflare.com:5349"))
-                .put("username", "turn-user")
-                .put("credential", "turn-secret"),
+        val ice = IceServerConfig(
+            urls = listOf("stun:stun.cloudflare.com:3478", "turns:turn.cloudflare.com:5349"),
+            username = "turn-user",
+            credential = "turn-secret",
         )
         assertEquals(2, ice.urls.size)
         assertEquals("turn-user", ice.username)
@@ -236,16 +241,17 @@ class ContractTest {
                 .put("slowModeSeconds", 5)
                 .put("followersOnly", true)
                 .put("linksAllowed", false)
-                .put("bannedWords", JSONArray().put("spam")),
+                .put("blockedWords", JSONArray().put("spam")),
         )
         assertEquals(5, rules.slowModeSeconds)
         assertTrue(rules.followersOnly)
         assertFalse(rules.linksAllowed)
-        assertEquals(listOf("spam"), rules.bannedWords)
+        assertEquals(listOf("spam"), rules.blockedWords)
 
-        val cfg = RuntimePlatformConfig.from(JSONObject().put("p2pMaxViewers", 8).put("maintenanceMode", false))
-        assertEquals(8, cfg.p2pMaxViewers)
-        assertFalse(cfg.maintenanceMode)
+        val cfg = RuntimePlatformConfig.from(
+            JSONObject().put("limits", JSONObject().put("maxP2pViewers", 8)),
+        )
+        assertEquals(8, cfg.maxP2pViewers)
     }
 
     @Test
@@ -253,7 +259,7 @@ class ContractTest {
         assertEquals("00:09", formatDurationClock(9))
         assertEquals("02:05", formatDurationClock(125))
         assertEquals("1:01:01", formatDurationClock(3661))
-        assertEquals(AccentTheme.EMERALD, AccentTheme.fromId("emerald"))
+        assertEquals(AccentTheme.AURORA, AccentTheme.fromId("aurora"))
         assertEquals(VideoQualityPreset.HD_720P, VideoQualityPreset.fromId("720p"))
         val diag = RtcConnectionDiagnostics(videoWidth = 1280, videoHeight = 720)
         assertNotNull(diag)
