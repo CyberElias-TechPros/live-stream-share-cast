@@ -45,6 +45,7 @@ import com.imlive.app.ui.screens.NotificationsScreen
 import com.imlive.app.ui.screens.OfflineRoomsScreen
 import com.imlive.app.ui.screens.ProfileAndCreatorScreen
 import com.imlive.app.ui.screens.SettingsAndAdminScreen
+import com.imlive.app.ui.screens.WatchScreen
 import com.imlive.app.ui.theme.ImLivePalette
 import com.imlive.app.ui.theme.ImLiveTheme
 import kotlinx.coroutines.delay
@@ -79,7 +80,7 @@ class MainActivity : ComponentActivity() {
 private enum class PrimaryTab { HOME, EXPLORE, STUDIO, LIBRARY, PROFILE }
 
 private sealed interface OverlayRoute {
-    data object Auth : OverlayRoute
+    data class Auth(val resetToken: String? = null) : OverlayRoute
     data class Watch(val stream: LiveStream) : OverlayRoute
     data class OfflineRooms(val initialLan: LanRoomInfo? = null) : OverlayRoute
     data class CreatorProfile(val username: String) : OverlayRoute
@@ -99,7 +100,7 @@ private fun ImLiveRootApp(
 
     var activeTab by remember { mutableStateOf(PrimaryTab.HOME) }
     var overlay by remember {
-        mutableStateOf<OverlayRoute?>(if (container.authRepository.loggedIn()) null else OverlayRoute.Auth)
+        mutableStateOf<OverlayRoute?>(if (container.authRepository.loggedIn()) null else OverlayRoute.Auth())
     }
     var studioLanPreselect by remember { mutableStateOf(false) }
     var studioPreparedStreamId by remember { mutableStateOf<String?>(null) }
@@ -108,7 +109,7 @@ private fun ImLiveRootApp(
 
     LaunchedEffect(currentUser?.id) {
         if (container.authRepository.loggedIn()) {
-            container.authRepository.me()
+            container.authRepository.refreshMe()
             while (isActive && container.authRepository.loggedIn()) {
                 container.platformRepository.unreadNotificationCount().onSuccess { unread ->
                     unreadNotifications = unread
@@ -160,9 +161,14 @@ private fun ImLiveRootApp(
                 overlay = null
                 activeTab = PrimaryTab.LIBRARY
             }
-            is DeepLinkDestination.ResetPassword,
+            is DeepLinkDestination.ResetPassword -> {
+                overlay = OverlayRoute.Auth(resetToken = link.token)
+            }
             is DeepLinkDestination.VerifyEmail -> {
-                overlay = OverlayRoute.Auth
+                if (!link.token.isNullOrBlank()) {
+                    container.authRepository.verifyEmail(link.token)
+                }
+                overlay = if (container.authRepository.loggedIn()) OverlayRoute.Settings else OverlayRoute.Auth()
             }
         }
         onDeepLinkConsumed()
@@ -173,6 +179,7 @@ private fun ImLiveRootApp(
             when (val currentOverlay = overlay) {
                 is OverlayRoute.Auth -> AuthScreen(
                     container = container,
+                    initialResetToken = currentOverlay.resetToken,
                     onAuthenticated = { overlay = null },
                     onContinueAsGuest = { overlay = null; activeTab = PrimaryTab.HOME },
                     onOpenOfflineRooms = { overlay = OverlayRoute.OfflineRooms(null) },
@@ -188,7 +195,7 @@ private fun ImLiveRootApp(
                     initialStream = currentOverlay.stream,
                     onBack = { overlay = null },
                     onOpenCreatorProfile = { username -> overlay = OverlayRoute.CreatorProfile(username) },
-                    onRequireSignIn = { overlay = OverlayRoute.Auth },
+                    onRequireSignIn = { overlay = OverlayRoute.Auth() },
                 )
 
                 is OverlayRoute.OfflineRooms -> OfflineRoomsScreen(
@@ -215,7 +222,7 @@ private fun ImLiveRootApp(
                     onOpenCreator = { u -> overlay = OverlayRoute.CreatorProfile(u) },
                     onOpenNotifications = { overlay = OverlayRoute.Notifications },
                     onOpenSettings = { overlay = OverlayRoute.Settings },
-                    onRequireSignIn = { overlay = OverlayRoute.Auth },
+                    onRequireSignIn = { overlay = OverlayRoute.Auth() },
                 )
 
                 is OverlayRoute.Notifications -> NotificationsScreen(
@@ -227,7 +234,7 @@ private fun ImLiveRootApp(
                 is OverlayRoute.Settings -> SettingsAndAdminScreen(
                     container = container,
                     onBack = { overlay = null },
-                    onSignedOut = { overlay = OverlayRoute.Auth },
+                    onSignedOut = { overlay = OverlayRoute.Auth() },
                 )
 
                 null -> Scaffold(
@@ -288,7 +295,7 @@ private fun ImLiveRootApp(
                                 },
                                 onOpenCreatorProfile = { username -> overlay = OverlayRoute.CreatorProfile(username) },
                                 onOpenNotifications = { overlay = OverlayRoute.Notifications },
-                                onOpenSignIn = { overlay = OverlayRoute.Auth },
+                                onOpenSignIn = { overlay = OverlayRoute.Auth() },
                             )
 
                             PrimaryTab.EXPLORE -> ExploreScreen(
@@ -305,7 +312,7 @@ private fun ImLiveRootApp(
                                 container = container,
                                 initialLanOnly = studioLanPreselect,
                                 preparedStreamId = studioPreparedStreamId,
-                                onRequireSignIn = { overlay = OverlayRoute.Auth },
+                                onRequireSignIn = { overlay = OverlayRoute.Auth() },
                             )
 
                             PrimaryTab.LIBRARY -> LibraryAndScheduleScreen(
@@ -316,7 +323,7 @@ private fun ImLiveRootApp(
                                     studioLanPreselect = false
                                     activeTab = PrimaryTab.STUDIO
                                 },
-                                onRequireSignIn = { overlay = OverlayRoute.Auth },
+                                onRequireSignIn = { overlay = OverlayRoute.Auth() },
                             )
 
                             PrimaryTab.PROFILE -> ProfileAndCreatorScreen(
@@ -331,7 +338,7 @@ private fun ImLiveRootApp(
                                 onOpenCreator = { username -> overlay = OverlayRoute.CreatorProfile(username) },
                                 onOpenNotifications = { overlay = OverlayRoute.Notifications },
                                 onOpenSettings = { overlay = OverlayRoute.Settings },
-                                onRequireSignIn = { overlay = OverlayRoute.Auth },
+                                onRequireSignIn = { overlay = OverlayRoute.Auth() },
                             )
                         }
                     }

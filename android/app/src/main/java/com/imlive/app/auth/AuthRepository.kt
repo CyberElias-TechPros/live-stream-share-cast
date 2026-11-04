@@ -71,10 +71,12 @@ class AuthRepository(
         }
     }
 
-    suspend fun me(): Result<JSONObject> = runCatching {
-        val res = api.get("/auth/me")
-        res.optJSONObject("user")?.let { _currentUser.value = UserProfile.from(it) }
-        res
+    suspend fun me(): Result<JSONObject> = withContext(Dispatchers.IO) {
+        runCatching {
+            val res = api.get("/auth/me")
+            res.optJSONObject("user")?.let { _currentUser.value = UserProfile.from(it) }
+            res
+        }
     }
 
     suspend fun refreshMe(): Result<UserProfile> = withContext(Dispatchers.IO) {

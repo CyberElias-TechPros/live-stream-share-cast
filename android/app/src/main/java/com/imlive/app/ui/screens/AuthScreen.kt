@@ -62,6 +62,7 @@ private enum class AuthTab { SIGN_IN, SIGN_UP, RESET_PASSWORD }
 @Composable
 fun AuthScreen(
     container: ImLiveContainer,
+    initialResetToken: String? = null,
     onAuthenticated: () -> Unit,
     onContinueAsGuest: () -> Unit,
     onOpenOfflineRooms: () -> Unit,
@@ -70,12 +71,14 @@ fun AuthScreen(
     val scope = rememberCoroutineScope()
     val apiBase by container.endpointStore.apiBaseUrlFlow.collectAsState()
 
-    var tab by remember { mutableStateOf(AuthTab.SIGN_IN) }
+    var tab by remember(initialResetToken) {
+        mutableStateOf(if (!initialResetToken.isNullOrBlank()) AuthTab.RESET_PASSWORD else AuthTab.SIGN_IN)
+    }
     var username by remember { mutableStateOf("") }
     var displayName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var resetToken by remember { mutableStateOf("") }
+    var resetToken by remember(initialResetToken) { mutableStateOf(initialResetToken ?: "") }
     var newPassword by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
 
