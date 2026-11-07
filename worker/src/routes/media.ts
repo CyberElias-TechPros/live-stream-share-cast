@@ -62,11 +62,16 @@ mediaRoutes.post('/recordings', authGuard, rateLimit({ limit: 20, windowMs: 60_0
     ? (await c.env.DB.prepare(`SELECT title, category, tags FROM streams WHERE id = ?`).bind(streamId).first<{ title: string; category: string | null; tags: string | null }>())
     : null;
 
+  const visibilityRaw = typeof form.visibility === 'string' ? form.visibility.trim().toLowerCase() : 'public';
+  const visibility = ['public', 'unlisted', 'private'].includes(visibilityRaw) ? visibilityRaw : 'public';
+  const durationParsed = form.durationSeconds !== undefined ? Number(form.durationSeconds) : NaN;
+  const durationSeconds = Number.isFinite(durationParsed) && durationParsed > 0 ? Math.min(Math.round(durationParsed), 86_400) : null;
+
   await c.env.DB.prepare(
-    `INSERT INTO recordings (id, user_id, stream_id, title, description, r2_key, url, thumbnail_url, size_bytes,
+    `INSERT INTO recordings (id, user_id, stream_id, title, description, r2_key, url, thumbnail_url, duration_seconds, size_bytes,
                              mime_type, visibility, status, source, category, tags, is_mature,
                              retention_expires_at, published_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'public', 'ready', ?, ?, ?, 0, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, 0, ?, ?, ?)`,
   )
     .bind(
       recordingId,
@@ -77,8 +82,10 @@ mediaRoutes.post('/recordings', authGuard, rateLimit({ limit: 20, windowMs: 60_0
       key,
       url,
       trimOrNull(form.thumbnailUrl, 2000),
+      durationSeconds,
       file.size,
       file.type || 'video/webm',
+      visibility,
       String(form.source ?? 'browser').slice(0, 20),
       streamTitle?.category ?? null,
       streamTitle?.tags ?? null,

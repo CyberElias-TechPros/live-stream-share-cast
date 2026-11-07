@@ -227,7 +227,14 @@ app.get('/api/ws/chat/:streamId', optionalAuth, async (c) => {
   const params = new URLSearchParams();
   params.set('streamId', streamId);
   params.set('role', granted.role);
-  if (granted.userId) params.set('userId', granted.userId);
+  if (granted.userId) {
+    params.set('userId', granted.userId);
+    const actor = await c.env.DB.prepare(`SELECT username, avatar_url FROM users WHERE id = ? AND deleted_at IS NULL`)
+      .bind(granted.userId)
+      .first<{ username: string; avatar_url: string | null }>();
+    if (actor?.username) params.set('username', actor.username);
+    if (actor?.avatar_url) params.set('avatarUrl', actor.avatar_url);
+  }
   return forwardUpgrade(c.env.CHAT_ROOM, streamId, params, c.req.raw);
 });
 

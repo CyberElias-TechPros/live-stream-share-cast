@@ -1,11 +1,13 @@
 package com.imlive.app.live
 
 import com.imlive.app.BuildConfig
+import com.imlive.app.model.ChatMessage
+import com.imlive.app.network.EndpointUrlRules
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
@@ -15,14 +17,17 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 import kotlin.math.min
 
+enum class ChatConnectionState { CONNECTING, CONNECTED, ACTIVE, RECONNECTING, CLOSED }
+
 /**
- * Ticket-authenticated live chat client using the Worker ChatRoom protocol.
+ * Ticket-authenticated live chat & presence client using the Worker ChatRoom protocol.
  *
- * Chat is deliberately online-only: send() returns false while disconnected so
- * a user never sees a message that was only queued locally. The socket obtains
- * a fresh one-use ticket for every reconnect, then backs off up to 30 seconds.
+ * Supports both `viewer` and `host` roles, real-time presence updates, live
+ * message moderation events (`hide`/`restore`), typing indicators, stream offline
+ * notifications, and fresh single-use ticket minting on reconnect.
  */
 class ChatClient(
     private val streamId: String,
@@ -31,12 +36,22 @@ class ChatClient(
     private val onError: (String) -> Unit,
     private val refreshTicket: (suspend () -> String?)? = null,
     private val onState: (ChatConnectionState) -> Unit = {},
+    private val role: String = "viewer",
+    private val apiBaseUrl: String = BuildConfig.API_BASE_URL,
+    private val onPresence: (viewers: Int, hostConnected: Boolean) -> Unit = { _, _ -> },
+    private val onModeration: (messageId: String, isModerated: Boolean) -> Unit = { _, _ -> },
+    private val onTyping: (username: String) -> Unit = {},
+    private val onStreamOffline: () -> Unit = {},
 ) {
-    private val http = OkHttpClient()
+    private val http = OkHttpClient.Builder()
+        .pingInterval(25, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .build()
     private val reconnectScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var currentTicket = initialTicket
     private var socket: WebSocket? = null
     private var reconnectJob: Job? = null
+    private var hostHeartbeatJob: Job? = null
     private var reconnectAttempt = 0
     @Volatile private var manuallyClosed = false
 
@@ -48,11 +63,9 @@ class ChatClient(
 
     private fun openSocket(ticket: String) {
         if (manuallyClosed || socket != null) return
-        val base = BuildConfig.API_BASE_URL.trimEnd('/')
-            .replaceFirst("https://", "wss://")
-            .replaceFirst("http://", "ws://")
+        val base = EndpointUrlRules.toWebSocketBaseUrl(apiBaseUrl)
         val encodedTicket = URLEncoder.encode(ticket, "UTF-8")
-        val url = "$base/ws/chat/$streamId?role=viewer&ticket=$encodedTicket"
+        val url = "$base/ws/chat/$streamId?role=$role&ticket=$encodedTicket"
         onState(ChatConnectionState.CONNECTING)
         socket = http.newWebSocket(
             Request.Builder().url(url).build(),
@@ -64,6 +77,7 @@ class ChatClient(
                     }
                     reconnectAttempt = 0
                     onState(ChatConnectionState.CONNECTED)
+                    if (role == "host") startHostSocketHeartbeat(webSocket)
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -71,8 +85,30 @@ class ChatClient(
                         val frame = JSONObject(text)
                         when (frame.optString("type")) {
                             "chat" -> frame.optJSONObject("message")?.let { onMessage(ChatMessage.from(it)) }
-                            "typing" -> onState(ChatConnectionState.ACTIVE)
-                            "ready", "presence", "stream" -> onState(ChatConnectionState.ACTIVE)
+                            "typing" -> {
+                                onState(ChatConnectionState.ACTIVE)
+                                val who = frame.optString("username").takeIf { it.isNotBlank() }
+                                if (who != null) onTyping(who)
+                            }
+                            "ready", "presence" -> {
+                                onState(ChatConnectionState.ACTIVE)
+                                onPresence(
+                                    frame.optInt("viewers", 0),
+                                    frame.optBoolean("hostConnected", false),
+                                )
+                            }
+                            "moderation" -> {
+                                val msgId = frame.optString("messageId")
+                                if (msgId.isNotBlank()) {
+                                    onModeration(msgId, frame.optBoolean("isModerated", false))
+                                }
+                            }
+                            "stream" -> {
+                                onState(ChatConnectionState.ACTIVE)
+                                if (frame.optString("status") == "offline") {
+                                    onStreamOffline()
+                                }
+                            }
                             "error" -> {
                                 val code = frame.optString("code").takeIf { it.isNotBlank() }
                                 val message = frame.optString("error", "Chat is unavailable")
@@ -103,10 +139,23 @@ class ChatClient(
         )
     }
 
+    private fun startHostSocketHeartbeat(ws: WebSocket) {
+        hostHeartbeatJob?.cancel()
+        hostHeartbeatJob = reconnectScope.launch {
+            while (!manuallyClosed && socket === ws) {
+                delay(25_000L)
+                if (!manuallyClosed && socket === ws) {
+                    ws.send(JSONObject().put("type", "heartbeat").toString())
+                }
+            }
+        }
+    }
+
     private fun clearSocket(closedSocket: WebSocket) {
         synchronized(this) {
             if (socket === closedSocket) socket = null
         }
+        hostHeartbeatJob?.cancel()
     }
 
     private fun scheduleReconnect() {
@@ -138,8 +187,24 @@ class ChatClient(
         return socket?.send(frame) == true
     }
 
+    fun sendTyping() {
+        if (manuallyClosed) return
+        socket?.send(JSONObject().put("type", "typing").toString())
+    }
+
+    fun moderate(messageId: String, isModerated: Boolean): Boolean {
+        if (manuallyClosed || role != "host") return false
+        val frame = JSONObject()
+            .put("type", "moderate")
+            .put("messageId", messageId)
+            .put("isModerated", isModerated)
+            .toString()
+        return socket?.send(frame) == true
+    }
+
     fun close() {
         manuallyClosed = true
+        hostHeartbeatJob?.cancel()
         reconnectJob?.cancel()
         reconnectJob = null
         reconnectScope.coroutineContext.cancel()
@@ -147,23 +212,5 @@ class ChatClient(
         socket = null
         onState(ChatConnectionState.CLOSED)
         http.dispatcher.executorService.shutdown()
-    }
-}
-
-enum class ChatConnectionState { CONNECTING, CONNECTED, ACTIVE, RECONNECTING, CLOSED }
-
-data class ChatMessage(
-    val id: String,
-    val username: String,
-    val message: String,
-    val createdAt: String?,
-) {
-    companion object {
-        fun from(json: JSONObject) = ChatMessage(
-            id = json.optString("id", java.util.UUID.randomUUID().toString()),
-            username = json.optString("username").ifBlank { json.optString("displayName", "viewer") },
-            message = json.optString("message"),
-            createdAt = json.optString("createdAt").ifBlank { json.optString("timestamp") }.takeIf { it.isNotBlank() },
-        )
     }
 }

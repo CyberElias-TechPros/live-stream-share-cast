@@ -1,4 +1,28 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#A78BFA" android:pathData="M18,18h72a18,18 0,0 1,18 18v36a18,18 0,0 1,-18 18h-72a18,18 0,0 1,-18 -18v-36a18,18 0,0 1,18 -18z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M54,34a20,20 0,1 0,0 40,20 20,0 0,0 0,-40zM54,42a12,12 0,1 1,0 24,12 12,0 0,1 0,-24z" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Obsidian rounded background -->
+    <path
+        android:fillColor="#0E0B1A"
+        android:pathData="M24,6h60c9.94,0 18,8.06 18,18v60c0,9.94 -8.06,18 -18,18h-60c-9.94,0 -18,-8.06 -18,-18v-60c0,-9.94 8.06,-18 18,-18z" />
+    <!-- Outer broadcast signal ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#A78BFA"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M31,35 A30,30 0 0,0 31,73 M77,35 A30,30 0 0,1 77,73" />
+    <!-- Inner broadcast signal ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#EC4899"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:pathData="M40,42 A18,18 0 0,0 40,66 M68,42 A18,18 0 0,1 68,66" />
+    <!-- Live center pulse core -->
+    <path
+        android:fillColor="#F43F5E"
+        android:pathData="M54,46a8,8 0 1,0 0,16a8,8 0 1,0 0,-16z" />
 </vector>

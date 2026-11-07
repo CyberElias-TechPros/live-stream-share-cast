@@ -92,6 +92,15 @@ jobs:
             done < "$RUNNER_TEMP/android-build.log"
           fi
           exit "$status"
+      - name: Upload Android APKs
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: im-live-android-apks
+          path: |
+            android/app/build/outputs/apk/debug/*.apk
+            android/app/build/outputs/apk/release/*.apk
+          retention-days: 14
 
   api:
     name: API and realtime smoke
