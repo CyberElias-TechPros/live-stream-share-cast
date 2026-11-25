@@ -122,6 +122,8 @@ export interface Env {
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
   PAYMENT_WEBHOOK_URL?: string;
+  /** Dedicated shared secret for generic provider callbacks; never reuse CLEANUP_TOKEN. */
+  PAYMENT_WEBHOOK_TOKEN?: string;
   PAYMENTS_CURRENCY?: string;
   MIN_TIP_CENTS?: string;
   MAX_TIP_CENTS?: string;

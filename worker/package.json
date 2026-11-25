@@ -16,6 +16,7 @@
     "validate:production": "node scripts/validate-production-env.mjs",
     "seed": "node scripts/seed.mjs",
     "test:realtime": "node scripts/ws-test.mjs",
+    "test:payments": "node scripts/payment-state-test.mjs",
     "test:api": "node scripts/api-test.mjs"
   },
   "dependencies": {

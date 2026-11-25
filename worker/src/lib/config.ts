@@ -51,6 +51,12 @@ export function productionConfigIssues(env: Env): string[] {
   }
 
   if (!env.APP_URL || !/^https:\/\//i.test(env.APP_URL)) issues.push('APP_URL');
+
+  if (flag(env.FEATURE_TIPS, false)) {
+    const payments = paymentConfig(env);
+    if (!payments.configured) issues.push(payments.provider === 'webhook' ? 'PAYMENT_WEBHOOK_URL/PAYMENT_WEBHOOK_TOKEN' : 'PAYMENT_PROVIDER');
+    if (payments.provider === 'stripe' && !env.STRIPE_WEBHOOK_SECRET) issues.push('STRIPE_WEBHOOK_SECRET');
+  }
   return issues;
 }
 
@@ -219,7 +225,11 @@ export function paymentConfig(env: Env): PaymentConfig {
 
   return {
     provider,
-    configured: provider === 'stripe' ? !!env.STRIPE_SECRET_KEY : provider === 'webhook' ? !!env.PAYMENT_WEBHOOK_URL : false,
+    configured: provider === 'stripe'
+      ? !!env.STRIPE_SECRET_KEY
+      : provider === 'webhook'
+        ? !!env.PAYMENT_WEBHOOK_URL && !!env.PAYMENT_WEBHOOK_TOKEN
+        : false,
     enabled: flag(env.FEATURE_TIPS, false),
     secretKey: env.STRIPE_SECRET_KEY ?? null,
     webhookSecret: env.STRIPE_WEBHOOK_SECRET ?? null,
@@ -450,7 +460,7 @@ export function integrationStatus(env: Env): IntegrationStatus[] {
       label: `Payments (${payments.provider})`,
       configured: payments.configured,
       requiredFor: ['tips / donations'],
-      envVars: ['PAYMENT_PROVIDER', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'FEATURE_TIPS'],
+      envVars: ['PAYMENT_PROVIDER', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'PAYMENT_WEBHOOK_URL', 'PAYMENT_WEBHOOK_TOKEN', 'FEATURE_TIPS'],
     },
     {
       id: 'push',

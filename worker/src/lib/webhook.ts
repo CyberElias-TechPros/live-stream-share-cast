@@ -99,7 +99,7 @@ export async function dispatchWebhook(
     if (endpoint.secret) headers['x-lsc-signature'] = await sign(endpoint.secret, timestamp, body);
 
     try {
-      const response = await fetchWithTimeout(endpoint.url, { method: 'POST', headers, body }, 8_000);
+      const response = await fetchWithTimeout(endpoint.url, { method: 'POST', headers, body, redirect: 'manual' }, 8_000);
       const failed = !response.ok;
       await env.DB.prepare(
         `UPDATE webhook_endpoints
@@ -156,7 +156,7 @@ export async function testWebhookEndpoint(env: Env, endpointId: string): Promise
   if (endpoint.secret) headers['x-lsc-signature'] = await sign(endpoint.secret, timestamp, body);
 
   try {
-    const response = await fetchWithTimeout(endpoint.url, { method: 'POST', headers, body }, 8_000);
+    const response = await fetchWithTimeout(endpoint.url, { method: 'POST', headers, body, redirect: 'manual' }, 8_000);
     await env.DB.prepare(`UPDATE webhook_endpoints SET last_status = ?, last_delivery_at = ?, failure_count = ? WHERE id = ?`)
       .bind(response.status, nowIso(), response.ok ? 0 : (endpoint.failure_count ?? 0) + 1, endpoint.id)
       .run();

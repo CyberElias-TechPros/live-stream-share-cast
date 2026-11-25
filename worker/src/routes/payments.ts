@@ -23,7 +23,7 @@ import { createTipCheckout, settleTip, verifyStripeSignature, PaymentsUnavailabl
 import { createNotification } from '../lib/notifications';
 import { recordAudit } from '../lib/audit';
 import { dispatchWebhook } from '../lib/webhook';
-import { uuid } from '../lib/ids';
+import { safeEqual, uuid } from '../lib/ids';
 import { nowIso } from '../lib/time';
 import { rateLimit } from '../lib/ratelimit';
 
@@ -245,38 +245,79 @@ paymentRoutes.post('/webhook/stripe', async (c) => {
     throw unauthorized('STRIPE_WEBHOOK_SECRET is not configured');
   }
 
-  const event = JSON.parse(raw || '{}') as {
+  let event: {
     id?: string;
     type?: string;
     data?: { object?: Record<string, unknown> };
   };
+  try {
+    event = JSON.parse(raw || '{}') as typeof event;
+  } catch {
+    throw badRequest('Invalid Stripe event JSON');
+  }
 
   const object = event.data?.object ?? {};
-  const metadata = (object.metadata ?? {}) as Record<string, string>;
+  const metadata = (object.metadata && typeof object.metadata === 'object' ? object.metadata : {}) as Record<string, string>;
   const tipId = metadata.tipId ?? (typeof object.client_reference_id === 'string' ? object.client_reference_id : null);
-
   if (!tipId) return c.json({ received: true, ignored: 'no tip reference' });
 
-  if (event.type === 'checkout.session.completed' || event.type === 'payment_intent.succeeded') {
-    const tip = await c.env.DB.prepare(`SELECT id, streamer_id, stream_id, amount_cents, currency, message, tipper_name FROM tips WHERE id = ?`)
-      .bind(tipId)
-      .first<{ id: string; streamer_id: string; stream_id: string | null; amount_cents: number; currency: string; message: string | null; tipper_name: string | null }>();
+  const paidEvent = event.type === 'checkout.session.completed' || event.type === 'payment_intent.succeeded';
+  const failedEvent = event.type === 'checkout.session.expired' || event.type === 'payment_intent.payment_failed';
+  if (!paidEvent && !failedEvent) return c.json({ received: true, ignored: 'unsupported event' });
 
-    if (!tip) return c.json({ received: true, ignored: 'unknown tip' });
+  const tip = await c.env.DB.prepare(
+    `SELECT id, streamer_id, stream_id, amount_cents, currency, message, tipper_name, provider_session_id FROM tips WHERE id = ?`,
+  )
+    .bind(tipId)
+    .first<{
+      id: string;
+      streamer_id: string;
+      stream_id: string | null;
+      amount_cents: number;
+      currency: string;
+      message: string | null;
+      tipper_name: string | null;
+      provider_session_id: string | null;
+    }>();
+  if (!tip) return c.json({ received: true, ignored: 'unknown tip' });
 
-    await settleTip(c.env, {
-      tipId,
-      streamerId: tip.streamer_id,
-      streamId: tip.stream_id,
-      amountCents: tip.amount_cents,
-      currency: tip.currency,
-      message: tip.message,
-      tipperName: tip.tipper_name,
-      provider: 'stripe',
-      providerRef: String(object.payment_intent ?? object.id ?? event.id ?? ''),
-      status: 'paid',
-    });
+  if (event.type === 'checkout.session.completed') {
+    // Stripe can emit completed sessions that are not paid (for example
+    // asynchronous payment methods). Never settle until money is confirmed.
+    if (object.payment_status !== 'paid') return c.json({ received: true, ignored: 'checkout not paid' });
+    if (object.id !== tip.provider_session_id || object.amount_total !== tip.amount_cents ||
+      String(object.currency ?? '').toLowerCase() !== tip.currency.toLowerCase()) {
+      throw badRequest('Stripe checkout does not match the pending tip');
+    }
+  } else if (event.type === 'payment_intent.succeeded') {
+    const received = typeof object.amount_received === 'number' ? object.amount_received : object.amount;
+    if (received !== tip.amount_cents || String(object.currency ?? '').toLowerCase() !== tip.currency.toLowerCase()) {
+      throw badRequest('Stripe payment does not match the pending tip');
+    }
+  }
 
+  const intent = object.payment_intent;
+  const providerRef = typeof intent === 'string'
+    ? intent
+    : typeof intent === 'object' && intent !== null && typeof (intent as { id?: unknown }).id === 'string'
+      ? (intent as { id: string }).id
+      : String(object.id ?? event.id ?? '');
+  const changed = await settleTip(c.env, {
+    tipId,
+    streamerId: tip.streamer_id,
+    streamId: tip.stream_id,
+    amountCents: tip.amount_cents,
+    currency: tip.currency,
+    message: tip.message,
+    tipperName: tip.tipper_name,
+    provider: 'stripe',
+    providerRef,
+    status: paidEvent ? 'paid' : 'failed',
+  });
+
+  // A duplicate delivery is acknowledged, but must not duplicate creator-facing
+  // notifications, outbound webhooks, or audit events.
+  if (changed && paidEvent) {
     await createNotification(c.env, {
       userId: tip.streamer_id,
       type: 'tip',
@@ -285,19 +326,13 @@ paymentRoutes.post('/webhook/stripe', async (c) => {
       url: '/dashboard?tab=earnings',
       force: true,
     });
-
     await dispatchWebhook(c.env, tip.streamer_id, 'tip.received', {
       tipId,
       amountCents: tip.amount_cents,
       currency: tip.currency,
       message: tip.message,
     });
-
     await recordAudit(c.env, { actorId: 'stripe', actorRole: 'system', action: 'tip.paid', targetType: 'tip', targetId: tipId });
-  }
-
-  if (event.type === 'checkout.session.expired' || event.type === 'payment_intent.payment_failed') {
-    await c.env.DB.prepare(`UPDATE tips SET status = 'failed' WHERE id = ?`).bind(tipId).run();
   }
 
   return c.json({ received: true });
@@ -308,11 +343,14 @@ paymentRoutes.post('/webhook/stripe', async (c) => {
  * `{ tipId, status, reference }` with `Authorization: Bearer <PAYMENT_WEBHOOK_TOKEN>`.
  */
 paymentRoutes.post('/webhook/provider', async (c) => {
-  const expected = c.env.STRIPE_WEBHOOK_SECRET ?? c.env.CLEANUP_TOKEN;
-  if (!expected) throw new PaymentsUnavailableError();
+  const expected = c.env.PAYMENT_WEBHOOK_TOKEN;
+  if (!expected) throw new PaymentsUnavailableError('PAYMENT_WEBHOOK_TOKEN is not configured');
 
-  const provided = c.req.header('Authorization')?.replace('Bearer ', '') ?? c.req.header('X-Payment-Token') ?? '';
-  if (provided !== expected) throw unauthorized('Invalid payment token');
+  const authorization = c.req.header('Authorization') ?? '';
+  const provided = authorization.startsWith('Bearer ')
+    ? authorization.slice('Bearer '.length).trim()
+    : c.req.header('X-Payment-Token') ?? '';
+  if (!safeEqual(provided, expected)) throw unauthorized('Invalid payment token');
 
   const body = await readJson(c);
   const tipId = String(body.tipId ?? '');
@@ -325,7 +363,7 @@ paymentRoutes.post('/webhook/provider', async (c) => {
     .first<{ id: string; streamer_id: string; stream_id: string | null; amount_cents: number; currency: string; message: string | null; tipper_name: string | null }>();
   if (!tip) throw notFound('Tip not found');
 
-  await settleTip(c.env, {
+  const changed = await settleTip(c.env, {
     tipId,
     streamerId: tip.streamer_id,
     streamId: tip.stream_id,
@@ -338,7 +376,7 @@ paymentRoutes.post('/webhook/provider', async (c) => {
     status: status as 'paid' | 'failed' | 'refunded',
   });
 
-  if (status === 'paid') {
+  if (changed && status === 'paid') {
     await createNotification(c.env, {
       userId: tip.streamer_id,
       type: 'tip',
@@ -350,13 +388,15 @@ paymentRoutes.post('/webhook/provider', async (c) => {
     await dispatchWebhook(c.env, tip.streamer_id, 'tip.received', { tipId, amountCents: tip.amount_cents, currency: tip.currency });
   }
 
-  await recordAudit(c.env, {
-    actorId: 'payment-provider',
-    actorRole: 'system',
-    action: status === 'paid' ? 'tip.paid' : 'tip.refunded',
-    targetType: 'tip',
-    targetId: tipId,
-  });
+  if (changed) {
+    await recordAudit(c.env, {
+      actorId: 'payment-provider',
+      actorRole: 'system',
+      action: status === 'paid' ? 'tip.paid' : status === 'refunded' ? 'tip.refunded' : 'tip.failed',
+      targetType: 'tip',
+      targetId: tipId,
+    });
+  }
 
   return c.json({ success: true });
 });

@@ -104,6 +104,7 @@ curl -X POST http://127.0.0.1:8787/api/admin/cleanup \
 | `npm run verify`       | root   | typecheck, lint, build, Worker typecheck, and local migration gate |
 | `npm run test:api`     | root   | end-to-end REST contract suite (needs a running API; `LSC_TEST_ADMIN_TOKEN` adds the operator checks) |
 | `npm run test:realtime`| root   | chat + WebRTC signalling suite                   |
+| `npm run test:payments`| root   | payment-state idempotency, concurrency, refund, and failure checks |
 | `npm run dev`          | worker | `wrangler dev` (D1/R2/DO simulated locally)      |
 | `npm run typecheck`    | worker | `tsc --noEmit`                                   |
 | `npm run db:migrate`   | worker | apply migrations to the remote D1 database       |

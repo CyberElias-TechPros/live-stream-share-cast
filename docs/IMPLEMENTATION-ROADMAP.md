@@ -1,10 +1,11 @@
 # I'm Live — web + Android implementation roadmap
 
-> **Living execution checklist.** Source-verified on **2026-10-30 UTC** against the
-> `arena/aa9dc367-live-stream-share-cast` branch. This pass implements WebSocket
-> tickets, production configuration validation, route splitting, a hardened
-> signalling/chat path, and an Android native starter. This document is deliberately
-> more honest than a feature inventory: code existing in the repository is not
+> **Living execution checklist.** Source-verified on **2026-11-25 UTC** against
+> the active `arena/0b0acaef-live-stream-share-cast` branch. This audit also
+> hardens payment settlement against replay/concurrency, validates Stripe amount
+> and session details, separates generic payment callback credentials, tightens
+> creator webhook URL validation, and adds focused regression checks. This
+> document is deliberately more honest than a feature inventory: code existing in the repository is not
 > automatically production-ready, and an optional integration is not the same as
 > an activated integration.
 
@@ -303,9 +304,10 @@ local setup, no known P0 lint/security failures, and a versioned release artifac
   exception with justification.
 - `[ ] [P0][WEB/API]` Resolve hook dependency warnings and remove simulated/dead
   stream paths. Treat a warning in media lifecycle code as a reliability issue.
-- `[ ] [P0][OPS/SEC]` Upgrade dependencies and regenerate both lockfiles. Run
-  `npm audit`, `npm audit --omit=dev`, and Worker audit in CI; review advisories
-  by runtime exposure rather than blindly forcing breaking upgrades.
+- `[x] [P0][OPS/SEC]` Dependency lockfiles were refreshed, full web/Worker
+  dependency audits now gate CI/deploy at moderate severity, and both audits
+  currently report zero advisories. Continue routine updates and assess any new
+  advisory by runtime exposure rather than blindly forcing breaking upgrades.
 - `[ ] [P0][WEB/API]` Add format/check scripts, typecheck both packages, build
   SPA, and run migration validation in one `npm run verify` command.
 - `[ ] [P0][OPS]` Add pull-request workflow for web typecheck/lint/build, Worker
@@ -413,9 +415,11 @@ protected, and staging secrets/providers are configured or deliberately disabled
   auth, signup, password reset, chat, reports, uploads, WebSockets, search,
   webhooks, tips, and admin endpoints; test per-IP, per-account, and global
   behaviour.
-- `[ ] [P0][SEC/API]` Review SSRF protections for creator webhooks, email relay,
-  payment webhook/provider URLs, external images, and redirect/callback URLs.
-  Block private/link-local address ranges and unsafe schemes where applicable.
+- `[~] [P0][SEC/API]` Creator webhook registration now rejects non-HTTPS,
+  credentialed, IP-literal, localhost and local-suffix targets; outbound webhook
+  requests do not follow redirects. DNS rebinding/resolution policy and the
+  separate email/payment relay, external-image, and callback URL surfaces still
+  need review and deployed-environment tests.
 - `[x] [P0][SEC/API]` Added security headers/CSP for the actual app/API/media/
   WebSocket origins and removed the external GPT Engineer bootstrap/social asset
   dependency. Provider-specific analytics/Sentry/payment CSP domains still need

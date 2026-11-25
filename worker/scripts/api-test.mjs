@@ -560,6 +560,15 @@ async function main() {
     events.status === 200 && (events.body?.events ?? []).length >= 5 && events.body.events[0].signatureHeader === 'X-LSC-Signature',
   );
 
+  const rejectedWebhookUrls = await Promise.all([
+    call('POST', '/integrations/webhooks', { token: streamerToken, body: { url: 'http://example.com/hook' } }),
+    call('POST', '/integrations/webhooks', { token: streamerToken, body: { url: 'https://localhost./hook' } }),
+    call('POST', '/integrations/webhooks', { token: streamerToken, body: { url: 'https://2130706433/hook' } }),
+    call('POST', '/integrations/webhooks', { token: streamerToken, body: { url: 'https://[::ffff:127.0.0.1]/hook' } }),
+    call('POST', '/integrations/webhooks', { token: streamerToken, body: { url: 'https://user:pass@example.com/hook' } }),
+  ]);
+  check('webhook URLs reject HTTP, localhost aliases, IP literals and embedded credentials', rejectedWebhookUrls.every((result) => result.status === 400));
+
   const webhook = await call('POST', '/integrations/webhooks', {
     token: streamerToken,
     body: { url: 'https://example.com/api-test-hook', events: ['stream.live', 'stream.ended'] },

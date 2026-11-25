@@ -135,19 +135,19 @@ export function validateExternalUrl(raw: unknown): { ok: boolean; url?: string; 
 
   if (url.protocol !== 'https:') return { ok: false, error: 'https_required' };
 
-  const host = url.hostname.toLowerCase();
-  const blocked = ['localhost', '127.0.0.1', '0.0.0.0', '::1', 'metadata.google.internal', '169.254.169.254'];
-  if (blocked.includes(host) || host.endsWith('.local') || host.endsWith('.internal')) {
-    return { ok: false, error: 'private_host_blocked' };
+  const host = url.hostname.toLowerCase().replace(/\.$/, '');
+  if (url.username || url.password) return { ok: false, error: 'credentials_not_allowed' };
+
+  // Disallow all literal IP targets rather than maintaining an incomplete list
+  // of private/reserved ranges (IPv6, mapped IPv4 and alternate IPv4 syntax are
+  // otherwise easy SSRF bypasses). Webhook endpoints should use DNS names.
+  if (host.startsWith('[') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':')) {
+    return { ok: false, error: 'ip_literal_blocked' };
   }
 
-  // Reject raw IPs in private ranges.
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (ipv4) {
-    const [a, b] = [Number(ipv4[1]), Number(ipv4[2])];
-    if (a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 0) {
-      return { ok: false, error: 'private_host_blocked' };
-    }
+  const blocked = ['localhost', 'metadata.google.internal'];
+  if (blocked.includes(host) || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.home.arpa')) {
+    return { ok: false, error: 'private_host_blocked' };
   }
 
   return { ok: true, url: url.toString() };

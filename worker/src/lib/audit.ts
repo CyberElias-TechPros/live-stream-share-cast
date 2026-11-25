@@ -31,6 +31,7 @@ export type AuditAction =
   | 'report.created'
   | 'report.updated'
   | 'tip.paid'
+  | 'tip.failed'
   | 'tip.refunded'
   | 'token.created'
   | 'token.revoked'
