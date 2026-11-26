@@ -15,10 +15,11 @@
     "preview": "vite preview",
     "test:api": "npm --prefix worker run test:api",
     "test:realtime": "npm --prefix worker run test:realtime",
+    "test:payments": "npm --prefix worker run test:payments",
     "test:offline": "node scripts/validate-offline-room.mjs",
     "typecheck": "tsc -p tsconfig.app.json --noEmit",
     "typecheck:api": "npm --prefix worker run typecheck",
-    "verify": "npm run typecheck && npm run typecheck:api && npm run lint && npm run test:offline && npm run build && npm run db:migrate:local"
+    "verify": "npm run typecheck && npm run typecheck:api && npm run lint && npm run test:offline && npm run test:payments && npm run build && npm run db:migrate:local"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

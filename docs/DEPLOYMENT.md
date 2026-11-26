@@ -71,7 +71,11 @@ missing by `/api/health`.
 | Transactional email  | `EMAIL_PROVIDER`, `EMAIL_FROM`, plus one provider key (`RESEND_API_KEY`, `POSTMARK_SERVER_TOKEN`, `SENDGRID_API_KEY`, `MAILCHANNELS_API_KEY`, `EMAIL_WEBHOOK_URL`) | verification, password reset, moderation notices, follower fan-out |
 | TURN relay           | `TURN_PROVIDER=cloudflare` + `TURN_KEY_ID`/`TURN_KEY_API_TOKEN`, or `TURN_PROVIDER=static` + `TURN_STATIC_USERNAME`/`TURN_STATIC_PASSWORD`, `TURN_URLS` | WebRTC for viewers behind symmetric NAT / mobile networks (10–20 % of sessions without it) |
 | Captcha              | `CAPTCHA_PROVIDER=turnstile` + `TURNSTILE_SITE_KEY`/`TURNSTILE_SECRET_KEY` (or `hcaptcha` + `HCAPTCHA_SITE_KEY`/`HCAPTCHA_SECRET_KEY`) | bot protection on signup and password reset — the widget appears automatically once the keys are set; until then the check is skipped |
-| Payments (tips)      | `FEATURE_TIPS=true`, `PAYMENT_PROVIDER=stripe` + `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` (or `PAYMENT_PROVIDER=webhook` + `PAYMENT_WEBHOOK_URL`) | in-app tips with Stripe Checkout / a custom provider               |
+| Payments (tips)      | `FEATURE_TIPS=true`, `PAYMENT_PROVIDER=stripe` + `STRIPE_SECRET_KEY` + `STRIPE_WEBHOOK_SECRET` (or `PAYMENT_PROVIDER=webhook` + `PAYMENT_WEBHOOK_URL` + dedicated `PAYMENT_WEBHOOK_TOKEN`) | in-app tips with Stripe Checkout / a custom provider               |
+
+For the generic provider callback, generate a separate high-entropy
+`PAYMENT_WEBHOOK_TOKEN` and send it as `Authorization: Bearer <token>` (or
+`X-Payment-Token`). Do not reuse `CLEANUP_TOKEN` or `STRIPE_WEBHOOK_SECRET`.
 | Web Push             | `FEATURE_PUSH=true`, `PUSH_VAPID_PUBLIC_KEY`, `PUSH_VAPID_PRIVATE_KEY`, `PUSH_SUBJECT` (`npx web-push generate-vapid-keys`) | browser notifications when a followed channel goes live            |
 | Product analytics    | `ANALYTICS_PROVIDER`, `ANALYTICS_SITE_ID`, `ANALYTICS_SCRIPT_URL`            | third-party page analytics (first-party analytics work regardless) |
 | Error tracking       | `SENTRY_DSN`, `ERROR_REPORT_SAMPLE_RATE`                                     | server + client error forwarding                                   |

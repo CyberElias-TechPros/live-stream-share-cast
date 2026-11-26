@@ -38,6 +38,17 @@ export interface CheckoutResult {
   sessionId?: string;
 }
 
+function safeCheckoutUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export class PaymentsUnavailableError extends ApiError {
   constructor(message = 'Payments are not configured on this deployment') {
     super(503, message, 'payments_unavailable');
@@ -82,8 +93,9 @@ export async function createTipCheckout(env: Env, intent: TipIntent): Promise<Ch
 
     if (!response.ok) throw new PaymentsUnavailableError('Payment provider rejected the request');
     const payload = (await response.json().catch(() => ({}))) as { checkoutUrl?: string; sessionId?: string };
-    if (!payload.checkoutUrl) throw new PaymentsUnavailableError('Payment provider did not return a checkout URL');
-    return { provider: 'webhook', checkoutUrl: payload.checkoutUrl, sessionId: payload.sessionId };
+    const checkoutUrl = safeCheckoutUrl(payload.checkoutUrl);
+    if (!checkoutUrl) throw new PaymentsUnavailableError('Payment provider did not return a valid HTTPS checkout URL');
+    return { provider: 'webhook', checkoutUrl, sessionId: payload.sessionId };
   }
 
   // Stripe Checkout
@@ -131,12 +143,13 @@ export async function createTipCheckout(env: Env, intent: TipIntent): Promise<Ch
   }
 
   const payload = (await response.json().catch(() => ({}))) as { id?: string; url?: string; error?: { message?: string } };
-  if (!response.ok || !payload.url) {
+  const checkoutUrl = safeCheckoutUrl(payload.url);
+  if (!response.ok || !checkoutUrl) {
     log.warn('stripe checkout failed', { status: response.status, error: payload.error?.message });
     throw new PaymentsUnavailableError(payload.error?.message ?? 'Payment provider error');
   }
 
-  return { provider: 'stripe', checkoutUrl: payload.url, sessionId: payload.id };
+  return { provider: 'stripe', checkoutUrl, sessionId: payload.id };
 }
 
 /* --------------------------------- webhooks ---------------------------------- */
@@ -190,33 +203,39 @@ export interface SettledTip {
 }
 
 /**
- * Settles a tip row and updates the streamer's daily analytics + counters.
- * Called from the verified payment webhook handler.
+ * Applies one valid pending→paid/failed or paid→refunded transition and updates
+ * the streamer's daily tip rollup. Conditional SQL makes retries idempotent.
  */
-export async function settleTip(env: Env, tip: SettledTip): Promise<void> {
+export async function settleTip(env: Env, tip: SettledTip): Promise<boolean> {
   const now = new Date().toISOString();
-
-  await env.DB.prepare(
+  // Payment providers retry callbacks. Restrict state transitions in SQL so
+  // concurrent/replayed events cannot count the same tip more than once.
+  const allowedPrevious = tip.status === 'paid' ? 'pending' : tip.status === 'refunded' ? 'paid' : 'pending';
+  const updated = await env.DB.prepare(
     `UPDATE tips
         SET status = ?, provider = COALESCE(provider, ?), provider_ref = COALESCE(?, provider_ref),
-            paid_at = CASE WHEN ? = 'paid' THEN ? ELSE paid_at END
-      WHERE id = ?`,
+            paid_at = CASE WHEN ? = 'paid' THEN COALESCE(paid_at, ?) ELSE paid_at END
+      WHERE id = ? AND status = ?`,
   )
-    .bind(tip.status, tip.provider, tip.providerRef, tip.status, now, tip.tipId)
+    .bind(tip.status, tip.provider, tip.providerRef || null, tip.status, now, tip.tipId, allowedPrevious)
     .run();
 
-  if (tip.status !== 'paid') return;
+  if ((updated.meta?.changes ?? 0) !== 1) return false;
+  if (tip.status === 'failed') return true;
 
-  const day = now.slice(0, 10);
+  const paidRow = await env.DB.prepare(`SELECT paid_at FROM tips WHERE id = ?`).bind(tip.tipId).first<{ paid_at: string | null }>();
+  const day = (paidRow?.paid_at ?? now).slice(0, 10);
+  const delta = tip.status === 'paid' ? tip.amountCents : -tip.amountCents;
   try {
     await env.DB.prepare(
       `INSERT INTO analytics_daily (id, user_id, day, tips_cents, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (user_id, day) DO UPDATE SET tips_cents = COALESCE(analytics_daily.tips_cents, 0) + ?, updated_at = excluded.updated_at`,
+       VALUES (?, ?, ?, MAX(0, ?), ?)
+       ON CONFLICT (user_id, day) DO UPDATE SET tips_cents = MAX(0, COALESCE(analytics_daily.tips_cents, 0) + ?), updated_at = excluded.updated_at`,
     )
-      .bind(crypto.randomUUID(), tip.streamerId, day, tip.amountCents, now, tip.amountCents)
+      .bind(crypto.randomUUID(), tip.streamerId, day, delta, now, delta)
       .run();
   } catch (error) {
     log.warn('tip analytics rollup failed', { error: String(error) });
   }
+  return true;
 }

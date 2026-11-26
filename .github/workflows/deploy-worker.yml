@@ -63,7 +63,7 @@ jobs:
         run: |
           npm run typecheck
           npm run db:migrate:local
-          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=moderate
 
       - name: Validate production configuration
         run: npm run validate:production

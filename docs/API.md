@@ -143,10 +143,14 @@ time), `GET /overview` (creator dashboard), `GET /streams/:id` (per broadcast),
 
 ## Payments — `/api/payments`
 
-`GET /config`, `GET /presets`, `POST /tips` (returns a checkout URL, or the
-creator's donation link when card payments are off), `GET /tips/mine`,
+`GET /config`, `GET /presets`, `POST /tips` (returns a validated HTTPS checkout
+URL, or the creator's donation link when card payments are off), `GET /tips/mine`,
 `GET /tips/:id/status`, `GET /earnings`, `PUT /donation-link`,
-`POST /webhook/stripe`, `POST /webhook/provider`.
+`POST /webhook/stripe` (Stripe signature required in production),
+`POST /webhook/provider` (requires `Authorization: Bearer <PAYMENT_WEBHOOK_TOKEN>`
+or `X-Payment-Token`). Do not reuse the cleanup or Stripe signing secrets for the
+generic provider token. Settlement is idempotent: retries cannot double-count
+tips or re-send creator notifications.
 
 ## Integrations & search
 
