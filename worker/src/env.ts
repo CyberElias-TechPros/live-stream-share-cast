@@ -18,8 +18,10 @@ export interface Env {
   AVATARS: R2Bucket;
   CHAT_ROOM: DurableObjectNamespace;
   SIGNAL_ROOM: DurableObjectNamespace;
-  /** Optional KV namespace — enables global (not per-isolate) rate limiting. */
+  /** Optional KV namespace retained as a development fallback for rate limits. */
   CACHE?: KVNamespace;
+  /** Production fixed-window rate limiter, one globally serialized object per hashed key. */
+  RATE_LIMITER?: DurableObjectNamespace;
 
   /* ------------------------------- core secrets ------------------------------ */
 

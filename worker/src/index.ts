@@ -26,8 +26,9 @@ import { randomToken, sha256Hex, uuid } from './lib/ids';
 import { rateLimit } from './lib/ratelimit';
 import { ChatRoom } from './durable/chat-room';
 import { SignalRoom } from './durable/signal-room';
+import { RateLimitRoom } from './durable/rate-limit-room';
 
-export { ChatRoom, SignalRoom };
+export { ChatRoom, SignalRoom, RateLimitRoom };
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -103,7 +104,7 @@ app.get('/', (c) =>
  * operator can see exactly what is left to configure.
  */
 app.get('/api/health', async (c) => {
-  const checks: Record<string, 'ok' | 'error'> = { d1: 'ok', r2: 'ok', durableObjects: 'ok' };
+  const checks: Record<string, 'ok' | 'error'> = { d1: 'ok', r2: 'ok', durableObjects: 'ok', rateLimiter: 'ok' };
 
   try {
     await c.env.DB.prepare(`SELECT 1 AS ok`).first();
@@ -113,16 +114,39 @@ app.get('/api/health', async (c) => {
   }
 
   try {
+    // R2 head() returns null when the key does not exist; an exception means
+    // the binding or bucket is unavailable and must fail readiness.
     await c.env.RECORDINGS.head('__healthcheck__');
-  } catch {
-    // A missing object throws NotFound — only a binding/auth error is real.
-    checks.r2 = 'ok';
+  } catch (error) {
+    checks.r2 = 'error';
+    console.error('health check: r2 failed', error);
+  }
+
+  try {
+    const [chat, signal] = await Promise.all([
+      c.env.CHAT_ROOM.get(c.env.CHAT_ROOM.idFromName('__healthcheck__')).fetch('https://chat-room.internal/health'),
+      c.env.SIGNAL_ROOM.get(c.env.SIGNAL_ROOM.idFromName('__healthcheck__')).fetch('https://signal-room.internal/health'),
+    ]);
+    if (!chat.ok || !signal.ok) throw new Error(`Durable Object health probe failed (${chat.status}, ${signal.status})`);
+  } catch (error) {
+    checks.durableObjects = 'error';
+    console.error('health check: durable objects failed', error);
+  }
+
+  try {
+    if (!c.env.RATE_LIMITER) throw new Error('RATE_LIMITER binding is missing');
+    const limiter = await c.env.RATE_LIMITER.get(c.env.RATE_LIMITER.idFromName('__healthcheck__'))
+      .fetch('https://rate-limiter.internal/health');
+    if (!limiter.ok) throw new Error(`Rate limiter health probe failed (${limiter.status})`);
+  } catch (error) {
+    checks.rateLimiter = 'error';
+    console.error('health check: rate limiter failed', error);
   }
 
   const integrations = integrationStatus(c.env);
   const missing = integrations.filter((integration) => !integration.configured).map((integration) => integration.id);
   const configurationIssues = productionConfigIssues(c.env);
-  const healthy = checks.d1 === 'ok' && checks.r2 === 'ok' && configurationIssues.length === 0;
+  const healthy = checks.d1 === 'ok' && checks.r2 === 'ok' && checks.durableObjects === 'ok' && checks.rateLimiter === 'ok' && configurationIssues.length === 0;
 
   return c.json(
     {
@@ -131,7 +155,7 @@ app.get('/api/health', async (c) => {
       environment: c.env.ENVIRONMENT ?? 'development',
       version: c.env.APP_VERSION ?? 'dev',
       timestamp: nowIso(),
-      services: { d1: checks.d1, r2: checks.r2, durableObjects: checks.durableObjects },
+      services: { d1: checks.d1, r2: checks.r2, durableObjects: checks.durableObjects, rateLimiter: checks.rateLimiter },
       integrations: Object.fromEntries(integrations.map((integration) => [integration.id, integration.configured])),
       // Optional keys that are not set yet — the app degrades gracefully.
       pendingConfiguration: missing,

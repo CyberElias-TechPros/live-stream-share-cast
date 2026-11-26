@@ -4,9 +4,12 @@
 > the active `arena/0b0acaef-live-stream-share-cast` branch. This audit also
 > hardens payment settlement against replay/concurrency, validates Stripe amount
 > and session details, separates generic payment callback credentials, tightens
-> creator webhook URL validation, and adds focused regression checks. This
-> document is deliberately more honest than a feature inventory: code existing in the repository is not
-> automatically production-ready, and an optional integration is not the same as
+> creator webhook URL validation, restores guest access to public profiles,
+> adds a globally consistent rate-limit Durable Object, and probes actual R2/DO
+> health; WebSocket bearer credentials are no longer appended to URLs. Vercel
+> security headers now receive a CI contract check. This document
+> is deliberately more honest than a feature inventory: code existing in the
+> repository is not automatically production-ready, and an optional integration is not the same as
 > an activated integration.
 
 ## 0. How to use this document
@@ -111,9 +114,10 @@ of these are true:
 - `[?][P0][SEC/API/WEB/AND]` Choose the session transport: short-lived access
   token plus rotating refresh token (current approach), secure cookie session
   for web, or both. **Why:** browser localStorage is convenient but raises XSS
-  blast radius; WebSocket query-string tokens can leak into logs. **Connects
-  to:** `src/integrations/api/client.ts`, `worker/src/lib/auth.ts`, native
-  secure storage, CSRF/origin controls, and WebSocket tickets.
+  blast radius; one-time, stream-scoped WebSocket tickets still travel in the
+  upgrade URL and need short retention/redaction in edge and Worker logs.
+  **Connects to:** `src/integrations/api/client.ts`, `worker/src/lib/auth.ts`,
+  native secure storage, CSRF/origin controls, and WebSocket tickets.
 - `[?][P1][PM]` Define age/maturity rules, prohibited content, creator
   responsibility, reporting SLA, appeal path, and regional availability before
   public launch.
@@ -152,15 +156,15 @@ of these are true:
 | Fully offline browser room | `[~]` | `/offline`, `src/lib/offlinePeer.ts`, `src/components/OfflineBrowserRoom.tsx`, `public/push-sw.js` | Manual SDP offer/answer, empty-ICE WebRTC, app-shell caching, and explicit failure copy are implemented; real two-browser Wi-Fi and browser-matrix evidence remains. |
 | React API client and DTO mappers | `[~]` | `src/integrations/api/client.ts`, `src/integrations/api/mappers.ts` | Needs an explicit versioned contract, non-JSON response handling, stronger types, token strategy decision, and mobile client parity. |
 | Cloudflare Worker/Hono API | `[~]` | `worker/src/index.ts`, route modules, config and error envelope | Substantial surface exists, but external providers, production origins, abuse controls, media privacy, and staging verification remain. |
-| D1 schema and four migrations | `[x]` | `worker/migrations/0001…0004.sql` | Needs remote migration rehearsal, backup/restore exercise, query/index review, and migration rollback policy. |
-| R2 media bindings | `[~]` | `worker/wrangler.jsonc`, `worker/src/routes/media.ts` | Recording visibility must be enforced at byte-serving time; signed/private playback and cleanup need verification. |
-| Durable Object chat/presence | `[~]` | `worker/src/durable/chat-room.ts`, realtime test | Host lifecycle, reconnect semantics, moderation fan-out, rate limits, and multi-region/load behaviour need browser tests. |
-| Durable Object signalling | `[~]` | `worker/src/durable/signal-room.ts`, `src/lib/lanStream.ts` | The browser viewer currently requests the wrong signalling role; real media negotiation, ICE failure, reconnect, and scale are not covered by the fake-SDP test. |
-| Auth, refresh rotation, account lifecycle, sessions, tokens | `[~]` | `worker/src/lib/auth.ts`, `worker/src/routes/auth.ts` | Email provider is optional/unconfigured; localStorage/query token exposure and recovery/security review remain. |
-| Creator, viewer, browse, library, schedule, moderation, admin UI | `[~]` | `src/pages/*` and services | Many surfaces exist, but their complete journeys are not browser-tested; some are backed by placeholder/simulated client logic. |
-| Notifications, web push, email outbox, webhooks, payments | `[~]` | `worker/src/lib/{notifications,email,push,webhook,payments}.ts` | Provider keys, consent, retries, idempotency, delivery monitoring, and regional/payment policy remain. |
-| Android app | `[ ]` | No `android/`, Gradle, Kotlin, Compose, or native WebRTC project exists | Entire Android client, release pipeline, deep links, push, permissions, foreground service, and device matrix are outstanding. |
-| CI/CD | `[~]` | `.github/workflows/deploy-worker.yml` | Only worker deployment is covered and it targets `main`; web build, lint, tests, security, preview, Android CI, and production smoke checks are absent. |
+| D1 schema and five migrations | `[x]` | `worker/migrations/0001…0005.sql` | Needs remote migration rehearsal, backup/restore exercise, query/index review, and migration rollback policy. |
+| R2 media bindings | `[~]` | `worker/wrangler.jsonc`, `worker/src/routes/media.ts` | Local API tests cover visibility and protected bytes; deployed CDN/proxy and retention evidence remains. |
+| Durable Object chat/presence | `[~]` | `worker/src/durable/chat-room.ts`, realtime test | Host lifecycle and moderation have API/socket coverage; browser reconnect, multi-region, and load evidence remains. |
+| Durable Object signalling | `[~]` | `worker/src/durable/signal-room.ts`, `src/lib/lanStream.ts` | Server-derived viewer role and capacity limits are implemented; real media negotiation, ICE failure, reconnect, and scale are not covered by the fake-SDP test. |
+| Auth, refresh rotation, account lifecycle, sessions, tokens | `[~]` | `worker/src/lib/auth.ts`, `worker/src/routes/auth.ts` | Email provider is optional/unconfigured; localStorage token exposure and recovery/security review remain. |
+| Creator, viewer, browse, library, schedule, moderation, admin UI | `[~]` | `src/pages/*` and services | Many surfaces exist, but complete journeys are not browser-tested; some are backed by placeholder/simulated client logic. Public profiles are now guest-accessible. |
+| Notifications, web push, email outbox, webhooks, payments | `[~]` | `worker/src/lib/{notifications,email,push,webhook,payments}.ts` | Provider keys, consent, delivery monitoring, and regional/payment policy remain; payment callback transitions are replay-safe. |
+| Android app | `[~]` | `android/`, Gradle, Kotlin, Compose, native WebRTC | Native rendered video/audio, creator capture/publish, release pipeline, push, device matrix, and signed AAB remain incomplete. |
+| CI/CD | `[~]` | `.github/workflows/ci.yml`, `.github/workflows/deploy-worker.yml` | Web, Worker, API/realtime, Android compile, and deployment checks exist; browser E2E, staging acceptance, and production smoke evidence remain. |
 
 ### 2.2 Baseline checks run for this roadmap
 
@@ -411,19 +415,20 @@ protected, and staging secrets/providers are configured or deliberately disabled
 - `[~] [P0][SEC/API]` JSON size, upload byte, image MIME, filename/key
   normalisation, traversal, SDP/ICE frame, and retention limits are implemented;
   full MIME sniffing/decompression/timeouts and a deployed abuse scan remain.
-- `[ ] [P0][SEC/API]` Bind rate limiting to a distributed KV or equivalent for
-  auth, signup, password reset, chat, reports, uploads, WebSockets, search,
-  webhooks, tips, and admin endpoints; test per-IP, per-account, and global
-  behaviour.
+- `[~] [P0][SEC/API]` Route-level limits now use a globally serialized
+  `RateLimitRoom` Durable Object per hashed identity/route key; production fails
+  closed if the binding is absent or unavailable, and CI exercises concurrent
+  requests. Add Cloudflare WAF protection, verify per-IP plus per-account policy
+  for every sensitive route, and measure DO cost/throughput in staging.
 - `[~] [P0][SEC/API]` Creator webhook registration now rejects non-HTTPS,
   credentialed, IP-literal, localhost and local-suffix targets; outbound webhook
   requests do not follow redirects. DNS rebinding/resolution policy and the
   separate email/payment relay, external-image, and callback URL surfaces still
   need review and deployed-environment tests.
-- `[x] [P0][SEC/API]` Added security headers/CSP for the actual app/API/media/
-  WebSocket origins and removed the external GPT Engineer bootstrap/social asset
-  dependency. Provider-specific analytics/Sentry/payment CSP domains still need
-  staging review before enabling those integrations.
+- `[~] [P0][SEC/API]` Worker responses and Vercel-hosted SPA now set security
+  headers/CSP; deployment configuration is contract-tested and includes camera,
+  microphone, WebRTC, font, and captcha origins. Validate the exact deployed
+  host/proxy behavior and any new provider domains in staging.
 - `[x] [P0][SEC/API]` Media routes look up recording rows before R2 bytes,
   enforce public/unlisted/private visibility, block traversal, honor retention,
   and issue short-lived HMAC playback tokens for protected VODs.
@@ -859,14 +864,15 @@ interoperability verified.
 review, failure handling, and a tested rollback. **Depends on:** Phases 2–5.
 
 - `[ ] [P0][OPS]` Create separate Cloudflare accounts/resources or clearly
-  separated environments for local, staging, and production D1, R2, DO, KV,
-  Worker routes, custom domains, logs, and secrets.
+  separated environments for local, staging, and production D1, R2, Durable
+  Objects (including RateLimitRoom), Worker routes, custom domains, logs, and
+  secrets. KV remains an optional development fallback.
 - `[x] [P0][OPS]` Deployment health verification is now driven by the
   `WORKER_URL` secret/input, checks `/api/health`, and verifies the reported
   environment/commit when configured. GitHub execution is still pending.
-- `[ ] [P0][OPS]` Provision remote D1/R2/DO/KV, apply migrations with a backup and
-  approval, verify bindings, configure custom domain/TLS, and test WebSocket
-  upgrade through the real proxy/CDN.
+- `[ ] [P0][OPS]` Provision remote D1/R2/DO, apply D1 and Durable Object
+  migrations with a backup and approval, verify bindings, configure custom
+  domain/TLS, and test WebSocket upgrades through the real proxy/CDN.
 - `[~] [P0][OPS/SEC]` Production validation rejects wildcard origins,
   development secrets, insecure APP_URL, and missing required values; exact
   production secrets, legal versions, provider keys, limits, flags, log level,

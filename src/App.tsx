@@ -165,11 +165,8 @@ const AppContent = () => (
         </ProtectedRoute>
       } />
       
-      <Route path="/profile/:username" element={
-        <ProtectedRoute>
-          <Profile />
-        </ProtectedRoute>
-      } />
+      {/* Public channels are shareable; profile editing and follow actions enforce auth in the page/API. */}
+      <Route path="/profile/:username" element={<Profile />} />
       
       <Route path="/dashboard" element={
         <ProtectedRoute>

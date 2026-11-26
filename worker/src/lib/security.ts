@@ -41,7 +41,7 @@ export const securityHeaders: MiddlewareHandler<{ Bindings: Env; Variables: AppV
     "form-action 'self'",
     "frame-ancestors 'none'",
     "object-src 'none'",
-    "connect-src 'self' https: wss:",
+    "connect-src 'self' https: wss: stun: stuns: turn: turns:",
     "img-src 'self' data: blob: https:",
     "media-src 'self' blob: https:",
     "font-src 'self' data: https:",
