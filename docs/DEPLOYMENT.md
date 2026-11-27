@@ -28,14 +28,15 @@ npx wrangler d1 create live-stream-db            # paste database_id into wrangl
 npx wrangler r2 bucket create lsc-recordings
 npx wrangler r2 bucket create lsc-avatars
 
-# Optional: KV for precise rate limiting + short-lived counters.
-# Without it the limiter falls back to per-isolate memory (fine for small
-# deployments, approximate under load).
-npx wrangler kv namespace create CACHE           # paste id into wrangler.jsonc as CACHE
+# No separate rate-limit service is required. The RATE_LIMITER Durable Object
+# namespace is bound in wrangler.jsonc and provisioned by its v2 migration.
+# Optional CACHE KV is only a development fallback; production fails closed
+# rather than silently using per-isolate counters when the DO is unavailable.
 ```
 
-Durable Objects (`ChatRoom`, `SignalRoom`) need no provisioning — the
-`migrations` block in `wrangler.jsonc` creates them on first deploy.
+Durable Objects (`ChatRoom`, `SignalRoom`, `RateLimitRoom`) need no manual
+provisioning — the `bindings` and `migrations` blocks in `wrangler.jsonc` create
+them on first deploy. Verify `/api/health` reports all three namespaces healthy.
 
 ### 1.2 Database schema
 

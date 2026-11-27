@@ -11,6 +11,7 @@ Supabase backend with a single Cloudflare Worker:
 | WebRTC signalling   | Realtime broadcast channels      | **Durable Object** (`SignalRoom`)       |
 | Recordings / avatars| Storage buckets                  | **R2**                                  |
 | Realtime presence   | —                                | **Durable Object** (socket count)       |
+| Rate limiting       | —                                | **Durable Object** (`RateLimitRoom`, global fixed windows) |
 | Cron cleanup        | `pg_cron` + `net.http_post`      | **Cron Triggers** (`scheduled()`)       |
 
 ```
@@ -18,8 +19,9 @@ Supabase backend with a single Cloudflare Worker:
   React (Vite)   │                                                            │
   ──────────────►│  Worker (Hono)  ──►  D1  (users, streams, chat, sessions)  │
    REST /api/*   │       │         ──►  R2  (recordings, avatars)             │
-   WS   /api/ws/*│       └────────►  DO  ChatRoom   (chat + presence)         │
-                 │                  DO  SignalRoom (WebRTC offer/answer)      │
+   WS   /api/ws/*│       ├────────►  DO  ChatRoom   (chat + presence)         │
+                 │       ├────────►  DO  SignalRoom (WebRTC offer/answer)      │
+                 │       └────────►  DO  RateLimitRoom (atomic counters)      │
                  └────────────────────────────────────────────────────────────┘
                                     │
                           media flows peer-to-peer (WebRTC),
@@ -32,7 +34,7 @@ Supabase backend with a single Cloudflare Worker:
 
 ```bash
 cd worker
-npm install
+npm ci
 cp .dev.vars.example .dev.vars     # then edit JWT_SECRET
 
 npm run db:migrate:local           # create the D1 schema locally

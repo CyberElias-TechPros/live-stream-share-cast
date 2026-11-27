@@ -146,7 +146,6 @@ function openSignalChannel(
       if (stopped) return;
 
       const ws = apiSocket(`/api/ws/signal/${streamId}`, {
-        auth: false,
         params: { peerId: identity.peerId, role: identity.role, ticket },
       });
       socket = ws;

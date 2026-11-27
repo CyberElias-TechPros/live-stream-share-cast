@@ -175,8 +175,7 @@ export const api = {
 /* -------------------------------- WebSocket ---------------------------------- */
 
 export interface SocketOptions {
-  /** Legacy bearer query authentication; new callers should use a ticket. */
-  auth?: boolean;
+  /** Short-lived ticket and other non-secret connection metadata. */
   params?: Record<string, string | number | boolean | undefined>;
 }
 
@@ -204,6 +203,5 @@ export function apiSocket(path: string, options: SocketOptions = {}): WebSocket 
       url.searchParams.set(key, String(value));
     }
   }
-  if ((options.auth ?? true) && tokenStore.access) url.searchParams.set('token', tokenStore.access);
   return new WebSocket(url.toString());
 }

@@ -1,20 +1,15 @@
 import type { MiddlewareHandler } from 'hono';
 import type { Env } from '../env';
 import { tooManyRequests } from './http';
+import { sha256Hex } from './ids';
 
 /**
- * Rate limiting, in two layers:
- *
- *  1. `limit()` — a fixed-window counter backed by the optional `CACHE` KV
- *     namespace. This is *globally* consistent across colos, so it is the right
- *     tool for anything security-sensitive (login, signup, payments, webhooks).
- *     Without a KV binding it transparently falls back to the per-isolate map.
- *
- *  2. `rateLimit()` — the original per-isolate middleware, kept for cheap
- *     per-route protection. Good enough to blunt chat spam; not a guarantee.
- *
- * For hard guarantees in front of everything, also add a Cloudflare WAF
- * rate-limiting rule (documented in docs/DEPLOYMENT.md).
+ * Rate limiting uses one Durable Object per hashed route/identity key. The DO
+ * serializes fixed-window increments globally, so security-sensitive endpoints
+ * cannot be bypassed by changing Workers isolates or regions. KV and in-memory
+ * counters remain development fallbacks only; production fails closed if the
+ * distributed limiter is missing or unavailable. A Cloudflare WAF rule is still
+ * recommended for edge-wide volumetric abuse (docs/DEPLOYMENT.md).
  */
 
 interface Bucket {
@@ -35,14 +30,14 @@ export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
   resetAt: number;
-  /** True when the KV namespace is missing and the limit is only approximate. */
+  /** True when a development-only fallback is used instead of the Durable Object. */
   approximate: boolean;
 }
 
 /**
- * Fixed-window limiter. KV writes are eventually consistent, so the counter can
- * briefly under-count across colos; that is acceptable for abuse control and
- * much cheaper than a Durable Object round-trip on every request.
+ * Fixed-window limiter backed by the Durable Object namespace in production.
+ * Local development may use KV or an isolate-local map when no DO binding is
+ * available; production never silently degrades to either fallback.
  */
 export async function limit(env: Env, key: string, max: number, windowMs: number): Promise<boolean> {
   const result = await checkLimit(env, key, max, windowMs);
@@ -51,18 +46,41 @@ export async function limit(env: Env, key: string, max: number, windowMs: number
 
 export async function checkLimit(env: Env, key: string, max: number, windowMs: number): Promise<RateLimitResult> {
   const now = Date.now();
+  const production = (env.ENVIRONMENT ?? 'development').toLowerCase() === 'production';
+
+  if (env.RATE_LIMITER) {
+    try {
+      const id = env.RATE_LIMITER.idFromName(await sha256Hex(key));
+      const response = await env.RATE_LIMITER.get(id).fetch('https://rate-limiter.internal/check', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ max, windowMs }),
+      });
+      if (!response.ok) throw new Error(`Rate limiter returned ${response.status}`);
+      const result = await response.json() as Omit<RateLimitResult, 'approximate'>;
+      if (typeof result.allowed !== 'boolean' || typeof result.remaining !== 'number' || typeof result.resetAt !== 'number') {
+        throw new Error('Rate limiter returned an invalid response');
+      }
+      return { ...result, approximate: false };
+    } catch {
+      // Do not let a regional or Durable Object outage disable security limits.
+      if (production) return { allowed: false, remaining: 0, resetAt: now + windowMs, approximate: false };
+    }
+  } else if (production) {
+    return { allowed: false, remaining: 0, resetAt: now + windowMs, approximate: false };
+  }
 
   if (env.CACHE) {
     const windowKey = `rl:${key}:${Math.floor(now / windowMs)}`;
     try {
       const current = Number((await env.CACHE.get(windowKey)) ?? '0');
       if (current >= max) {
-        return { allowed: false, remaining: 0, resetAt: (Math.floor(now / windowMs) + 1) * windowMs, approximate: false };
+        return { allowed: false, remaining: 0, resetAt: (Math.floor(now / windowMs) + 1) * windowMs, approximate: true };
       }
       await env.CACHE.put(windowKey, String(current + 1), { expirationTtl: Math.max(60, Math.ceil(windowMs / 1000) * 2) });
-      return { allowed: true, remaining: Math.max(0, max - current - 1), resetAt: (Math.floor(now / windowMs) + 1) * windowMs, approximate: false };
+      return { allowed: true, remaining: Math.max(0, max - current - 1), resetAt: (Math.floor(now / windowMs) + 1) * windowMs, approximate: true };
     } catch {
-      /* fall through to the in-memory limiter */
+      /* fall through to the isolate-local development limiter */
     }
   }
 

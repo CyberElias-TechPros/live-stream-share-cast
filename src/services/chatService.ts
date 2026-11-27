@@ -108,7 +108,6 @@ export const chatService = {
         const ticket = await requestWebSocketTicket(streamId, role);
         if (closed) return;
         const ws = apiSocket(`/api/ws/chat/${streamId}`, {
-          auth: false,
           params: { role, ticket },
         });
         socket = ws;

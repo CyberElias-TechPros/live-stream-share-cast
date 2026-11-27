@@ -81,7 +81,20 @@ async function main() {
 
   section('platform');
   const health = await call('GET', '/health');
-  check('GET /health reports d1 + r2 + durable objects', health.status === 200 && health.body?.database === 'ok', JSON.stringify(health.body).slice(0, 120));
+  check(
+    'GET /health verifies D1, R2, chat/signalling, and the distributed limiter',
+    health.status === 200 && health.body?.database === 'ok' && health.body?.services?.r2 === 'ok' && health.body?.services?.durableObjects === 'ok' && health.body?.services?.rateLimiter === 'ok',
+    JSON.stringify(health.body).slice(0, 160),
+  );
+
+  const limiterResponses = await Promise.all(Array.from({ length: 64 }, () => call('GET', '/admin/ping')));
+  const limiterAllowed = limiterResponses.filter((response) => response.status === 200).length;
+  const limiterBlocked = limiterResponses.filter((response) => response.status === 429).length;
+  check(
+    'Durable Object rate limiter atomically caps concurrent requests at the configured limit',
+    limiterAllowed === 60 && limiterBlocked === 4 && limiterResponses.filter((response) => response.status === 429).every((response) => Number(response.headers.get('retry-after')) > 0),
+    `allowed=${limiterAllowed}, blocked=${limiterBlocked}`,
+  );
 
   const config = await call('GET', '/config');
   check(

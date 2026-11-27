@@ -36,6 +36,7 @@ export class SignalRoom extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/health') return Response.json({ ok: true });
     await this.ensureStreamId(url);
 
     if (url.pathname === '/ws') return this.handleUpgrade(request, url);

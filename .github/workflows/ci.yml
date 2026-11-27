@@ -25,6 +25,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:offline
+      - run: npm run test:routes
+      - run: npm run test:websocket
+      - run: npm run test:deployment
       - run: npm run build
       - run: npm audit --audit-level=moderate
 

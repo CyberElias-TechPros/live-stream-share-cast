@@ -51,6 +51,7 @@ export function productionConfigIssues(env: Env): string[] {
   }
 
   if (!env.APP_URL || !/^https:\/\//i.test(env.APP_URL)) issues.push('APP_URL');
+  if (!env.RATE_LIMITER) issues.push('RATE_LIMITER');
 
   if (flag(env.FEATURE_TIPS, false)) {
     const payments = paymentConfig(env);

@@ -32,12 +32,14 @@
   "durable_objects": {
     "bindings": [
       { "name": "CHAT_ROOM", "class_name": "ChatRoom" },
-      { "name": "SIGNAL_ROOM", "class_name": "SignalRoom" }
+      { "name": "SIGNAL_ROOM", "class_name": "SignalRoom" },
+      { "name": "RATE_LIMITER", "class_name": "RateLimitRoom" }
     ]
   },
 
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["ChatRoom", "SignalRoom"] }
+    { "tag": "v1", "new_sqlite_classes": ["ChatRoom", "SignalRoom"] },
+    { "tag": "v2", "new_sqlite_classes": ["RateLimitRoom"] }
   ],
 
   // Hourly: expire recordings, sweep stale live streams and dead sessions.

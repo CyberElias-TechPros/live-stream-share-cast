@@ -54,6 +54,7 @@ export class ChatRoom extends DurableObject<Env> {
   /** Only reachable from inside the Worker (Durable Objects are not public). */
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/health') return Response.json({ ok: true });
     await this.ensureStreamId(url);
 
     if (url.pathname === '/ws') return this.handleUpgrade(request);
